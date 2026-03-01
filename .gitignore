@@ -1,0 +1,10 @@
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+
+# Data directories (generated, not source)
+data/
+
+# Virtual env / uv
+.venv/
