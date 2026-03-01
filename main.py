@@ -12,7 +12,7 @@ The main file function:
 1. Load the hyperparameter dict.
 2. Initialize logger
 3. Initialize data (preprocess, data splits, etc.)
-4. Initialize clients. 
+4. Initialize clients.
 5. Initialize Server.
 6. Register clients at the server.
 7. Start the server.
@@ -48,7 +48,7 @@ def set_seed(seed):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Waterbirds experiments')
     parser.add_argument('--no_wandb', default=False, action="store_true")
-    parser.add_argument('--root_dir', default="/local/scratch/a/bai116/datasets/", action="store_true")
+    parser.add_argument('--root_dir', default="./data", type=str)  # fixed: was action='store_true'
     parser.add_argument('--seed', default=1001, type=int)
     parser.add_argument('--dataset', type=str, default='ColoredMNIST')
     parser.add_argument('--latent_dim', default=512, type=int) # Not active for erm and ecmp.
