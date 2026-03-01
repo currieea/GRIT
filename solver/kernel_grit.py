@@ -26,6 +26,7 @@ import random
 import numpy as np
 import torch
 
+from datasets import *   # brings ColoredMNISTClipDataset (and others) into scope for eval()
 from solver.invariant_l2_kernel import Direct_Invariant_L2_Kernel
 
 
@@ -152,8 +153,8 @@ class KernelGRIT:
         split_arr  = self.dataset._split_array.numpy()
         train_mask = split_arr == self.dataset._split_dict['train']
 
-        X_full   = self.dataset._x_array[train_mask].numpy()
-        y_full   = self.dataset._y_array[train_mask].numpy()
+        X_full    = self.dataset._x_array[train_mask].numpy()
+        y_full    = self.dataset._y_array[train_mask].numpy()
         meta_full = self.dataset._metadata_array[train_mask]
 
         # Subsample
