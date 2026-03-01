@@ -1,0 +1,18 @@
+[project]
+name = "grit"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "clip",
+    "numpy>=2.4.2",
+    "pandas>=3.0.1",
+    "pillow>=12.1.1",
+    "torch>=2.10.0",
+    "torchvision>=0.25.0",
+    "tqdm>=4.67.3",
+    "wandb>=0.25.0",
+    "wilds>=2.0.0",
+]
+
+[tool.uv.sources]
+clip = { git = "https://github.com/openai/CLIP.git" }

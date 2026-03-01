@@ -1,0 +1,16 @@
+# Core numerical/data libraries
+numpy
+pandas
+Pillow
+
+# Training stack
+torch
+torchvision
+tqdm
+wandb
+
+# Dataset framework used throughout project
+wilds
+
+# OpenAI CLIP package (imported as `clip`)
+clip @ git+https://github.com/openai/CLIP.git
