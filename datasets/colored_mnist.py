@@ -203,10 +203,12 @@ class ColoredMNISTClipDataset(ColoredMNISTDataset):
 
     def __init__(self, version=None, root_dir="data", download=False, split_scheme="official"):
         super().__init__(version, root_dir, download, split_scheme)
-        self.diff = torch.load(os.path.join(self._data_dir, 'diff.pth'))
+        data_dir = Path(root_dir) / 'ColoredMNIST-cf-clip_v1.0'
+        self.diff = torch.load(os.path.join(data_dir, 'diff.pth'))
 
     def _get_data(self):
-        data_dir = self._data_dir = self.initialize_data_dir(self._data_dir, download=False)
+        data_dir = Path(self._data_dir) / 'ColoredMNIST-cf-clip_v1.0'
+        self._data_dir = data_dir
         return (
             torch.load(os.path.join(data_dir, 'split_array.pth')),
             torch.load(os.path.join(data_dir, 'x_array.pth')),
