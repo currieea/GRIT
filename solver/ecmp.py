@@ -49,7 +49,7 @@ class ECMP(ERM):
     def _condition_matching(self):
         # Step 1: Get shuffled training indices
         train_idx = np.where(self.dataset.split_array == self.dataset._split_dict['train'])[0]
-        if 'counterfactual' in self.dataset._split_list:
+        if 'counterfactual' in self.dataset._split_dict:
             train_idx = np.concatenate((train_idx, np.where(self.dataset.split_array == self.dataset._split_dict['counterfactual'])[0]))
         np.random.shuffle(train_idx)
 
@@ -94,15 +94,20 @@ class ECMP(ERM):
             else:
                 # Haven’t seen this label yet; initialize a dictionary for it.
                 seen[y_] = {domain_: [i]}
-        pairs = torch.tensor(pairs)
-        diffs = self.dataset._x_array[pairs[:, 0]] - self.dataset._x_array[pairs[:, 1]]
+        if not pairs:
+            raise RuntimeError("ECMP conditional matching produced no cross-domain pairs.")
+        pairs = torch.tensor(pairs, dtype=torch.long)
+        # pairs are local indices within shuffled train_idx; map back to global dataset indices.
+        global_i = train_idx[pairs[:, 0]]
+        global_j = train_idx[pairs[:, 1]]
+        diffs = self.dataset._x_array[global_i] - self.dataset._x_array[global_j]
 
         return diffs
     
     def _nearest_matching(self):
         # 1) collect & shuffle train indices
         train_idx = np.where(self.dataset.split_array == self.dataset._split_dict['train'])[0]
-        if 'counterfactual' in self.dataset._split_list:
+        if 'counterfactual' in self.dataset._split_dict:
             train_idx = np.concatenate((train_idx, np.where(self.dataset.split_array == self.dataset._split_dict['counterfactual'])[0]))
         np.random.shuffle(train_idx)
 
