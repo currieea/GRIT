@@ -57,7 +57,7 @@ if __name__ == "__main__":
     parser.add_argument('--split_scheme', default='official', type=str)
     parser.add_argument('--solver', default='ERM')
     parser.add_argument('--param1', default=100, type=float)
-    parser.add_argument('--param2', default=0, type=float)
+    parser.add_argument('--param2', default=10000.0, type=float)
     parser.add_argument('--param3', default=0, type=float)
     parser.add_argument('--batch_size', default=512, type=int)
     parser.add_argument('--epochs', default=40, type=int)

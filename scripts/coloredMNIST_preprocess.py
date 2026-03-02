@@ -1,5 +1,6 @@
 import torch
 import torchvision
+import os
 from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 
@@ -52,6 +53,7 @@ train_transform = transforms.Compose(
 # CHANGE TO THIS
 new_dir = "./data/ColoredMNIST-cf-clip_v1.0/"
 root_dir = "./data/"
+os.makedirs(new_dir, exist_ok=True)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 hparam = {"input_shape": (2, 28, 28)}
 preprocessor = Clip(hparam).to(device)
@@ -62,9 +64,17 @@ train_loader = torch.utils.data.DataLoader(
     batch_size=250,
     shuffle=False,
 )
-diff_tensor = []
-count = 0.0
+oracle_z = []
+oracle_z_prime = []
+oracle_pair_ids = []
+processed = 0
 for x, y in tqdm(train_loader, total=200):
+    remaining = 50000 - processed
+    if remaining <= 0:
+        break
+    if x.shape[0] > remaining:
+        x = x[:remaining]
+
     with torch.no_grad():
         images = x
         empty_tensor = torch.zeros_like(images)
@@ -73,13 +83,25 @@ for x, y in tqdm(train_loader, total=200):
 
         r_latent = preprocessor(r_images.to(device))
         g_latent = preprocessor(g_images.to(device))
-        cf_diff = r_latent - g_latent
-        diff_tensor.append(cf_diff.to("cpu"))
-        count += x.shape[0]
-    if count >= 50000:
-        break
-diff_tensor = torch.cat(diff_tensor)
+        batch_size = x.shape[0]
+        oracle_z.append(r_latent.to("cpu"))
+        oracle_z_prime.append(g_latent.to("cpu"))
+        oracle_pair_ids.append(
+            torch.arange(processed, processed + batch_size, dtype=torch.long)
+        )
+        processed += batch_size
+
+oracle_z = torch.cat(oracle_z)
+oracle_z_prime = torch.cat(oracle_z_prime)
+oracle_pair_ids = torch.cat(oracle_pair_ids)
+assert oracle_z.shape == oracle_z_prime.shape
+assert torch.equal(oracle_pair_ids, torch.arange(len(oracle_pair_ids), dtype=torch.long))
+
+diff_tensor = oracle_z - oracle_z_prime
 torch.save(diff_tensor, new_dir + "diff.pth")
+torch.save(oracle_z, new_dir + "oracle_z_array.pth")
+torch.save(oracle_z_prime, new_dir + "oracle_z_prime_array.pth")
+torch.save(oracle_pair_ids, new_dir + "oracle_pair_id_array.pth")
 
 dataset = ColoredMNISTDataset(root_dir=root_dir, download=True)
 # new_dataset = TransformedWildsDataset(dataset, transform=None)

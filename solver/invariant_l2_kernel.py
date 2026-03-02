@@ -31,6 +31,8 @@ class Direct_Invariant_L2_Kernel(BaseEstimator, ClassifierMixin):
         self.B_train = None
         self.cho_factors = None
         self._inv_solve_cache = None
+        self.corr_fro_rel = None
+        self.corr_abs_mean = None
 
     def _get_diff_kernel_matrices(self, X, Z, Z_prime):
         K_xz  = rbf_kernel(X, Z,       gamma=self.gamma)
@@ -54,6 +56,8 @@ class Direct_Invariant_L2_Kernel(BaseEstimator, ClassifierMixin):
         if self.base_lambda == np.inf:
             self.classifier = SVC(kernel="precomputed", C=self.C)
             self.classifier.fit(K_xx, y)
+            self.corr_fro_rel = 0.0
+            self.corr_abs_mean = 0.0
             return self
 
         K_pairs = Z.shape[0]
@@ -76,6 +80,10 @@ class Direct_Invariant_L2_Kernel(BaseEstimator, ClassifierMixin):
         self._inv_solve_cache = cho_solve(self.cho_factors, self.B_train.T)
         correction   = self.B_train @ self._inv_solve_cache
         K_invariant  = K_xx - correction
+        self.corr_fro_rel = float(
+            np.linalg.norm(correction, ord="fro") / (np.linalg.norm(K_xx, ord="fro") + 1e-12)
+        )
+        self.corr_abs_mean = float(np.mean(np.abs(correction)))
 
         self.classifier = SVC(kernel="precomputed", C=self.C)
         self.classifier.fit(K_invariant, y)

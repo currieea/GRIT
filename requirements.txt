@@ -14,3 +14,7 @@ wilds
 
 # OpenAI CLIP package (imported as `clip`)
 clip @ git+https://github.com/openai/CLIP.git
+
+# Kernel GRIT dependencies
+scipy
+scikit-learn

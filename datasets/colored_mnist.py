@@ -205,6 +205,26 @@ class ColoredMNISTClipDataset(ColoredMNISTDataset):
         super().__init__(version, root_dir, download, split_scheme)
         data_dir = Path(root_dir) / 'ColoredMNIST-cf-clip_v1.0'
         self.diff = torch.load(os.path.join(data_dir, 'diff.pth'))
+        self.oracle_z = None
+        self.oracle_z_prime = None
+        self.oracle_pair_ids = None
+        z_path = os.path.join(data_dir, 'oracle_z_array.pth')
+        z_prime_path = os.path.join(data_dir, 'oracle_z_prime_array.pth')
+        pair_id_path = os.path.join(data_dir, 'oracle_pair_id_array.pth')
+        if os.path.exists(z_path) and os.path.exists(z_prime_path) and os.path.exists(pair_id_path):
+            self.oracle_z = torch.load(z_path)
+            self.oracle_z_prime = torch.load(z_prime_path)
+            self.oracle_pair_ids = torch.load(pair_id_path)
+            if self.oracle_z.shape != self.oracle_z_prime.shape:
+                raise ValueError("oracle_z_array and oracle_z_prime_array must have matching shape.")
+            if self.oracle_z.ndim != 2:
+                raise ValueError("oracle endpoint tensors must be 2D [K, D].")
+            if self.oracle_z.shape[0] != len(self.oracle_pair_ids):
+                raise ValueError("oracle_pair_id_array length must match oracle endpoint rows.")
+            if self.oracle_z.shape[1] != self._x_array.shape[1]:
+                raise ValueError(
+                    "oracle endpoint feature dim must match x_array feature dim."
+                )
 
     def _get_data(self):
         data_dir = Path(self._data_dir) / 'ColoredMNIST-cf-clip_v1.0'

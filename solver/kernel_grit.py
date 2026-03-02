@@ -47,6 +47,11 @@ class KernelGRIT:
 
         self.n_subsample         = int(float(hparam.get('param1', 2000)))
         self.invariance_strength = float(hparam.get('param2', 10000.0))
+        if self.invariance_strength <= 0:
+            raise ValueError(
+                "KernelGRIT requires param2 > 0. "
+                "Non-positive values disable invariance regularization."
+            )
         self.gamma               = float(hparam.get('param3', 0.01))
         self.C_svm               = 1.0
         self.projection          = hparam.get('projection', 'oracle')
@@ -54,13 +59,69 @@ class KernelGRIT:
     # ------------------------------------------------------------------
     # Pair construction
     # ------------------------------------------------------------------
-    def _get_pairs(self):
-        if self.projection in ('oracle', 'conditional'):
+    def _get_pairs(self, X_tr=None, m_tr=None):
+        if self.projection == 'oracle':
+            return self._oracle_pairs(X_tr, m_tr)
+        elif self.projection == 'conditional':
             return self._condition_matching()
         elif self.projection == 'nearest':
             return self._nearest_matching()
         else:
             raise ValueError(f"Unknown projection: {self.projection}")
+
+    def _oracle_pairs(self, X_tr, m_tr):
+        if X_tr is None or m_tr is None:
+            raise ValueError("Oracle pairing requires sampled training features and metadata.")
+        if not hasattr(self.dataset, "oracle_z") or not hasattr(self.dataset, "oracle_z_prime"):
+            raise ValueError(
+                "projection='oracle' requires endpoint oracle artifacts "
+                "(oracle_z_array.pth and oracle_z_prime_array.pth)."
+            )
+        if self.dataset.oracle_z is None or self.dataset.oracle_z_prime is None:
+            raise ValueError(
+                "projection='oracle' in KernelGRIT does not support diff-only artifacts. "
+                "Regenerate endpoint oracle artifacts via scripts/coloredMNIST_preprocess.py."
+            )
+        if "id" not in self.dataset._metadata_fields:
+            raise ValueError(
+                "projection='oracle' requires metadata field 'id' for diff alignment."
+            )
+
+        oracle_z = self.dataset.oracle_z
+        oracle_z_prime = self.dataset.oracle_z_prime
+        if not torch.is_tensor(oracle_z) or not torch.is_tensor(oracle_z_prime):
+            raise ValueError("oracle endpoint artifacts must be torch tensors.")
+        if oracle_z.shape != oracle_z_prime.shape or oracle_z.ndim != 2:
+            raise ValueError("oracle endpoint artifacts must be matching 2D tensors [K, D].")
+
+        id_col = self.dataset._metadata_fields.index("id")
+        m_tr_tensor = m_tr if torch.is_tensor(m_tr) else torch.as_tensor(m_tr)
+        diff_ids = m_tr_tensor[:, id_col].to(torch.long)
+        assert diff_ids.max() < len(self.dataset.oracle_z), \
+            "Sample IDs exceed diff tensor bounds — check ID field semantics"
+        assert diff_ids.min() >= 0, \
+            "Sample IDs are negative — check ID field semantics"
+
+        if hasattr(self.dataset, "oracle_pair_ids") and self.dataset.oracle_pair_ids is not None:
+            oracle_pair_ids = self.dataset.oracle_pair_ids.to(torch.long).cpu()
+            expected_ids = torch.arange(len(oracle_pair_ids), dtype=torch.long)
+            if not torch.equal(oracle_pair_ids, expected_ids):
+                raise ValueError(
+                    "oracle_pair_id_array must be 0-based contiguous row indices for KernelGRIT oracle mode."
+                )
+
+        z_subset = oracle_z[diff_ids.cpu()].to(torch.float32)
+        z_prime_subset = oracle_z_prime[diff_ids.cpu()].to(torch.float32)
+        if z_subset.shape[1] != X_tr.shape[1]:
+            raise ValueError(
+                "Oracle endpoint feature dimension does not match sampled training features: "
+                f"{z_subset.shape[1]} vs {X_tr.shape[1]}."
+            )
+
+        Z = z_subset.numpy()
+        Z_prime = z_prime_subset.numpy()
+        print(f"[KernelGRIT] oracle endpoint matching: {len(Z)} pairs")
+        return Z, Z_prime
 
     def _condition_matching(self):
         """Cross-domain same-label pairing (fixed global-index version of ecmp.py)."""
@@ -98,6 +159,8 @@ class KernelGRIT:
             else:
                 seen[y_] = {domain: [i]}
 
+        if not pairs:
+            raise RuntimeError("KernelGRIT: no conditional cross-domain pairs found.")
         pairs    = np.array(pairs)                # (K, 2) — local indices
         global_j = train_idx[pairs[:, 0]]
         global_i = train_idx[pairs[:, 1]]
@@ -165,7 +228,7 @@ class KernelGRIT:
         m_tr  = meta_full[idx]
 
         # Build pairs
-        Z, Z_prime = self._get_pairs()
+        Z, Z_prime = self._get_pairs(X_tr, m_tr)
 
         # Fit kernel SVM
         print(
@@ -180,6 +243,12 @@ class KernelGRIT:
         )
         self.kernel_clf.fit(X_tr, y_tr, Z, Z_prime)
         print("[KernelGRIT] fit complete.")
+        if getattr(self.kernel_clf, "corr_fro_rel", None) is not None:
+            print(
+                "[KernelGRIT] correction stats: "
+                f"corr_fro_rel={self.kernel_clf.corr_fro_rel:.6f}, "
+                f"corr_abs_mean={self.kernel_clf.corr_abs_mean:.6f}"
+            )
 
         # Evaluate all splits
         self._eval_split(X_tr, y_tr, m_tr, 'train (subsampled)')

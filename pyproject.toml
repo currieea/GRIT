@@ -13,6 +13,8 @@ dependencies = [
     "tqdm>=4.67.3",
     "wandb>=0.25.0",
     "wilds>=2.0.0",
+    "scipy",
+    "scikit-learn",
 ]
 
 [tool.uv.sources]
