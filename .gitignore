@@ -8,3 +8,9 @@ data/
 
 # Virtual env / uv
 .venv/
+
+# Codex config
+AGENTS.md
+
+# research notes
+*.pdf
