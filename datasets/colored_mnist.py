@@ -44,7 +44,7 @@ class ColoredMNISTDataset(WILDSCFDataset):
         self._split_names = {'train': 'Train', 'in_val': 'Val (In-Domain)', 'val': 'Val(OOD/Trans)', 'in_test': 'Test (In-Domain)', 'test': 'Test (OOD/Trans)'}
         self._metadata_fields = ["split", "color", "digit", "y", "id"]
         self._split_array, self._x_array, self._y_array, self._metadata_array = self._get_data()
-        self.default_domain_fields = ['domain']
+        self.default_domain_fields = ['color']
         self.counterfactual_fields = ['id']
         self.default_optimizer = 'sgd'
         self._eval_grouper = CombinatorialGrouper(dataset=self, groupby_fields=self.default_domain_fields)
