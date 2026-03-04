@@ -2,15 +2,12 @@
 import argparse
 import csv
 import itertools
-import os
 import shlex
 import subprocess
 from pathlib import Path
 from typing import Dict, List
 
-SEEDS = [1001]
-
-SHARED_ARGS = {
+BASE_SHARED_ARGS = {
     "dataset": "ColoredMNIST",
     "pretrained": "true",
     "root_dir": "./data",
@@ -21,6 +18,18 @@ SHARED_ARGS = {
     "featurizer": "linear",
     "no_wandb": None,
 }
+
+
+def parse_csv_ints(raw: str) -> List[int]:
+    return [int(x.strip()) for x in raw.split(",") if x.strip()]
+
+
+def parse_csv_floats(raw: str) -> List[float]:
+    return [float(x.strip()) for x in raw.split(",") if x.strip()]
+
+
+def parse_csv_strings(raw: str) -> List[str]:
+    return [x.strip() for x in raw.split(",") if x.strip()]
 
 
 def build_cmd(python_cmd: str, params: Dict[str, str]) -> List[str]:
@@ -61,13 +70,21 @@ def make_run_name(spec: Dict[str, str]) -> str:
     return f"{method}__proj-{projection}__p1-{p1}__p2-{p2}__p3-{p3}__seed-{seed}"
 
 
-def build_grid(methods: List[str]) -> List[Dict[str, str]]:
+def build_grid(
+    methods: List[str],
+    seeds: List[int],
+    shared_args: Dict[str, str],
+    ecmp_projections: List[str],
+    ecmp_param1: List[int],
+    kgrit_param2: List[int],
+    kgrit_param3: List[float],
+) -> List[Dict[str, str]]:
     runs: List[Dict[str, str]] = []
 
     if "ERM" in methods:
-        for seed in SEEDS:
+        for seed in seeds:
             spec = {
-                **SHARED_ARGS,
+                **shared_args,
                 "solver": "ERM",
                 "projection": "oracle",
                 "seed": str(seed),
@@ -76,12 +93,12 @@ def build_grid(methods: List[str]) -> List[Dict[str, str]]:
 
     if "ECMP" in methods:
         for seed, projection, param1 in itertools.product(
-            SEEDS,
-            ["conditional", "oracle"],
-            [6, 14, 22],
+            seeds,
+            ecmp_projections,
+            ecmp_param1,
         ):
             spec = {
-                **SHARED_ARGS,
+                **shared_args,
                 "solver": "ECMP",
                 "projection": projection,
                 "param1": str(param1),
@@ -91,13 +108,13 @@ def build_grid(methods: List[str]) -> List[Dict[str, str]]:
 
     if "KernelGRIT" in methods:
         for seed, projection, param2, param3 in itertools.product(
-            SEEDS,
+            seeds,
             ["oracle"],
-            [10000],
-            [0.01, 0.03],
+            kgrit_param2,
+            kgrit_param3,
         ):
             spec = {
-                **SHARED_ARGS,
+                **shared_args,
                 "solver": "KernelGRIT",
                 "projection": projection,
                 "param1": "2000",
@@ -138,6 +155,42 @@ def main() -> int:
         help="Optional cap for quick smoke tests",
     )
     parser.add_argument(
+        "--profile",
+        default="reduced",
+        choices=["reduced", "extended"],
+        help="Experiment profile: reduced (quick workshop) or extended (multi-seed/tuning).",
+    )
+    parser.add_argument(
+        "--seed-list",
+        default=None,
+        help="Comma-separated seeds override, e.g. '1001,1002,1003'.",
+    )
+    parser.add_argument(
+        "--split-scheme",
+        default="official",
+        help="Dataset split scheme passed to main.py.",
+    )
+    parser.add_argument(
+        "--ecmp-param1",
+        default=None,
+        help="Comma-separated ECMP param1 values.",
+    )
+    parser.add_argument(
+        "--ecmp-projections",
+        default=None,
+        help="Comma-separated ECMP projections.",
+    )
+    parser.add_argument(
+        "--kgrit-param2",
+        default=None,
+        help="Comma-separated KernelGRIT param2 values.",
+    )
+    parser.add_argument(
+        "--kgrit-param3",
+        default=None,
+        help="Comma-separated KernelGRIT param3 values.",
+    )
+    parser.add_argument(
         "--execute",
         action="store_true",
         help="Actually execute runs. If omitted, only print commands and write manifest.",
@@ -148,7 +201,42 @@ def main() -> int:
     logs_dir = results_dir / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
 
-    runs = build_grid(args.methods)
+    if args.profile == "reduced":
+        seeds = [1001]
+        ecmp_projections = ["conditional", "oracle"]
+        ecmp_param1 = [6, 14, 22]
+        kgrit_param2 = [10000]
+        kgrit_param3 = [0.01, 0.03]
+    else:
+        seeds = [1001, 1002, 1003, 1004, 1005]
+        ecmp_projections = ["conditional", "oracle"]
+        ecmp_param1 = [2, 6, 10, 14, 18, 22]
+        kgrit_param2 = [1000, 3000, 10000, 30000]
+        kgrit_param3 = [0.003, 0.01, 0.03, 0.1]
+
+    if args.seed_list is not None:
+        seeds = parse_csv_ints(args.seed_list)
+    if args.ecmp_projections is not None:
+        ecmp_projections = parse_csv_strings(args.ecmp_projections)
+    if args.ecmp_param1 is not None:
+        ecmp_param1 = parse_csv_ints(args.ecmp_param1)
+    if args.kgrit_param2 is not None:
+        kgrit_param2 = parse_csv_ints(args.kgrit_param2)
+    if args.kgrit_param3 is not None:
+        kgrit_param3 = parse_csv_floats(args.kgrit_param3)
+
+    shared_args = dict(BASE_SHARED_ARGS)
+    shared_args["split_scheme"] = args.split_scheme
+
+    runs = build_grid(
+        methods=args.methods,
+        seeds=seeds,
+        shared_args=shared_args,
+        ecmp_projections=ecmp_projections,
+        ecmp_param1=ecmp_param1,
+        kgrit_param2=kgrit_param2,
+        kgrit_param3=kgrit_param3,
+    )
     if args.max_runs is not None:
         runs = runs[: args.max_runs]
 
