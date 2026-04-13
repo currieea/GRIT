@@ -1,2 +1,94 @@
-This is the official NCM method repo.
-We are still building the env and readme file. 
+# GRIT: Domain Generalization via Invariant Feature Projection
+
+GRIT removes spurious correlations by projecting input features onto the null space of nuisance directions — directions that differ across domains for the same class. The nuisance directions are estimated from counterfactual pairs (oracle, conditional matching, or nearest-neighbor matching).
+
+> **Note:** The method is called **ECMP** throughout the codebase. It was renamed to **GRIT** in the most recent version of the paper.
+
+## Setup
+
+**Requirements:** Python 3.8, PyTorch, CUDA recommended.
+
+```bash
+pip install torch torchvision wilds wandb tqdm numpy pandas pillow
+pip install git+https://github.com/openai/CLIP.git
+```
+
+You will also need a [WandB](https://wandb.ai) account (or pass `--no_wandb` to skip logging).
+
+## Datasets
+
+The codebase supports: **ColoredMNIST**, **RotatedMNIST**, **PACS**, **Waterbirds**, **CelebA**, **Camelyon**.
+
+Set your data root via `--root_dir`. The default path in the codebase is `/local/scratch/a/bai116/datasets/`.
+
+### Using CLIP features (recommended)
+
+Most experiments use CLIP-preprocessed features rather than raw pixels. Run the appropriate preprocessing script once before training:
+
+```bash
+python scripts/coloredMNIST_preprocess.py
+python scripts/waterbirds_preprocess.py
+python scripts/celeba_preprocess.py
+# etc.
+```
+
+Each script saves `x_array.pth`, `y_array.pth`, `split_array.pth`, `metadata_array.pth`, and (for GRIT oracle) `diff.pth` into a versioned subdirectory (e.g., `ColoredMNIST-cf-clip_v1.0/`). You'll need to update the hardcoded `root_dir` and `new_dir` paths in each script before running.
+
+## Running Experiments
+
+### Option 1: WandB sweeps (used for paper results)
+
+Each file under `experiments/<dataset>/` defines a grid sweep and launches an agent immediately:
+
+```bash
+python experiments/cmnist/ecmp_oracle.py    # GRIT with oracle counterfactuals
+python experiments/cmnist/ecmp_condition.py # GRIT with conditional matching
+python experiments/cmnist/ecmp_nearest.py   # GRIT with nearest-neighbor matching
+python experiments/cmnist/erm.py            # ERM baseline
+python experiments/cmnist/irm.py            # IRM baseline
+# etc.
+```
+
+### Option 2: Direct execution
+
+```bash
+python main.py \
+  --solver ECMP \
+  --dataset LISAColoredMNIST \
+  --pretrained true \
+  --projection oracle \
+  --param1 10 \
+  --lr 0.001 \
+  --weight_decay 1e-4 \
+  --batch_size 256 \
+  --epochs 40 \
+  --seed 1001 \
+  --root_dir /path/to/datasets/ \
+  --no_wandb
+```
+
+## Key Arguments
+
+| Argument | Description |
+|---|---|
+| `--solver` | `ERM`, `ECMP` (GRIT), `IRM`, `REx`, `Fish`, `GroupDRO`, `MatchDG`, `LISA`, `SWAD` |
+| `--dataset` | `ColoredMNIST`, `LISAColoredMNIST`, `RotatedMNIST`, `PACS`, `CounterfactualWaterbirds`, `CelebA`, `Camelyon` |
+| `--pretrained` | `true` = use CLIP features, `false` = use raw pixels/images |
+| `--projection` | `oracle`, `conditional`, or `nearest` (GRIT/ECMP and MatchDG only) |
+| `--param1` | Number of SVD components to remove (GRIT/ECMP); penalty weight for IRM/REx |
+| `--featurizer` | `linear` (default, operates on CLIP features), `cnn` (MNIST), `resnet` (images) |
+| `--no_wandb` | Disable WandB, print metrics to stdout |
+
+## Baselines
+
+| Solver | Description |
+|---|---|
+| `ERM` | Empirical Risk Minimization |
+| `IRM` | Invariant Risk Minimization |
+| `REx` | Risk Extrapolation |
+| `Fish` | Gradient matching across domains |
+| `GroupDRO` | Group Distributionally Robust Optimization |
+| `MatchDG` | Domain generalization via contrastive matching |
+| `LISA` | Learning Invariant Predictors with Selective Augmentation |
+| `SWAD` | Stochastic Weight Averaging Densely |
+| `ECMP` | **GRIT** (this paper's method) |
