@@ -1,0 +1,6189 @@
+{
+  "complete": true,
+  "entity": "bai116",
+  "error_count": 0,
+  "expected_sweep_count": 80,
+  "exported_at": "2026-07-17T17:37:57.137179+00:00",
+  "project": "CF_Waterbirds",
+  "sweep_count": 80,
+  "sweeps": [
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "GroupDRO_1_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              1
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 1,
+            "min": 0.0001
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "GroupDRO"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "0caw15hl",
+      "name": "GroupDRO_1_tune",
+      "record_errors": [],
+      "run_count": 1,
+      "run_ids": [
+        "dexai8bj"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/0caw15hl"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "GroupDRO_0_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              0
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 100000,
+            "min": 1
+          },
+          "param2": {
+            "distribution": "int_uniform",
+            "max": 200,
+            "min": 10
+          },
+          "param3": {
+            "values": [
+              0.001
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "IRM"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "0dv5v5od",
+      "name": "GroupDRO_0_tune",
+      "record_errors": [],
+      "run_count": 1,
+      "run_ids": [
+        "k7yga7pf"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/0dv5v5od"
+    },
+    {
+      "config": {
+        "method": "grid",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_wg"
+        },
+        "name": "CF-Waterbirds-irm",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              128
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "feature_dimension": {
+            "values": [
+              64
+            ]
+          },
+          "lr": {
+            "values": [
+              0.001
+            ]
+          },
+          "param1": {
+            "values": [
+              100
+            ]
+          },
+          "param2": {
+            "values": [
+              100
+            ]
+          },
+          "seed": {
+            "values": [
+              1001,
+              1002,
+              1003,
+              1004,
+              1005
+            ]
+          },
+          "solver": {
+            "values": [
+              "IRM"
+            ]
+          }
+        },
+        "program": "main.py"
+      },
+      "id": "0jlkpp4z",
+      "name": "CF-Waterbirds-irm",
+      "record_errors": [],
+      "run_count": 1,
+      "run_ids": [
+        "po1gbg7j"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/0jlkpp4z"
+    },
+    {
+      "config": {
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "ECMP_1_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "values": [
+              2
+            ]
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              1
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 100000,
+            "min": 1
+          },
+          "param2": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 4
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "ECMP"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "1fzuzh1n",
+      "name": "ECMP_1_tune",
+      "record_errors": [],
+      "run_count": 3,
+      "run_ids": [
+        "elqd7rkd",
+        "148mm0ry",
+        "1j4mnyjw"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/1fzuzh1n"
+    },
+    {
+      "config": {
+        "method": "grid",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_wg"
+        },
+        "name": "CF-Waterbirds-irm",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              128
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "feature_dimension": {
+            "values": [
+              64
+            ]
+          },
+          "lr": {
+            "values": [
+              0.001
+            ]
+          },
+          "param1": {
+            "values": [
+              100
+            ]
+          },
+          "param2": {
+            "values": [
+              100
+            ]
+          },
+          "seed": {
+            "values": [
+              1001,
+              1002,
+              1003,
+              1004,
+              1005
+            ]
+          },
+          "solver": {
+            "values": [
+              "IRM"
+            ]
+          }
+        },
+        "program": "main.py"
+      },
+      "id": "1plqm59b",
+      "name": "CF-Waterbirds-irm",
+      "record_errors": [],
+      "run_count": 2,
+      "run_ids": [
+        "8bxuwa1h",
+        "0pxc5sto"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/1plqm59b"
+    },
+    {
+      "config": {
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "IRM_2_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              2
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 100000,
+            "min": 1
+          },
+          "param2": {
+            "distribution": "int_uniform",
+            "max": 200,
+            "min": 10
+          },
+          "param3": {
+            "values": [
+              0.001
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "IRM"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "1w7ld2yn",
+      "name": "IRM_2_tune",
+      "record_errors": [],
+      "run_count": 1,
+      "run_ids": [
+        "f8jlhsov"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/1w7ld2yn"
+    },
+    {
+      "config": {
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "IRM_0_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              0
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 100000,
+            "min": 1
+          },
+          "param2": {
+            "distribution": "int_uniform",
+            "max": 200,
+            "min": 10
+          },
+          "param3": {
+            "values": [
+              0.001
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "REx"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "2rr6k3yg",
+      "name": "IRM_0_tune",
+      "record_errors": [],
+      "run_count": 1,
+      "run_ids": [
+        "nof6hjls"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/2rr6k3yg"
+    },
+    {
+      "config": {
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "CMP_2_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              2
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 100000,
+            "min": 1
+          },
+          "param2": {
+            "values": [
+              128
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "CMP"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "2x52h9rc",
+      "name": "CMP_2_tune",
+      "record_errors": [],
+      "run_count": 5,
+      "run_ids": [
+        "zexrzt9z",
+        "eaew1z8f",
+        "uk7svm4m",
+        "nexaj81d",
+        "170q7ot3"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/2x52h9rc"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "ERM_0_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              0
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "ERM"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "2y0oi52i",
+      "name": "ERM_0_tune",
+      "record_errors": [],
+      "run_count": 2,
+      "run_ids": [
+        "cjnn9k60",
+        "06as6y6v"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/2y0oi52i"
+    },
+    {
+      "config": {
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "ECMP_0_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "values": [
+              2
+            ]
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              0
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 100000,
+            "min": 1
+          },
+          "param2": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 4
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "ECMP"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "3xagvilr",
+      "name": "ECMP_0_tune",
+      "record_errors": [],
+      "run_count": 0,
+      "run_ids": [],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/3xagvilr"
+    },
+    {
+      "config": {
+        "method": "grid",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_wg"
+        },
+        "name": "CF-Waterbirds-groupdro",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              128
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "feature_dimension": {
+            "values": [
+              64
+            ]
+          },
+          "lr": {
+            "values": [
+              0.001
+            ]
+          },
+          "param1": {
+            "values": [
+              0.01
+            ]
+          },
+          "seed": {
+            "values": [
+              1001,
+              1002,
+              1003,
+              1004,
+              1005
+            ]
+          },
+          "solver": {
+            "values": [
+              "GroupDRO"
+            ]
+          }
+        },
+        "program": "main.py"
+      },
+      "id": "49z5ma1u",
+      "name": "CF-Waterbirds-groupdro",
+      "record_errors": [],
+      "run_count": 1,
+      "run_ids": [
+        "ghtuz90g"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/49z5ma1u"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "CMP_1_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              0
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 100000,
+            "min": 1
+          },
+          "param2": {
+            "values": [
+              128
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "CMP"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "4gt6539x",
+      "name": "CMP_1_tune",
+      "record_errors": [],
+      "run_count": 1,
+      "run_ids": [
+        "lcep72kq"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/4gt6539x"
+    },
+    {
+      "config": {
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "CMP_1_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "values": [
+              64
+            ]
+          },
+          "lr": {
+            "values": [
+              0.001
+            ]
+          },
+          "mode": {
+            "values": [
+              1
+            ]
+          },
+          "param1": {
+            "values": [
+              500
+            ]
+          },
+          "param2": {
+            "values": [
+              256
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "CMP"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "5chgohk5",
+      "name": "CMP_1_tune",
+      "record_errors": [],
+      "run_count": 6,
+      "run_ids": [
+        "ibwwp5ud",
+        "lgp27cah",
+        "utx64c7r",
+        "7jodno03",
+        "g576b7dz",
+        "duplwzw2"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/5chgohk5"
+    },
+    {
+      "config": {
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "ECMP_0_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "values": [
+              2
+            ]
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              0
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 100000,
+            "min": 1
+          },
+          "param2": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 4
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "ECMP"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "5uj4i8fe",
+      "name": "ECMP_0_tune",
+      "record_errors": [],
+      "run_count": 3,
+      "run_ids": [
+        "pw09nch3",
+        "xzxfu8vv",
+        "oeh9vqu5"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/5uj4i8fe"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "IRM_0_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              0
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 100000,
+            "min": 1
+          },
+          "param2": {
+            "distribution": "int_uniform",
+            "max": 200,
+            "min": 10
+          },
+          "param3": {
+            "values": [
+              0.001
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "GroupDRO"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "5yroe8cw",
+      "name": "IRM_0_tune",
+      "record_errors": [],
+      "run_count": 1,
+      "run_ids": [
+        "8kyuccha"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/5yroe8cw"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "GroupDRO_2_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              2
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 1,
+            "min": 0.0001
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "GroupDRO"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "6p3zpdds",
+      "name": "GroupDRO_2_tune",
+      "record_errors": [],
+      "run_count": 1,
+      "run_ids": [
+        "c49fowjx"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/6p3zpdds"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "ERM_0_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              0
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "ERM"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "6umw0yfs",
+      "name": "ERM_0_tune",
+      "record_errors": [],
+      "run_count": 160,
+      "run_ids": [
+        "ouugqv1l",
+        "s10n9lqt",
+        "1uybd30l",
+        "wuzefesq",
+        "t7uioorq",
+        "8ex1livp",
+        "cvz17gel",
+        "isw2db87",
+        "5uooj4ce",
+        "rps4b1b1",
+        "tqiexdba",
+        "tnfcjjaz",
+        "xep2j39h",
+        "1dl2vdez",
+        "3uxvpj5a",
+        "r79ciutd",
+        "iwoi01xa",
+        "1in4bb0q",
+        "f4f0g4jm",
+        "7t7pfc63",
+        "l84eypjt",
+        "itp1dh0p",
+        "zyuk2qq7",
+        "81bocvxc",
+        "de39sj6j",
+        "mq3o0l3s",
+        "v9jepset",
+        "s74yo27d",
+        "abif7xbn",
+        "2s68km70",
+        "wanbvhak",
+        "ojy13tj4",
+        "9hb0oj7a",
+        "p26976g1",
+        "z19d0z3e",
+        "dl25hscm",
+        "nry0qu4i",
+        "22buou8c",
+        "7gibxmrg",
+        "nom9hh62",
+        "9ld4yje2",
+        "3wwhzfia",
+        "ua48nj0q",
+        "edboks86",
+        "xaqxfsal",
+        "p30ryy18",
+        "mt0g5cuy",
+        "8d0xkpic",
+        "wauygs1r",
+        "xj2faouh",
+        "bb1hp3jh",
+        "2vh1ylz1",
+        "5q9lbynh",
+        "d1tbx5tn",
+        "q6baw7h7",
+        "d5pknsdt",
+        "pmk5d6zl",
+        "cvv8lmpe",
+        "yxo8qice",
+        "w8e2gwns",
+        "e6rnloq5",
+        "zlqtt039",
+        "a58k1yzj",
+        "h0t1rhgl",
+        "47flrwfg",
+        "04qt044q",
+        "d4bwj8zz",
+        "cu0y9ez5",
+        "scph5v3r",
+        "3u6jvknw",
+        "qbbaa9n7",
+        "zs7w916f",
+        "3819yuq7",
+        "yjiwg15t",
+        "kp1imqjt",
+        "rspjm9hb",
+        "xdv4l9dy",
+        "icko7uxr",
+        "jivoyw47",
+        "yvebqyr3",
+        "qaywiusk",
+        "wfr5afkd",
+        "qq4ter8r",
+        "c28uts2z",
+        "6l2az8sc",
+        "tfkp2ywz",
+        "ril6dorj",
+        "wqv9ekc0",
+        "y2q40s7n",
+        "lz0s3p3h",
+        "ir021r6y",
+        "0zl4d81u",
+        "3pgm0032",
+        "hn0rwmrd",
+        "peydw4wy",
+        "mi3hw0ge",
+        "g8cdyr4m",
+        "61i9jvo5",
+        "x9x10p0k",
+        "t40yh95m",
+        "7fk7dpsw",
+        "d39qtoal",
+        "qm4rix5x",
+        "68as8or4",
+        "2pgto9qd",
+        "p5c3sslr",
+        "ju1nssvq",
+        "772qteeg",
+        "9yxcbkhy",
+        "jr3xd7kd",
+        "i29imtuw",
+        "zwv6i6vj",
+        "yqi7q6ao",
+        "sbd8g9ua",
+        "a85wiff5",
+        "5mhdt7bt",
+        "afm8ytup",
+        "v8xvxvdd",
+        "ev32i1iz",
+        "ydeiqlg2",
+        "6gp1fz9l",
+        "9wpjjfxv",
+        "k2e9pg2m",
+        "ilpx8hpv",
+        "t4tqn7nn",
+        "ajnirpdp",
+        "3kco3qxo",
+        "sfj92897",
+        "1nd6jtzl",
+        "51nh9f0m",
+        "dh3vmho4",
+        "aa8myy84",
+        "smw4ex58",
+        "j9un9326",
+        "qawzme2a",
+        "y7i4ds7j",
+        "9phxl20i",
+        "sp6kc5mx",
+        "931dqa3y",
+        "d33exiun",
+        "07b6sq3q",
+        "5emaw5hg",
+        "5e2z8ul4",
+        "ppmo8tok",
+        "y49dsdvk",
+        "ry6hdig6",
+        "9ele2hve",
+        "7wqt1x44",
+        "jggwgmtb",
+        "7c6ets85",
+        "mwa76y7w",
+        "619ffp6l",
+        "98u1hbvw",
+        "58pp5aie",
+        "p3aa1ddw",
+        "ubaqskfc",
+        "o1u8atp4",
+        "lrny73dl",
+        "9xz203sl",
+        "rccjw6po"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "FINISHED",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/6umw0yfs"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "CMP_1_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "values": [
+              64
+            ]
+          },
+          "lr": {
+            "values": [
+              0.001
+            ]
+          },
+          "mode": {
+            "values": [
+              0
+            ]
+          },
+          "param1": {
+            "values": [
+              500
+            ]
+          },
+          "param2": {
+            "values": [
+              256
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "CMP"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "71x5ngfw",
+      "name": "CMP_1_tune",
+      "record_errors": [],
+      "run_count": 1,
+      "run_ids": [
+        "sw945ygv"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/71x5ngfw"
+    },
+    {
+      "config": {
+        "method": "grid",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_wg"
+        },
+        "name": "CF-Waterbirds-upweighting",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              128
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "feature_dimension": {
+            "values": [
+              64
+            ]
+          },
+          "lr": {
+            "values": [
+              0.001
+            ]
+          },
+          "param1": {
+            "values": [
+              500
+            ]
+          },
+          "param2": {
+            "values": [
+              256
+            ]
+          },
+          "seed": {
+            "values": [
+              1001,
+              1002,
+              1003,
+              1004,
+              1005
+            ]
+          },
+          "solver": {
+            "values": [
+              "CF_Pair"
+            ]
+          },
+          "upweighting": {
+            "values": [
+              "false",
+              "true"
+            ]
+          }
+        },
+        "program": "main.py"
+      },
+      "id": "75tzvvrm",
+      "name": "CF-Waterbirds-upweighting",
+      "record_errors": [],
+      "run_count": 2,
+      "run_ids": [
+        "ivghtvgf",
+        "crizpoim"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/75tzvvrm"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "Fish_0_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              0
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 0.1,
+            "min": 0.0001
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "Fish"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "8p3ej664",
+      "name": "Fish_0_tune",
+      "record_errors": [],
+      "run_count": 1,
+      "run_ids": [
+        "qgd8kaxd"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/8p3ej664"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "CMP_0_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              0
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 100000,
+            "min": 1
+          },
+          "param2": {
+            "values": [
+              128
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "CMP"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "9a3xh3mw",
+      "name": "CMP_0_tune",
+      "record_errors": [],
+      "run_count": 1,
+      "run_ids": [
+        "2ckpfh2i"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/9a3xh3mw"
+    },
+    {
+      "config": {
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "IRM_1_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              1
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 100000,
+            "min": 1
+          },
+          "param2": {
+            "distribution": "int_uniform",
+            "max": 200,
+            "min": 10
+          },
+          "param3": {
+            "values": [
+              0.001
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "REx"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "9wtqxgec",
+      "name": "IRM_1_tune",
+      "record_errors": [],
+      "run_count": 1,
+      "run_ids": [
+        "jb4xgz1i"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/9wtqxgec"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "ERM_2_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              2
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "ERM"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "b4ydtmby",
+      "name": "ERM_2_tune",
+      "record_errors": [],
+      "run_count": 6,
+      "run_ids": [
+        "r33w1zl3",
+        "fjjp47v1",
+        "ycphvynz",
+        "dihqx68o",
+        "cy0zx3cs",
+        "l5gw9q1t"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/b4ydtmby"
+    },
+    {
+      "config": {
+        "method": "grid",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_wg"
+        },
+        "name": "CF-Waterbirds-upweighting",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              128
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "feature_dimension": {
+            "values": [
+              64
+            ]
+          },
+          "lr": {
+            "values": [
+              0.001
+            ]
+          },
+          "param1": {
+            "values": [
+              500
+            ]
+          },
+          "param2": {
+            "values": [
+              256
+            ]
+          },
+          "seed": {
+            "values": [
+              1001,
+              1002,
+              1003,
+              1004,
+              1005
+            ]
+          },
+          "solver": {
+            "values": [
+              "ERM",
+              "CF_Pair"
+            ]
+          },
+          "upweighting": {
+            "values": [
+              "false",
+              "true"
+            ]
+          }
+        },
+        "program": "main.py"
+      },
+      "id": "b9188jmh",
+      "name": "CF-Waterbirds-upweighting",
+      "record_errors": [],
+      "run_count": 1,
+      "run_ids": [
+        "efmu45rm"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/b9188jmh"
+    },
+    {
+      "config": {
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "Fish_0_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              0
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 0.1,
+            "min": 0.0001
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "Fish"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "bxe2iwem",
+      "name": "Fish_0_tune",
+      "record_errors": [],
+      "run_count": 1,
+      "run_ids": [
+        "idnauyau"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/bxe2iwem"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "CMP_0_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              0
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 100000,
+            "min": 1
+          },
+          "param2": {
+            "values": [
+              128
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "CMP"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "c39jom0n",
+      "name": "CMP_0_tune",
+      "record_errors": [],
+      "run_count": 2,
+      "run_ids": [
+        "01vwii78",
+        "6da9io7d"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/c39jom0n"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "IRM_0_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              0
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 100000,
+            "min": 1
+          },
+          "param2": {
+            "distribution": "int_uniform",
+            "max": 200,
+            "min": 10
+          },
+          "param3": {
+            "values": [
+              0.001
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "IRM"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "c973cy26",
+      "name": "IRM_0_tune",
+      "record_errors": [],
+      "run_count": 6,
+      "run_ids": [
+        "660gqz64",
+        "tkaa2pma",
+        "sdcfj7j6",
+        "giznacfq",
+        "zwlr1h42",
+        "rftvdcih"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/c973cy26"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "GroupDRO_0_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              0
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 1,
+            "min": 0.0001
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "GroupDRO"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "d0p0ck6h",
+      "name": "GroupDRO_0_tune",
+      "record_errors": [],
+      "run_count": 1,
+      "run_ids": [
+        "ujwkphdd"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/d0p0ck6h"
+    },
+    {
+      "config": {
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "ECMP_2_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "values": [
+              2
+            ]
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              2
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 100000,
+            "min": 1
+          },
+          "param2": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 4
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "ECMP"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "dynvqgqt",
+      "name": "ECMP_2_tune",
+      "record_errors": [],
+      "run_count": 1,
+      "run_ids": [
+        "5vgfz5um"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/dynvqgqt"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "IRM_2_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              2
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 100000,
+            "min": 1
+          },
+          "param2": {
+            "distribution": "int_uniform",
+            "max": 200,
+            "min": 10
+          },
+          "param3": {
+            "values": [
+              0.001
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "IRM"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "enc3ebsa",
+      "name": "IRM_2_tune",
+      "record_errors": [],
+      "run_count": 6,
+      "run_ids": [
+        "n14t96zg",
+        "oy5ocjrp",
+        "vkte7bkn",
+        "nvklpt9t",
+        "2vt15jh1",
+        "tviq7dil"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/enc3ebsa"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "CMP_0_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              0
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 100000,
+            "min": 1
+          },
+          "param2": {
+            "values": [
+              128
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "CMP"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "epu3zrcy",
+      "name": "CMP_0_tune",
+      "record_errors": [],
+      "run_count": 0,
+      "run_ids": [],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/epu3zrcy"
+    },
+    {
+      "config": {
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "CMP_2_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              2
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 100000,
+            "min": 1
+          },
+          "param2": {
+            "values": [
+              128
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "CMP"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "f7ki1tgx",
+      "name": "CMP_2_tune",
+      "record_errors": [],
+      "run_count": 6,
+      "run_ids": [
+        "m2x1hrg7",
+        "wceieyj2",
+        "8q53qtxr",
+        "5uti7rzs",
+        "vosxcp8k",
+        "sv1sy9mr"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/f7ki1tgx"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "CMP_1_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              0
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 100000,
+            "min": 1
+          },
+          "param2": {
+            "values": [
+              128
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "CMP"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "fcjdn7pq",
+      "name": "CMP_1_tune",
+      "record_errors": [],
+      "run_count": 0,
+      "run_ids": [],
+      "run_ids_source": "sweep.runs",
+      "state": "PENDING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/fcjdn7pq"
+    },
+    {
+      "config": {
+        "method": "grid",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_wg"
+        },
+        "name": "CF-Waterbirds-upweighting",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              128
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "feature_dimension": {
+            "values": [
+              64
+            ]
+          },
+          "lr": {
+            "values": [
+              0.001
+            ]
+          },
+          "param1": {
+            "values": [
+              500
+            ]
+          },
+          "param2": {
+            "values": [
+              256
+            ]
+          },
+          "param3": {
+            "values": [
+              3,
+              5,
+              7
+            ]
+          },
+          "seed": {
+            "values": [
+              1001,
+              1002,
+              1003,
+              1004,
+              1005
+            ]
+          },
+          "solver": {
+            "values": [
+              "TruncatedMatching"
+            ]
+          },
+          "upweighting": {
+            "values": [
+              "false",
+              "true"
+            ]
+          }
+        },
+        "program": "main.py"
+      },
+      "id": "gpyznzle",
+      "name": "CF-Waterbirds-upweighting",
+      "record_errors": [],
+      "run_count": 1,
+      "run_ids": [
+        "baspjdaf"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/gpyznzle"
+    },
+    {
+      "config": {
+        "method": "grid",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_wg"
+        },
+        "name": "CF-Waterbirds-upweighting",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              128
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "feature_dimension": {
+            "values": [
+              64
+            ]
+          },
+          "lr": {
+            "values": [
+              0.001
+            ]
+          },
+          "param1": {
+            "values": [
+              500
+            ]
+          },
+          "param2": {
+            "values": [
+              256
+            ]
+          },
+          "root_dir": {
+            "values": [
+              "/local/scratch/a/bai116/datasets"
+            ]
+          },
+          "seed": {
+            "values": [
+              1001,
+              1002,
+              1003,
+              1004,
+              1005
+            ]
+          },
+          "solver": {
+            "values": [
+              "ERM",
+              "CF_Pair"
+            ]
+          },
+          "upweighting": {
+            "values": [
+              "false",
+              "true"
+            ]
+          }
+        },
+        "program": "main.py"
+      },
+      "id": "gssglpvh",
+      "name": "CF-Waterbirds-upweighting",
+      "record_errors": [],
+      "run_count": 1,
+      "run_ids": [
+        "arltmggi"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/gssglpvh"
+    },
+    {
+      "config": {
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "CMP_1_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "values": [
+              64
+            ]
+          },
+          "lr": {
+            "values": [
+              0.001
+            ]
+          },
+          "mode": {
+            "values": [
+              1
+            ]
+          },
+          "param1": {
+            "values": [
+              500
+            ]
+          },
+          "param2": {
+            "values": [
+              256
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "CMP"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "gx879u87",
+      "name": "CMP_1_tune",
+      "record_errors": [],
+      "run_count": 6,
+      "run_ids": [
+        "du2mq807",
+        "fj11i435",
+        "26gu7axu",
+        "e69whf8z",
+        "l1nousyl",
+        "mx3qpoiu"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/gx879u87"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "IRM_0_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              0
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 100000,
+            "min": 1
+          },
+          "param2": {
+            "distribution": "int_uniform",
+            "max": 200,
+            "min": 10
+          },
+          "param3": {
+            "values": [
+              0.001
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "REx"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "htm51tz2",
+      "name": "IRM_0_tune",
+      "record_errors": [],
+      "run_count": 1,
+      "run_ids": [
+        "phzlnnxa"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/htm51tz2"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "ERM_0_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              0
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "ERM"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "htrzx04u",
+      "name": "ERM_0_tune",
+      "record_errors": [],
+      "run_count": 1,
+      "run_ids": [
+        "r3s0lhlr"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/htrzx04u"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "CMP_0_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              0
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 100000,
+            "min": 1
+          },
+          "param2": {
+            "values": [
+              128
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "CMP"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "hz18m5vx",
+      "name": "CMP_0_tune",
+      "record_errors": [],
+      "run_count": 3,
+      "run_ids": [
+        "5diouqiq",
+        "dgu4teae",
+        "p4u9e9bl"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/hz18m5vx"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "CMP_0_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              0
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 100000,
+            "min": 1
+          },
+          "param2": {
+            "values": [
+              128
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "CMP"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "ifhnbje3",
+      "name": "CMP_0_tune",
+      "record_errors": [],
+      "run_count": 4,
+      "run_ids": [
+        "y41jgxuh",
+        "s4u60iuc",
+        "jde0pxnn",
+        "jvfgvi0b"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/ifhnbje3"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "CMP_2_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              512
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "values": [
+              64
+            ]
+          },
+          "lr": {
+            "values": [
+              0.001
+            ]
+          },
+          "mode": {
+            "values": [
+              2
+            ]
+          },
+          "param1": {
+            "values": [
+              500
+            ]
+          },
+          "param2": {
+            "values": [
+              256
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "CMP"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "in4hjtl0",
+      "name": "CMP_2_tune",
+      "record_errors": [],
+      "run_count": 5,
+      "run_ids": [
+        "fc8gf6ls",
+        "bp2uir78",
+        "27ei7pwx",
+        "qmckyhjv",
+        "2pnjecn3"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/in4hjtl0"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "IRM_1_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              1
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 100000,
+            "min": 1
+          },
+          "param2": {
+            "distribution": "int_uniform",
+            "max": 200,
+            "min": 10
+          },
+          "param3": {
+            "values": [
+              0.001
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "IRM"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "ix1easvp",
+      "name": "IRM_1_tune",
+      "record_errors": [],
+      "run_count": 6,
+      "run_ids": [
+        "pliiqwzf",
+        "soz24wdh",
+        "175kazyb",
+        "yxbvmcqj",
+        "s74mt2ea",
+        "04cc0mmj"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/ix1easvp"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "Fish_2_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              2
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 0.1,
+            "min": 0.0001
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "Fish"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "j0tcx5yf",
+      "name": "Fish_2_tune",
+      "record_errors": [],
+      "run_count": 1,
+      "run_ids": [
+        "12nb771s"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/j0tcx5yf"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "GroupDRO_2_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              2
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 1,
+            "min": 0.0001
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "GroupDRO"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "j9eqel6d",
+      "name": "GroupDRO_2_tune",
+      "record_errors": [],
+      "run_count": 0,
+      "run_ids": [],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/j9eqel6d"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "CMP_0_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              0
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 100000,
+            "min": 1
+          },
+          "param2": {
+            "values": [
+              128
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "CMP"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "k2ruzhnj",
+      "name": "CMP_0_tune",
+      "record_errors": [],
+      "run_count": 3,
+      "run_ids": [
+        "7e26veq8",
+        "8n4thpkk",
+        "x9k2bnof"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/k2ruzhnj"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "CMP_0_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              0
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 100000,
+            "min": 1
+          },
+          "param2": {
+            "values": [
+              128
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "CMP"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "k96dmqm2",
+      "name": "CMP_0_tune",
+      "record_errors": [],
+      "run_count": 1,
+      "run_ids": [
+        "o1rwux9n"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/k96dmqm2"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "CMP_1_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              0
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 100000,
+            "min": 1
+          },
+          "param2": {
+            "values": [
+              128
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "CMP"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "kkz9q7tr",
+      "name": "CMP_1_tune",
+      "record_errors": [],
+      "run_count": 1,
+      "run_ids": [
+        "0rvdkpwx"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/kkz9q7tr"
+    },
+    {
+      "config": {
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "ECMP_2_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              100
+            ]
+          },
+          "latent_dim": {
+            "values": [
+              2
+            ]
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              3
+            ]
+          },
+          "param1": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 2
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "ECMP"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "kttz2hf5",
+      "name": "ECMP_2_tune",
+      "record_errors": [],
+      "run_count": 87,
+      "run_ids": [
+        "m0cr14kh",
+        "qlxfdsp9",
+        "p2s1kubu",
+        "yn1d5iap",
+        "jj79yjkw",
+        "e590ab39",
+        "t5u3f2ov",
+        "u5is65ds",
+        "9wy3ejek",
+        "vx8p84i8",
+        "bwbeyhqc",
+        "r1e5stbw",
+        "bzubt6dd",
+        "5r2qn7wk",
+        "t2wfw699",
+        "8yu58nif",
+        "8mhr1xgg",
+        "nnymxm2l",
+        "dhyl3an1",
+        "097935ns",
+        "e4kbu0y1",
+        "z1losyne",
+        "r4doi9kv",
+        "nze1swwf",
+        "zxl6qfuh",
+        "0ledzt96",
+        "aqqepx4q",
+        "3qqwg45d",
+        "nyr6b9ec",
+        "lwf1xf9j",
+        "a4u9eybv",
+        "yinc2vg3",
+        "v0ulz8m8",
+        "xzrbzvgq",
+        "ukhvjxey",
+        "ycbclbmy",
+        "8wzrm8ht",
+        "g30zxqys",
+        "qyc5ayvv",
+        "ktsqd1dl",
+        "l63x664g",
+        "6wjzp86r",
+        "87y0jyof",
+        "n3jx3gir",
+        "bindpiv0",
+        "4xitflby",
+        "nantk0km",
+        "yniwbusl",
+        "hi382876",
+        "xuo9xbgg",
+        "rokt9dst",
+        "nr48wqy7",
+        "le7c5549",
+        "6csd9xhy",
+        "iotikvqh",
+        "wkev8dvq",
+        "vypef2bh",
+        "wyqvvx8u",
+        "gfjlatuj",
+        "oul6ti6a",
+        "24xcyxzy",
+        "0x3elvgf",
+        "krcp2jkt",
+        "1rmri9zs",
+        "s65fns7f",
+        "rfhwzd5r",
+        "dliponrs",
+        "l2gmvo8n",
+        "5z6hi7hw",
+        "k1ni6vce",
+        "c9qib6eo",
+        "hrn69uj5",
+        "6h7a5n88",
+        "cje2lv39",
+        "53d6jr3j",
+        "thv8m2hg",
+        "vh1tgjik",
+        "21nna8rp",
+        "sruwrmoe",
+        "q1gjvu04",
+        "amxfkpqa",
+        "wmg0qyn0",
+        "ab9axfli",
+        "lqc3inmz",
+        "qbmjmge8",
+        "m3zobqmg",
+        "h0vp0mqe"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/kttz2hf5"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "ERM_0_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              0
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "ERM"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "mb6habom",
+      "name": "ERM_0_tune",
+      "record_errors": [],
+      "run_count": 1,
+      "run_ids": [
+        "yuqlng5v"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/mb6habom"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "CMP_1_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              0
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 100000,
+            "min": 1
+          },
+          "param2": {
+            "values": [
+              128
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "CMP"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "ny3jf5wf",
+      "name": "CMP_1_tune",
+      "record_errors": [],
+      "run_count": 0,
+      "run_ids": [],
+      "run_ids_source": "sweep.runs",
+      "state": "PENDING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/ny3jf5wf"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "CMP_0_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              0
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 100000,
+            "min": 1
+          },
+          "param2": {
+            "values": [
+              128
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "CMP"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "nydb2lof",
+      "name": "CMP_0_tune",
+      "record_errors": [],
+      "run_count": 3,
+      "run_ids": [
+        "53ov7gw8",
+        "d8qm3wb1",
+        "pbjjr8r3"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/nydb2lof"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "CMP_0_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              0
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 100000,
+            "min": 1
+          },
+          "param2": {
+            "values": [
+              128
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "CMP"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "oqagos8h",
+      "name": "CMP_0_tune",
+      "record_errors": [],
+      "run_count": 0,
+      "run_ids": [],
+      "run_ids_source": "sweep.runs",
+      "state": "PENDING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/oqagos8h"
+    },
+    {
+      "config": {
+        "method": "grid",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_wg"
+        },
+        "name": "CF-Waterbirds-groupdro",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              128
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "feature_dimension": {
+            "values": [
+              64
+            ]
+          },
+          "lr": {
+            "values": [
+              0.001
+            ]
+          },
+          "param1": {
+            "values": [
+              0.01
+            ]
+          },
+          "seed": {
+            "values": [
+              1001,
+              1002,
+              1003,
+              1004,
+              1005
+            ]
+          },
+          "solver": {
+            "values": [
+              "GroupDRO"
+            ]
+          }
+        },
+        "program": "main.py"
+      },
+      "id": "p0g2a1kt",
+      "name": "CF-Waterbirds-groupdro",
+      "record_errors": [],
+      "run_count": 1,
+      "run_ids": [
+        "40saq5qw"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/p0g2a1kt"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "CMP_0_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              0
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 100000,
+            "min": 1
+          },
+          "param2": {
+            "values": [
+              128
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "CMP"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "q5u6g040",
+      "name": "CMP_0_tune",
+      "record_errors": [],
+      "run_count": 1,
+      "run_ids": [
+        "13olw04v"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/q5u6g040"
+    },
+    {
+      "config": {
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "IRM_2_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              2
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 100000,
+            "min": 1
+          },
+          "param2": {
+            "distribution": "int_uniform",
+            "max": 200,
+            "min": 10
+          },
+          "param3": {
+            "values": [
+              0.001
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "REx"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "qktptria",
+      "name": "IRM_2_tune",
+      "record_errors": [],
+      "run_count": 1,
+      "run_ids": [
+        "p0tk0wab"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/qktptria"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "Fish_1_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              1
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 0.1,
+            "min": 0.0001
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "Fish"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "qrlsvqor",
+      "name": "Fish_1_tune",
+      "record_errors": [],
+      "run_count": 1,
+      "run_ids": [
+        "rl3km0zy"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/qrlsvqor"
+    },
+    {
+      "config": {
+        "method": "grid",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_wg"
+        },
+        "name": "CF-Waterbirds-upweighting",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              128
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "feature_dimension": {
+            "values": [
+              64
+            ]
+          },
+          "lr": {
+            "values": [
+              0.001
+            ]
+          },
+          "param1": {
+            "values": [
+              500
+            ]
+          },
+          "param2": {
+            "values": [
+              256
+            ]
+          },
+          "param3": {
+            "values": [
+              3,
+              5,
+              7
+            ]
+          },
+          "seed": {
+            "values": [
+              1001,
+              1002,
+              1003,
+              1004,
+              1005
+            ]
+          },
+          "solver": {
+            "values": [
+              "TruncatedMatching"
+            ]
+          },
+          "upweighting": {
+            "values": [
+              "false",
+              "true"
+            ]
+          }
+        },
+        "program": "main.py"
+      },
+      "id": "rai5q4np",
+      "name": "CF-Waterbirds-upweighting",
+      "record_errors": [],
+      "run_count": 2,
+      "run_ids": [
+        "hud6asz7",
+        "udd0681o"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/rai5q4np"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "CMP_1_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              0
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 100000,
+            "min": 1
+          },
+          "param2": {
+            "values": [
+              128
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "CMP"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "rajo1n37",
+      "name": "CMP_1_tune",
+      "record_errors": [],
+      "run_count": 2,
+      "run_ids": [
+        "plp3f6h6",
+        "nuatg1fl"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/rajo1n37"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "ERM_0_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              0
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "ERM"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "re91oqiz",
+      "name": "ERM_0_tune",
+      "record_errors": [],
+      "run_count": 4,
+      "run_ids": [
+        "20lw5wrd",
+        "50zsceqm",
+        "a5egnrh3",
+        "sb4q0nda"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/re91oqiz"
+    },
+    {
+      "config": {
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "CMP_0_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              0
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 100000,
+            "min": 1
+          },
+          "param2": {
+            "values": [
+              128
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "CMP"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "rludpcrr",
+      "name": "CMP_0_tune",
+      "record_errors": [],
+      "run_count": 6,
+      "run_ids": [
+        "t7ksza4s",
+        "6gc8kg61",
+        "f5sz0xhg",
+        "g7dk9ua5",
+        "vju4s3s7",
+        "2imzlrw3"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/rludpcrr"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "CMP_1_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              0
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 100000,
+            "min": 1
+          },
+          "param2": {
+            "values": [
+              128
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "CMP"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "rsktbph3",
+      "name": "CMP_1_tune",
+      "record_errors": [],
+      "run_count": 1,
+      "run_ids": [
+        "3c0hwnni"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/rsktbph3"
+    },
+    {
+      "config": {
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "IRM_0_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              0
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 100000,
+            "min": 1
+          },
+          "param2": {
+            "distribution": "int_uniform",
+            "max": 200,
+            "min": 10
+          },
+          "param3": {
+            "values": [
+              0.001
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "IRM"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "s4heittz",
+      "name": "IRM_0_tune",
+      "record_errors": [],
+      "run_count": 1,
+      "run_ids": [
+        "4ror3vu0"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/s4heittz"
+    },
+    {
+      "config": {
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "Fish_1_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              1
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 0.1,
+            "min": 0.0001
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "Fish"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "toj1gydu",
+      "name": "Fish_1_tune",
+      "record_errors": [],
+      "run_count": 1,
+      "run_ids": [
+        "mxgvo9f6"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/toj1gydu"
+    },
+    {
+      "config": {
+        "method": "grid",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_wg"
+        },
+        "name": "Waterbirds-dataset",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              128
+            ]
+          },
+          "dataset": {
+            "values": [
+              "waterbirds",
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "lr": {
+            "values": [
+              0.001
+            ]
+          },
+          "root_dir": {
+            "values": [
+              "/local/scratch/a/bai116/datasets"
+            ]
+          },
+          "seed": {
+            "values": [
+              1001,
+              1002,
+              1003,
+              1004,
+              1005
+            ]
+          },
+          "solver": {
+            "values": [
+              "ERM"
+            ]
+          }
+        },
+        "program": "main.py"
+      },
+      "id": "txvn9aiw",
+      "name": "Waterbirds-dataset",
+      "record_errors": [],
+      "run_count": 3,
+      "run_ids": [
+        "jjqe9x77",
+        "yuwabcrr",
+        "7afv6c7r"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/txvn9aiw"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "IRM_1_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              1
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 100000,
+            "min": 1
+          },
+          "param2": {
+            "distribution": "int_uniform",
+            "max": 200,
+            "min": 10
+          },
+          "param3": {
+            "values": [
+              0.001
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "IRM"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "u7t6grnt",
+      "name": "IRM_1_tune",
+      "record_errors": [],
+      "run_count": 1,
+      "run_ids": [
+        "uuo2g1ty"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/u7t6grnt"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "CMP_1_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              0
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 100000,
+            "min": 1
+          },
+          "param2": {
+            "values": [
+              128
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "CMP"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "ugyt5cw4",
+      "name": "CMP_1_tune",
+      "record_errors": [],
+      "run_count": 1,
+      "run_ids": [
+        "gm35jbfm"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/ugyt5cw4"
+    },
+    {
+      "config": {
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "CMP_1_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "values": [
+              64
+            ]
+          },
+          "lr": {
+            "values": [
+              0.001
+            ]
+          },
+          "mode": {
+            "values": [
+              1
+            ]
+          },
+          "param1": {
+            "values": [
+              500
+            ]
+          },
+          "param2": {
+            "values": [
+              256
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "CMP"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "v27h2czf",
+      "name": "CMP_1_tune",
+      "record_errors": [],
+      "run_count": 0,
+      "run_ids": [],
+      "run_ids_source": "sweep.runs",
+      "state": "PENDING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/v27h2czf"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "CMP_0_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              0
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 100000,
+            "min": 1
+          },
+          "param2": {
+            "values": [
+              128
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "CMP"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "v6w5388y",
+      "name": "CMP_0_tune",
+      "record_errors": [],
+      "run_count": 5,
+      "run_ids": [
+        "hktn6cdk",
+        "r8t4a6wl",
+        "anqfd4fd",
+        "jhmr6k3n",
+        "0pr5x1kf"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/v6w5388y"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "CMP_1_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "values": [
+              64
+            ]
+          },
+          "lr": {
+            "values": [
+              0.001
+            ]
+          },
+          "mode": {
+            "values": [
+              1
+            ]
+          },
+          "param1": {
+            "values": [
+              500
+            ]
+          },
+          "param2": {
+            "values": [
+              256
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "CMP"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "veonhmmx",
+      "name": "CMP_1_tune",
+      "record_errors": [],
+      "run_count": 1,
+      "run_ids": [
+        "u2xrhsnm"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/veonhmmx"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "CMP_1_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              512
+            ]
+          },
+          "epochs": {
+            "values": [
+              50
+            ]
+          },
+          "latent_dim": {
+            "values": [
+              64
+            ]
+          },
+          "lr": {
+            "values": [
+              0.001
+            ]
+          },
+          "mode": {
+            "values": [
+              1
+            ]
+          },
+          "param1": {
+            "values": [
+              500
+            ]
+          },
+          "param2": {
+            "values": [
+              256
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "CMP"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "vry8bxs0",
+      "name": "CMP_1_tune",
+      "record_errors": [],
+      "run_count": 2,
+      "run_ids": [
+        "ozvdce5d",
+        "vxfye5yw"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/vry8bxs0"
+    },
+    {
+      "config": {
+        "method": "grid",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_wg"
+        },
+        "name": "CF-Waterbirds-upweighting",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              128
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "feature_dimension": {
+            "values": [
+              64
+            ]
+          },
+          "lr": {
+            "values": [
+              0.001
+            ]
+          },
+          "param1": {
+            "values": [
+              500,
+              5000
+            ]
+          },
+          "param2": {
+            "values": [
+              256
+            ]
+          },
+          "seed": {
+            "values": [
+              1001,
+              1002,
+              1003,
+              1004,
+              1005
+            ]
+          },
+          "solver": {
+            "values": [
+              "CF_Pair"
+            ]
+          },
+          "upweighting": {
+            "values": [
+              "false"
+            ]
+          }
+        },
+        "program": "main.py"
+      },
+      "id": "wkusrznn",
+      "name": "CF-Waterbirds-upweighting",
+      "record_errors": [],
+      "run_count": 1,
+      "run_ids": [
+        "j6gqi8cl"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/wkusrznn"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "CMP_0_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              0
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 100000,
+            "min": 1
+          },
+          "param2": {
+            "values": [
+              128
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "CMP"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "wu8nv6zn",
+      "name": "CMP_0_tune",
+      "record_errors": [],
+      "run_count": 1,
+      "run_ids": [
+        "d2948dvi"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/wu8nv6zn"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "Fish_2_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              2
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 0.1,
+            "min": 0.0001
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "Fish"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "xivnos3x",
+      "name": "Fish_2_tune",
+      "record_errors": [],
+      "run_count": 0,
+      "run_ids": [],
+      "run_ids_source": "sweep.runs",
+      "state": "PENDING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/xivnos3x"
+    },
+    {
+      "config": {
+        "method": "grid",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_wg"
+        },
+        "name": "CF-Waterbirds-irm",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              128
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "feature_dimension": {
+            "values": [
+              64
+            ]
+          },
+          "lr": {
+            "values": [
+              0.001
+            ]
+          },
+          "param1": {
+            "values": [
+              100
+            ]
+          },
+          "param2": {
+            "values": [
+              100
+            ]
+          },
+          "seed": {
+            "values": [
+              1001,
+              1002,
+              1003,
+              1004,
+              1005
+            ]
+          },
+          "solver": {
+            "values": [
+              "IRM"
+            ]
+          }
+        },
+        "program": "main.py"
+      },
+      "id": "xv4ijix7",
+      "name": "CF-Waterbirds-irm",
+      "record_errors": [],
+      "run_count": 5,
+      "run_ids": [
+        "mbuoljt9",
+        "drlz64bh",
+        "m5tgz6g2",
+        "2ggawo2y",
+        "cx9u6yns"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/xv4ijix7"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "CMP_0_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              0
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 100000,
+            "min": 1
+          },
+          "param2": {
+            "values": [
+              128
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "CMP"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "ydlnpvr2",
+      "name": "CMP_0_tune",
+      "record_errors": [],
+      "run_count": 3,
+      "run_ids": [
+        "tgeku3im",
+        "i3io8fy5",
+        "olui4s4f"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/ydlnpvr2"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "GroupDRO_1_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              1
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 100000,
+            "min": 1
+          },
+          "param2": {
+            "distribution": "int_uniform",
+            "max": 200,
+            "min": 10
+          },
+          "param3": {
+            "values": [
+              0.001
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "GroupDRO"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "yodz9rwj",
+      "name": "GroupDRO_1_tune",
+      "record_errors": [],
+      "run_count": 3,
+      "run_ids": [
+        "0zvpzqkj",
+        "2m3lto7x",
+        "npqbokeb"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/yodz9rwj"
+    },
+    {
+      "config": {
+        "method": "grid",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_wg"
+        },
+        "name": "CF-Waterbirds-groupdro",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              128
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "feature_dimension": {
+            "values": [
+              64
+            ]
+          },
+          "lr": {
+            "values": [
+              0.001
+            ]
+          },
+          "param1": {
+            "values": [
+              0.01
+            ]
+          },
+          "root_dir": {
+            "values": [
+              "/local/scratch/a/bai116/datasets"
+            ]
+          },
+          "seed": {
+            "values": [
+              1001,
+              1002,
+              1003,
+              1004,
+              1005
+            ]
+          },
+          "solver": {
+            "values": [
+              "GroupDRO"
+            ]
+          }
+        },
+        "program": "main.py"
+      },
+      "id": "z0osjs7v",
+      "name": "CF-Waterbirds-groupdro",
+      "record_errors": [],
+      "run_count": 1,
+      "run_ids": [
+        "14nsi3ev"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/z0osjs7v"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "Fish_2_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              2
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 0.1,
+            "min": 0.0001
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "Fish"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "z9vv3boa",
+      "name": "Fish_2_tune",
+      "record_errors": [],
+      "run_count": 1,
+      "run_ids": [
+        "yr81agj3"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/z9vv3boa"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "CMP_0_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "dataset": {
+            "values": [
+              "cfwaterbirds"
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              0
+            ]
+          },
+          "param1": {
+            "distribution": "log_uniform_values",
+            "max": 100000,
+            "min": 1
+          },
+          "param2": {
+            "values": [
+              128
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "CMP"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "zcv0puwy",
+      "name": "CMP_0_tune",
+      "record_errors": [],
+      "run_count": 4,
+      "run_ids": [
+        "ob7ky52y",
+        "nyejzznj",
+        "9plmgkv5",
+        "wk24gq3s"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/zcv0puwy"
+    },
+    {
+      "config": {
+        "early_terminate": false,
+        "method": "bayes",
+        "metric": {
+          "goal": "maximize",
+          "name": "acc_avg"
+        },
+        "name": "ERM_1_tune",
+        "parameters": {
+          "batch_size": {
+            "values": [
+              256
+            ]
+          },
+          "epochs": {
+            "values": [
+              300
+            ]
+          },
+          "latent_dim": {
+            "distribution": "q_log_uniform_values",
+            "max": 512,
+            "min": 8
+          },
+          "lr": {
+            "distribution": "log_uniform_values",
+            "max": 0.01,
+            "min": 0.0001
+          },
+          "mode": {
+            "values": [
+              1
+            ]
+          },
+          "seed": {
+            "values": [
+              1001
+            ]
+          },
+          "solver": {
+            "values": [
+              "ERM"
+            ]
+          }
+        },
+        "program": "main.py",
+        "run_cap": 160
+      },
+      "id": "zsbkf14j",
+      "name": "ERM_1_tune",
+      "record_errors": [],
+      "run_count": 6,
+      "run_ids": [
+        "stf6refa",
+        "1tm1yrcw",
+        "kc77548c",
+        "wm6la6vy",
+        "5174bkn0",
+        "1kssfzr0"
+      ],
+      "run_ids_source": "sweep.runs",
+      "state": "RUNNING",
+      "url": "https://wandb.ai/bai116/CF_Waterbirds/sweeps/zsbkf14j"
+    }
+  ]
+}

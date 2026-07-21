@@ -1,0 +1,152 @@
+{
+  "source": {
+    "description": "Mapping derived from main.py, solver/*.py, datasets/*.py, and experiments/{cmnist,waterbirds}/*.py at base commit 66c282b.",
+    "git_commit": "66c282b"
+  },
+  "dataset": {
+    "config_key": "dataset",
+    "colored_mnist": {
+      "code_values": [
+        "ColoredMNIST",
+        "LISAColoredMNIST"
+      ],
+      "notes": [
+        "Both classes are exported by datasets/__init__.py.",
+        "The checked-in experiments/cmnist scripts use LISAColoredMNIST, while experiments/coloredmnist_ecmp.py uses ColoredMNIST.",
+        "These constructions have different splits and must be reported separately rather than silently aliased."
+      ]
+    },
+    "waterbirds_cf": {
+      "code_values": [
+        "CounterfactualWaterbirds"
+      ],
+      "flag_only_values": [
+        "Waterbirds"
+      ],
+      "notes": [
+        "The class selected by main.py is CounterfactualWaterbirdsDataset or CounterfactualWaterbirdsClipDataset.",
+        "Its internal CLIP dataset name is waterbirds-cf-clip and its split list includes counterfactual.",
+        "Plain Waterbirds is not assumed equivalent; candidates using it are flagged and not accepted by the strict filter."
+      ]
+    }
+  },
+  "representation": {
+    "config_keys": [
+      "pretrained",
+      "featurizer"
+    ],
+    "probing": {
+      "pretrained_values": [
+        "true",
+        true
+      ],
+      "featurizer_values": [
+        "linear"
+      ],
+      "meaning": "Frozen precomputed CLIP features and a linear classifier."
+    },
+    "cnn": {
+      "featurizer_values": [
+        "cnn"
+      ],
+      "meaning": "MNIST_CNN path in ERM._initialize_model; normally used without CLIP preprocessing."
+    },
+    "finetune": {
+      "featurizer_values": [
+        "resnet",
+        "resnet50",
+        "finetune"
+      ],
+      "meaning": "No explicit CLIP-finetune flag exists in base main.py. Nonlinear non-CNN runs are surfaced as candidates but must be verified manually."
+    }
+  },
+  "method": {
+    "config_key": "solver",
+    "paper_to_code": {
+      "ERM": "ERM",
+      "IRM": "IRM",
+      "REx": "REx",
+      "GroupDRO": "GroupDRO",
+      "Fish": "Fish",
+      "SWAD": "SWAD",
+      "LISA": "LISA",
+      "MatchDG": "MatchDG",
+      "GRIT": "ECMP"
+    },
+    "notes": [
+      "ECMP is the codebase name for the paper's closed-form GRIT method.",
+      "ECMP.cal_project computes a rank-param1 low-rank SVD basis and applies I - U U^T before ERM."
+    ]
+  },
+  "pairing": {
+    "config_key": "projection",
+    "paper_to_code": {
+      "random": "conditional",
+      "1NN": "nearest",
+      "clean": "oracle"
+    },
+    "notes": [
+      "conditional randomly matches same-label examples from different domains.",
+      "nearest chooses cross-domain nearest neighbours within label.",
+      "oracle loads the precomputed dataset.diff tensor."
+    ]
+  },
+  "hyperparameters": {
+    "param1": {
+      "ECMP": "rank r passed to torch.svd_lowrank",
+      "MatchDG": "pair-difference constraint weight",
+      "IRM": "penalty weight",
+      "REx": "penalty weight",
+      "GroupDRO": "group-weight step size",
+      "Fish": "meta learning rate",
+      "SWAD": "tolerance rate",
+      "LISA": "selection probability"
+    },
+    "param2": {
+      "IRM": "penalty anneal iterations",
+      "REx": "penalty anneal iterations",
+      "ECMP": "present in some sweep configs as a pair-count setting, but pair subsampling is commented out at base commit 66c282b",
+      "MatchDG": "present in some sweep configs but unused by the checked-in MatchDG implementation"
+    },
+    "param3": "Parsed globally but not used by the Table 1 solvers in the checked-in base code."
+  },
+  "optimizer": {
+    "config_key": null,
+    "selection": "ERM selects dataset.default_optimizer; optimizer is not exposed by base main.py.",
+    "checked_in_defaults": {
+      "ColoredMNIST": "sgd",
+      "LISAColoredMNIST": "adam",
+      "CounterfactualWaterbirds": "sgd"
+    },
+    "warning": "The paper says Adam for both datasets, but the checked-in defaults disagree for ColoredMNIST and CounterfactualWaterbirds. W&B config alone cannot prove the optimizer for those names; code snapshots or logs are needed."
+  },
+  "metrics": {
+    "colored_mnist": {
+      "in_domain_selected_pair": [
+        "in_test_val_best_in_test",
+        "in_test_val_best_test"
+      ],
+      "latest_pair": [
+        "in_test.acc_avg",
+        "test.acc_avg"
+      ],
+      "notes": "ERM.report names selection on the in_test split as in-domain validation and stores the paired OOD test result in scalar summary fields."
+    },
+    "waterbirds_cf": {
+      "latest_pair": [
+        "test.acc_avg",
+        "test.acc_wg"
+      ],
+      "notes": "The base Waterbirds dataset has val and test but no in_test split. Base ERM.report does not save the val-selected paired test dictionary, so matching may have to rely on the latest nested test summary or run history."
+    }
+  },
+  "waterbirds_construction": {
+    "expected_counterfactual_counts": {
+      "landbird": 184,
+      "waterbird": 56,
+      "total": 240
+    },
+    "config_has_dataset_hash": false,
+    "verification": "Prefer a W&B dataset artifact digest/version. If no dataset artifact was logged, the run config only provides root_dir and cannot confirm the exact metadata.csv contents."
+  }
+}

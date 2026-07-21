@@ -1,0 +1,69 @@
+{
+  "paper": {
+    "title": "Provable Robustness to Spurious Correlations via Invariant Data For Robust Finetuning",
+    "table": "Table 1",
+    "protocol": "in-domain validation"
+  },
+  "known_hyperparameters": {
+    "colored_mnist": {
+      "optimizer": "adam",
+      "lr": 0.001,
+      "weight_decay": 0.0001,
+      "batch_size": 256,
+      "epochs": 40,
+      "counterfactual_pairs": 256,
+      "rank_range_inclusive": [
+        2,
+        24
+      ]
+    },
+    "waterbirds_cf": {
+      "optimizer": "adam",
+      "lr": 0.001,
+      "weight_decay": 0.0001,
+      "batch_size": 256,
+      "epochs": 100,
+      "rank_range_inclusive": [
+        2,
+        24
+      ]
+    },
+    "representation": "probing",
+    "backbone": "frozen CLIP embeddings"
+  },
+  "targets": [
+    {"id": "colored_erm", "dataset": "colored_mnist", "label": "ERM", "method": "ERM", "pairing": null, "model": "probing", "in_metric": 0.852, "out_metric": 0.093},
+    {"id": "colored_irm", "dataset": "colored_mnist", "label": "IRM", "method": "IRM", "pairing": null, "model": "probing", "in_metric": 0.799, "out_metric": 0.118},
+    {"id": "colored_rex", "dataset": "colored_mnist", "label": "REx", "method": "REx", "pairing": null, "model": "probing", "in_metric": 0.797, "out_metric": 0.121},
+    {"id": "colored_groupdro", "dataset": "colored_mnist", "label": "GroupDRO", "method": "GroupDRO", "pairing": null, "model": "probing", "in_metric": 0.798, "out_metric": 0.127},
+    {"id": "colored_fish", "dataset": "colored_mnist", "label": "Fish", "method": "Fish", "pairing": null, "model": "probing", "in_metric": 0.798, "out_metric": 0.118},
+    {"id": "colored_swad", "dataset": "colored_mnist", "label": "SWAD", "method": "SWAD", "pairing": null, "model": "probing", "in_metric": 0.800, "out_metric": 0.113},
+    {"id": "colored_lisa", "dataset": "colored_mnist", "label": "LISA", "method": "LISA", "pairing": null, "model": "probing", "in_metric": 0.705, "out_metric": 0.000},
+    {"id": "colored_matchdg_1nn_cnn", "dataset": "colored_mnist", "label": "MatchDG (1NN, CNN)", "method": "MatchDG", "pairing": "1NN", "model": "cnn", "in_metric": 0.698, "out_metric": 0.361},
+    {"id": "colored_matchdg_1nn_finetune", "dataset": "colored_mnist", "label": "MatchDG (1NN, Finetune)", "method": "MatchDG", "pairing": "1NN", "model": "finetune", "in_metric": 0.850, "out_metric": 0.181},
+    {"id": "colored_matchdg_random_probing", "dataset": "colored_mnist", "label": "MatchDG (random, Probing)", "method": "MatchDG", "pairing": "random", "model": "probing", "in_metric": 0.799, "out_metric": 0.120},
+    {"id": "colored_matchdg_1nn_probing", "dataset": "colored_mnist", "label": "MatchDG (1NN, Probing)", "method": "MatchDG", "pairing": "1NN", "model": "probing", "in_metric": 0.789, "out_metric": 0.217},
+    {"id": "colored_matchdg_clean_probing", "dataset": "colored_mnist", "label": "MatchDG (clean, Probing)", "method": "MatchDG", "pairing": "clean", "model": "probing", "in_metric": 0.793, "out_metric": 0.181},
+    {"id": "colored_grit_random_probing", "dataset": "colored_mnist", "label": "GRIT (random, Probing)", "method": "GRIT", "pairing": "random", "model": "probing", "in_metric": 0.794, "out_metric": 0.176},
+    {"id": "colored_grit_1nn_probing", "dataset": "colored_mnist", "label": "GRIT (1NN, Probing)", "method": "GRIT", "pairing": "1NN", "model": "probing", "in_metric": 0.736, "out_metric": 0.649},
+    {"id": "colored_grit_clean_probing", "dataset": "colored_mnist", "label": "GRIT (clean, Probing)", "method": "GRIT", "pairing": "clean", "model": "probing", "in_metric": 0.740, "out_metric": 0.693, "headline": true},
+    {"id": "colored_random_guess", "dataset": "colored_mnist", "label": "random guess", "method": null, "pairing": null, "model": "reference", "in_metric": 0.500, "out_metric": 0.500, "matchable": false},
+    {"id": "colored_erm_oracle", "dataset": "colored_mnist", "label": "ERM oracle", "method": "ERM", "pairing": null, "model": "probing", "split_scheme": "oracle", "in_metric": 0.735, "out_metric": 0.730},
+    {"id": "colored_theory_oracle", "dataset": "colored_mnist", "label": "theory oracle", "method": null, "pairing": null, "model": "reference", "in_metric": 0.750, "out_metric": 0.750, "matchable": false},
+
+    {"id": "waterbirds_erm", "dataset": "waterbirds_cf", "label": "ERM", "method": "ERM", "pairing": null, "model": "probing", "in_metric": 0.885, "out_metric": 0.781},
+    {"id": "waterbirds_irm", "dataset": "waterbirds_cf", "label": "IRM", "method": "IRM", "pairing": null, "model": "probing", "in_metric": 0.838, "out_metric": 0.707},
+    {"id": "waterbirds_rex", "dataset": "waterbirds_cf", "label": "REx", "method": "REx", "pairing": null, "model": "probing", "in_metric": 0.891, "out_metric": 0.617},
+    {"id": "waterbirds_groupdro", "dataset": "waterbirds_cf", "label": "GroupDRO", "method": "GroupDRO", "pairing": null, "model": "probing", "in_metric": 0.906, "out_metric": 0.684},
+    {"id": "waterbirds_fish", "dataset": "waterbirds_cf", "label": "Fish", "method": "Fish", "pairing": null, "model": "probing", "in_metric": 0.900, "out_metric": 0.744},
+    {"id": "waterbirds_lisa", "dataset": "waterbirds_cf", "label": "LISA", "method": "LISA", "pairing": null, "model": "probing", "in_metric": 0.904, "out_metric": 0.722},
+    {"id": "waterbirds_matchdg_1nn_cnn", "dataset": "waterbirds_cf", "label": "MatchDG (1NN, CNN)", "method": "MatchDG", "pairing": "1NN", "model": "cnn", "in_metric": 0.970, "out_metric": 0.080},
+    {"id": "waterbirds_matchdg_1nn_finetune", "dataset": "waterbirds_cf", "label": "MatchDG (1NN, Finetune)", "method": "MatchDG", "pairing": "1NN", "model": "finetune", "in_metric": 0.920, "out_metric": 0.112},
+    {"id": "waterbirds_matchdg_random_probing", "dataset": "waterbirds_cf", "label": "MatchDG (random, Probing)", "method": "MatchDG", "pairing": "random", "model": "probing", "in_metric": 0.793, "out_metric": 0.009},
+    {"id": "waterbirds_matchdg_1nn_probing", "dataset": "waterbirds_cf", "label": "MatchDG (1NN, Probing)", "method": "MatchDG", "pairing": "1NN", "model": "probing", "in_metric": 0.886, "out_metric": 0.411},
+    {"id": "waterbirds_matchdg_clean_probing", "dataset": "waterbirds_cf", "label": "MatchDG (clean, Probing)", "method": "MatchDG", "pairing": "clean", "model": "probing", "in_metric": 0.906, "out_metric": 0.536},
+    {"id": "waterbirds_grit_random_probing", "dataset": "waterbirds_cf", "label": "GRIT (random, Probing)", "method": "GRIT", "pairing": "random", "model": "probing", "in_metric": 0.804, "out_metric": 0.269},
+    {"id": "waterbirds_grit_1nn_probing", "dataset": "waterbirds_cf", "label": "GRIT (1NN, Probing)", "method": "GRIT", "pairing": "1NN", "model": "probing", "in_metric": 0.892, "out_metric": 0.521},
+    {"id": "waterbirds_grit_clean_probing", "dataset": "waterbirds_cf", "label": "GRIT (clean, Probing)", "method": "GRIT", "pairing": "clean", "model": "probing", "in_metric": 0.864, "out_metric": 0.812, "headline": true}
+  ]
+}
