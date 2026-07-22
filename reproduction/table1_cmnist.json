@@ -1,0 +1,207 @@
+{
+  "schema_version": 1,
+  "name": "ColoredMNIST Table 1 reproduction",
+  "provenance": {
+    "source": "wandb_data/CMP/COLORED_MNIST_TABLE1_SWEEP_MAP.md",
+    "code_commit": "66c282b6846e8564d165b73d643670be727a2cab",
+    "dataset_policy": "Use LISAColoredMNIST for every executable row; do not mix in the distinct historical ColoredMNIST ERM construction."
+  },
+  "selection": {
+    "split": "in_test",
+    "metric": "acc_avg",
+    "paired_test_split": "test"
+  },
+  "defaults": {
+    "dataset": "LISAColoredMNIST",
+    "pretrained": "true",
+    "featurizer": "linear",
+    "split_scheme": "official",
+    "batch_size": 256,
+    "epochs": 40,
+    "lr": 0.001,
+    "weight_decay": 0.0001,
+    "latent_dim": 512,
+    "param1": 100,
+    "param2": 0,
+    "param3": 0,
+    "projection": "oracle",
+    "upweighting": "false"
+  },
+  "rows": [
+    {
+      "id": "colored_erm",
+      "label": "ERM",
+      "status": "run",
+      "source_sweep": "vyjr08g2",
+      "note": "The source sweep used the distinct ColoredMNIST construction; this reproduction intentionally overrides it with LISAColoredMNIST for a controlled comparison.",
+      "paper": {"in": 0.852, "test": 0.093},
+      "fixed": {"solver": "ERM"},
+      "grid": {},
+      "selected": {}
+    },
+    {
+      "id": "colored_irm",
+      "label": "IRM",
+      "status": "run",
+      "source_sweep": "fj87kbxi",
+      "paper": {"in": 0.799, "test": 0.118},
+      "fixed": {"solver": "IRM", "projection": "conditional", "param2": 100},
+      "grid": {"param1": [0.01, 0.1, 1, 10, 100]},
+      "selected": {"param1": 10}
+    },
+    {
+      "id": "colored_rex",
+      "label": "REx",
+      "status": "run",
+      "source_sweep": "6b8qovrf",
+      "paper": {"in": 0.797, "test": 0.121},
+      "fixed": {"solver": "REx", "projection": "conditional", "param2": 100},
+      "grid": {"param1": [0.01, 0.1, 1, 10, 100]},
+      "selected": {"param1": 0.1}
+    },
+    {
+      "id": "colored_groupdro",
+      "label": "GroupDRO",
+      "status": "run",
+      "source_sweep": "ednv05ar",
+      "paper": {"in": 0.798, "test": 0.127},
+      "fixed": {"solver": "GroupDRO", "projection": "conditional"},
+      "grid": {"param1": [0.001, 0.1]},
+      "selected": {"param1": 0.1}
+    },
+    {
+      "id": "colored_fish",
+      "label": "Fish",
+      "status": "run",
+      "source_sweep": "ioi8x04h",
+      "paper": {"in": 0.798, "test": 0.118},
+      "fixed": {"solver": "Fish", "projection": "conditional"},
+      "grid": {"param1": [0.001, 0.01, 0.1]},
+      "selected": {"param1": 0.1}
+    },
+    {
+      "id": "colored_swad",
+      "label": "SWAD",
+      "status": "run",
+      "source_sweep": "ds25erw4",
+      "paper": {"in": 0.800, "test": 0.113},
+      "fixed": {"solver": "SWAD"},
+      "grid": {"param1": [1.1, 1.2, 1.3, 1.4, 1.5]},
+      "selected": {"param1": 1.1}
+    },
+    {
+      "id": "colored_lisa",
+      "label": "LISA",
+      "status": "run",
+      "source_sweep": "3x4gdbd1",
+      "paper": {"in": 0.705, "test": 0.000},
+      "fixed": {"solver": "LISA"},
+      "grid": {"param1": [0, 0.1, 0.3, 0.5, 0.7, 0.9, 1]},
+      "selected": {"param1": 0}
+    },
+    {
+      "id": "colored_matchdg_1nn_cnn",
+      "label": "MatchDG (1NN, CNN)",
+      "status": "unresolved",
+      "paper": {"in": 0.698, "test": 0.361},
+      "note": "No successful schema-consistent run identifies this configuration."
+    },
+    {
+      "id": "colored_matchdg_1nn_finetune",
+      "label": "MatchDG (1NN, Finetune)",
+      "status": "unresolved",
+      "paper": {"in": 0.850, "test": 0.181},
+      "note": "The checked-in CLI has no verified CLIP finetuning mode."
+    },
+    {
+      "id": "colored_matchdg_random_probing",
+      "label": "MatchDG (random, Probing)",
+      "status": "run",
+      "source_sweep": "rma40ivl",
+      "paper": {"in": 0.799, "test": 0.120},
+      "fixed": {"solver": "MatchDG", "projection": "conditional"},
+      "grid": {
+        "param1": [0.01, 0.1, 1, 10, 100],
+        "latent_dim": [4, 8, 12, 16, 20, 24, 28, 32]
+      },
+      "selected": {"param1": 0.01, "latent_dim": 4}
+    },
+    {
+      "id": "colored_matchdg_1nn_probing",
+      "label": "MatchDG (1NN, Probing)",
+      "status": "run",
+      "source_sweep": "wm4jkkrc",
+      "paper": {"in": 0.789, "test": 0.217},
+      "fixed": {"solver": "MatchDG", "projection": "nearest"},
+      "grid": {
+        "param1": [0.01, 0.1, 1, 10, 100],
+        "latent_dim": [4, 8, 12, 16, 20, 24, 28, 32]
+      },
+      "selected": {"param1": 0.1, "latent_dim": 12}
+    },
+    {
+      "id": "colored_matchdg_clean_probing",
+      "label": "MatchDG (clean, Probing)",
+      "status": "run",
+      "source_sweep": "8i6zxyae",
+      "paper": {"in": 0.793, "test": 0.181},
+      "fixed": {"solver": "MatchDG", "projection": "oracle", "param2": 1024},
+      "grid": {
+        "param1": [0.01, 0.1, 1, 10, 100],
+        "latent_dim": [4, 8, 12, 16, 20, 24, 28, 32]
+      },
+      "selected": {"param1": 0.01, "latent_dim": 16}
+    },
+    {
+      "id": "colored_grit_random_probing",
+      "label": "GRIT (random, Probing)",
+      "status": "run",
+      "source_sweep": "b5j4s8lh",
+      "paper": {"in": 0.794, "test": 0.176},
+      "fixed": {"solver": "ECMP", "projection": "conditional", "param2": 512},
+      "grid": {"param1": [2, 3, 4, 5, 6]},
+      "selected": {"param1": 2}
+    },
+    {
+      "id": "colored_grit_1nn_probing",
+      "label": "GRIT (1NN, Probing)",
+      "status": "run",
+      "source_sweep": "8ue2bsl0",
+      "paper": {"in": 0.736, "test": 0.649},
+      "fixed": {"solver": "ECMP", "projection": "nearest"},
+      "grid": {"param1": [2, 4, 6, 8, 10]},
+      "selected": {"param1": 8}
+    },
+    {
+      "id": "colored_grit_clean_probing",
+      "label": "GRIT (clean, Probing)",
+      "status": "run",
+      "source_sweep": "4hf9mw1o",
+      "paper": {"in": 0.740, "test": 0.693},
+      "fixed": {"solver": "ECMP", "projection": "oracle", "param2": 1024},
+      "grid": {"param1": [2, 4, 6, 8, 10, 12]},
+      "selected": {"param1": 8}
+    },
+    {
+      "id": "colored_random_guess",
+      "label": "Random guess",
+      "status": "reference",
+      "paper": {"in": 0.500, "test": 0.500},
+      "reference": {"in": 0.500, "test": 0.500}
+    },
+    {
+      "id": "colored_erm_oracle",
+      "label": "ERM oracle",
+      "status": "unresolved",
+      "paper": {"in": 0.735, "test": 0.730},
+      "note": "No source W&B run used split_scheme=oracle."
+    },
+    {
+      "id": "colored_theory_oracle",
+      "label": "Theory oracle",
+      "status": "reference",
+      "paper": {"in": 0.750, "test": 0.750},
+      "reference": {"in": 0.750, "test": 0.750}
+    }
+  ]
+}

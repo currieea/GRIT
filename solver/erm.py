@@ -58,6 +58,9 @@ class ERM(object):
         self.best_id_log = {'in_test': {self.dataset.key_metric: -1}}
         self.best_val_log = {'val': {self.dataset.key_metric: -1}}
         self.best_oracle_log = {'test': {self.dataset.key_metric: -1}}
+        self.best_id_step = None
+        self.best_val_step = None
+        self.best_oracle_step = None
 
 
     def fit(self):
@@ -135,11 +138,14 @@ class ERM(object):
         if 'in_test' in logs:
             if self.best_id_log['in_test'][self.dataset.key_metric] < logs['in_test'][self.dataset.key_metric]:
                 self.best_id_log = logs
+                self.best_id_step = step
         if 'val' in logs:
             if self.best_val_log['val'][self.dataset.key_metric] < logs['val'][self.dataset.key_metric]:
                 self.best_val_log = logs
+                self.best_val_step = step
         if self.best_oracle_log['test'][self.dataset.key_metric] < logs['test'][self.dataset.key_metric]:
             self.best_oracle_log = logs
+            self.best_oracle_step = step
         if self.hparam['wandb']:
             wandb.log(logs, step=step)
         else:
@@ -159,7 +165,7 @@ class ERM(object):
         
     def _initialize_model(self):
         if self.hparam['featurizer'] == 'linear':
-            if self.hparam['pretrained']:
+            if self.hparam['pretrained'] == 'true':
                 self.model = Classifier(in_features=512, out_features=self.dataset._n_classes)
             else: 
                 self.model = Classifier(in_features=math.prod(self.dataset.input_shape), out_features=self.dataset._n_classes)

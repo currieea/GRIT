@@ -33,7 +33,7 @@ class MatchDG(ERM):
                 metadata = metadata.to(self.device)
                 outputs = self.model(x)
                 loss = self.criterion(outputs, y_true).mean() + self.hparam['param1'] * self.constraint()
-        
+
                 with torch.no_grad():
                     total_loss += loss.item() * len(y_true)
                 loss.backward()
@@ -151,7 +151,7 @@ class MatchDG(ERM):
 
     def _initialize_model(self):
         if self.hparam['featurizer'] == 'linear':
-            if self.hparam['pretrained']:
+            if self.hparam['pretrained'] == 'true':
                 self.featurizer = Linear(input_shape=512, latent_dim=self.hparam['latent_dim']).to(self.device)                
             else: 
                 self.featurizer = Linear(input_shape=math.prod(self.dataset.input_shape), latent_dim=self.hparam['latent_dim']).to(self.device)
@@ -167,4 +167,3 @@ class MatchDG(ERM):
     
     def constraint(self):
         return torch.norm(self.featurizer(self.diff)) ** 2 / self.diff.shape[0]
-        

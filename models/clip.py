@@ -12,7 +12,7 @@ class Clip(torch.nn.Module):
             std=[0.26862954, 0.26130258, 0.27577711]
         )
         self.in_shape = hparam['input_shape']
-        self.model, _ = clip.load("ViT-B/32")
+        self.model, _ = clip.load("ViT-B/32", download_root=hparam.get("clip_download_root"))
         self.out_shape = 512
 
     def forward(self, x):

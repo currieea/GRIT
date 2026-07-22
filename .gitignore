@@ -9,3 +9,7 @@ __pycache__/
 # Test and lint caches
 .pytest_cache/
 .ruff_cache/
+
+# Generated datasets and reproduction outputs
+data/
+reproduction_results/
