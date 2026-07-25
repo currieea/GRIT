@@ -1,0 +1,2 @@
+# OpenAI CLIP's legacy setup.py imports pkg_resources, removed in setuptools 82.
+setuptools==80.9.0

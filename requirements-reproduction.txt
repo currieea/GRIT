@@ -1,7 +1,12 @@
 # Known-compatible environment for the Table 1 reproduction workflow.
 # Install a CUDA-specific PyTorch build separately if required by your cluster.
+setuptools==80.9.0
 torch==2.1.2
 torchvision==0.16.2
+# WILDS group evaluation imports torch_scatter. Match the pinned PyTorch
+# 2.1.2 CUDA 12.1 wheel rather than attempting a local extension build.
+--find-links https://data.pyg.org/whl/torch-2.1.2+cu121.html
+torch-scatter==2.1.2+pt21cu121
 numpy==1.24.4
 pandas==2.0.3
 Pillow==10.2.0

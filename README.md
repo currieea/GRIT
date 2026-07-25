@@ -16,7 +16,10 @@ pip install git+https://github.com/openai/CLIP.git
 For the pinned environment used by the Table 1 reproduction workflow:
 
 ```bash
-pip install -r requirements-reproduction.txt
+uv venv --python 3.10.12
+uv pip install --python .venv/bin/python \
+  --build-constraints build-constraints.txt \
+  -r requirements-reproduction.txt
 ```
 
 You will also need a [WandB](https://wandb.ai) account (or pass `--no_wandb` to skip logging).

@@ -28,13 +28,20 @@ DEFAULT_MANIFEST = PROJECT_ROOT / "reproduction" / "table1_cmnist.json"
 DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "reproduction_results" / "cmnist"
 DATA_ENV_VAR = "GRIT_DATA_ROOT"
 DATASET_DIRECTORY = "LISAColoredMNIST-cf-clip_v1.0"
+WILDS_RELEASE_MARKER = "RELEASE_v1.0.txt"
 REQUIRED_DATA_FILES = (
     "x_array.pth",
     "y_array.pth",
     "split_array.pth",
     "metadata_array.pth",
     "diff.pth",
+    WILDS_RELEASE_MARKER,
     "reproduction_manifest.json",
+)
+HASHED_DATA_FILES = tuple(
+    name
+    for name in REQUIRED_DATA_FILES
+    if name not in {WILDS_RELEASE_MARKER, "reproduction_manifest.json"}
 )
 
 
@@ -259,7 +266,10 @@ def validate_prepared_dataset(dataset_dir: Path, verify_hashes: bool = True) -> 
         )
     with (dataset_dir / "reproduction_manifest.json").open() as handle:
         manifest = json.load(handle)
-    expected_manifest_files = set(REQUIRED_DATA_FILES) - {"reproduction_manifest.json"}
+    # The release marker is a WILDS presence sentinel rather than dataset data.
+    # Keep it outside the hash manifest so older prepared datasets can be repaired
+    # by adding the marker without regenerating or rewriting their provenance.
+    expected_manifest_files = set(HASHED_DATA_FILES)
     missing_manifest_files = expected_manifest_files - set(manifest.get("files", {}))
     if missing_manifest_files:
         raise ValueError(
@@ -382,6 +392,10 @@ def prepare_dataset(args: argparse.Namespace) -> int:
         torch.save(features, temporary_dir / "x_array.pth")
         torch.save(dataset._y_array, temporary_dir / "y_array.pth")
         torch.save(dataset._metadata_array, temporary_dir / "metadata_array.pth")
+        (temporary_dir / WILDS_RELEASE_MARKER).write_text(
+            "Prepared locally by scripts/reproduce_table1.py for WILDS dataset "
+            "version 1.0.\n"
+        )
 
         tensor_shapes = {
             "x_array.pth": list(features.shape),

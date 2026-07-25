@@ -220,8 +220,7 @@ def test_prepared_dataset_hashes_are_verified(tmp_path: Path) -> None:
             (tmp_path / name).write_bytes(name.encode())
     files = {
         name: {"sha256": reproduce_table1.sha256_file(tmp_path / name)}
-        for name in reproduce_table1.REQUIRED_DATA_FILES
-        if name != "reproduction_manifest.json"
+        for name in reproduce_table1.HASHED_DATA_FILES
     }
     (tmp_path / "reproduction_manifest.json").write_text(json.dumps({"files": files}))
 
