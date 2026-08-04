@@ -10,11 +10,9 @@ Finetuning* (GRIT). It covers the projects that were exported:
 - [`inouye-lab/CMP-CMNIST`](https://wandb.ai/inouye-lab/CMP-CMNIST)
 - [`bai116/CF_Waterbirds`](https://wandb.ai/bai116/CF_Waterbirds)
 
-The conclusions below are based on the local exports in [`CMP/`](CMP/),
-[`CMP-CMNIST/`](CMP-CMNIST/), and
-[`bai116_CF_Waterbirds/`](bai116_CF_Waterbirds/). Detailed project reports are in
-[`CMP/match_report.md`](CMP/match_report.md) and
-[`CMP-CMNIST/match_report.md`](CMP-CMNIST/match_report.md).
+The conclusions below were derived from exports collected during the audit.
+The raw exports are not retained in the repository. The detailed CMP project
+report remains in [`CMP/match_report.md`](CMP/match_report.md).
 
 The complete row-by-row ColoredMNIST disposition, including near matches,
 missing variants, sweep search spaces, and rejected intermediate-epoch
@@ -117,8 +115,8 @@ This does **not** displace CMP sweep `4hf9mw1o` as the high-confidence source:
 Sweep [`prcknjwd`](https://wandb.ai/inouye-lab/CMP-CMNIST/sweeps/prcknjwd)
 also comes numerically close to the GRIT-1NN row, but it varies the number of
 clean counterfactual pairs and does not perform nearest-neighbor pairing. The
-full schema, configs, candidate table, and integrity checks are in the
-[`CMP-CMNIST audit`](CMP-CMNIST/match_report.md).
+full schema, configs, candidate table, and integrity checks were reviewed during
+the audit; the raw export and generated local report are not retained here.
 
 ## Waterbirds-CF findings in CMP
 

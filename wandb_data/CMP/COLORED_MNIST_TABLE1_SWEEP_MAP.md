@@ -84,9 +84,8 @@ The ERM sweep `vyjr08g2` instead uses `dataset=ColoredMNIST` and varies
 | GRIT 1NN | `ColoredMNIST-ECMP-Nearest` | rank `param1=[2,4,6,8,10]` | `projection=nearest`, rank 8 |
 | GRIT clean | `ColoredMNIST-ECMP-Oracle` | rank `param1=[2,4,6,8,10,12]`, `param2=1024` | `projection=oracle`, rank 8, `param2=1024` |
 
-The full machine-readable sweep configurations and run configurations remain in
-[`wandb_sweeps.json`](wandb_sweeps.json) and
-[`wandb_runs.json`](wandb_runs.json).
+The sweep and run IDs above link to their records in W&B. The raw
+machine-readable sweep and run exports are not retained in the repository.
 
 ## Why intermediate-epoch coincidences were rejected
 
