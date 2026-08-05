@@ -28,7 +28,9 @@ You will also need a [WandB](https://wandb.ai) account (or pass `--no_wandb` to 
 
 The codebase supports: **ColoredMNIST**, **RotatedMNIST**, **PACS**, **Waterbirds**, **CelebA**, **Camelyon**.
 
-Set your data root via `--root_dir`. The default path in the codebase is `/local/scratch/a/bai116/datasets/`.
+Set your data root via `--root_dir`. The main training CLI defaults to `data/`
+inside this repository. Some older preprocessing and experiment scripts still
+contain historical cluster paths; update those paths before running them.
 
 ### Using CLIP features (recommended)
 
