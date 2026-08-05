@@ -13,3 +13,10 @@ __pycache__/
 # Generated datasets and reproduction outputs
 data/
 reproduction_results/
+
+
+# Raw W&B audit exports
+wandb_data/*/wandb_history.jsonl
+wandb_data/*/wandb_history_manifest.json
+wandb_data/*/wandb_runs.json
+wandb_data/*/wandb_sweeps.json
