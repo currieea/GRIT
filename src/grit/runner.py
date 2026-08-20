@@ -195,7 +195,6 @@ def run_cmnist_smoke(config: CmnistSmokeRunConfig) -> CmnistSmokeSummary:
     )
     pairs = build_clean_oracle_pairs(
         pair_source_view(construction, train_pool),
-        dataset_manifest_digest=construction.manifest.canonical_digest(),
         pair_seed=validated.pair_seed,
         pair_count=validated.pair_count,
     )
@@ -260,7 +259,6 @@ def prepare_official_cmnist(
     )
     pairs = build_clean_oracle_pairs(
         pair_source_view(construction, train_pool),
-        dataset_manifest_digest=construction.manifest.canonical_digest(),
         pair_seed=pair_seed,
         pair_count=256,
     )
@@ -286,7 +284,7 @@ def _run_method(
     method_id: MethodId,
     output_root: Path,
 ) -> MethodSmokeSummary:
-    candidates = _method_candidates(smoke, cache, method_id)
+    candidates = _method_candidates(smoke, pairs, cache, method_id)
     tuning_metrics = _run_stage(
         candidates,
         cache,
@@ -502,6 +500,7 @@ def _run_final_seed(
 
 def _method_candidates(
     smoke: CmnistSmokeRunConfig,
+    pairs: CmnistOraclePairSet,
     cache: CmnistFeatureCache,
     method_id: MethodId,
 ) -> tuple[_Candidate, ...]:
@@ -512,6 +511,8 @@ def _method_candidates(
             red.features,
             green.features,
             requested_rank=smoke.projection_rank,
+            pair_manifest_digest=pairs.manifest.canonical_digest(),
+            feature_cache_manifest_digest=cache.manifest.canonical_digest(),
             relative_singular_value_tolerance=(
                 smoke.relative_singular_value_tolerance
             ),

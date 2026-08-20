@@ -120,7 +120,13 @@ def test_rank_zero_grit_and_erm_are_exactly_equivalent() -> None:
     training, validation = _tables()
     pair_left = torch.randn((8, 512), generator=torch.Generator().manual_seed(9))
     pair_right = torch.randn((8, 512), generator=torch.Generator().manual_seed(10))
-    identity = fit_linear_projection(pair_left, pair_right, requested_rank=0)
+    identity = fit_linear_projection(
+        pair_left,
+        pair_right,
+        requested_rank=0,
+        pair_manifest_digest="sha256:test-pairs",
+        feature_cache_manifest_digest="sha256:test-features",
+    )
     erm = train_linear_probe(
         training,
         validation,

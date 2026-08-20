@@ -350,8 +350,11 @@ class CmnistPairSourceView:
 
     train_pool: MnistPool
     partitions: CmnistPartitions
-    construction_seed: int
-    label_flip_prob: float
+    dataset_manifest: CmnistDatasetManifest
+
+    @property
+    def dataset_manifest_digest(self) -> str:
+        return self.dataset_manifest.canonical_digest()
 
 
 class OraclePairRecord(StrictBoundaryModel):
@@ -366,7 +369,7 @@ class OraclePairRecord(StrictBoundaryModel):
 
 
 class CmnistOraclePairManifest(StrictBoundaryModel):
-    schema_version: Literal["grit.cmnist-oracle-pairs/v1"]
+    schema_version: Literal["grit.cmnist-oracle-pairs/v2"]
     dataset_manifest_digest: NonEmptyStr
     construction_method_id: Literal["cmnist-clean-oracle-pairs-v1"]
     pair_seed: StrictInt
@@ -397,6 +400,18 @@ class CmnistOraclePairManifest(StrictBoundaryModel):
             raise ValueError("oracle pair sources must be unique")
         if self.membership_digest != canonical_digest_value(source_ids):
             raise ValueError("oracle pair membership digest is inconsistent")
+        for record in self.records:
+            expected_pair_id = canonical_digest_value(
+                {
+                    "dataset_manifest_digest": self.dataset_manifest_digest,
+                    "method": self.construction_method_id,
+                    "pair_seed": self.pair_seed,
+                    "source_id": record.source_id,
+                    "orientation": self.orientation,
+                }
+            )
+            if record.pair_id != expected_pair_id:
+                raise ValueError("oracle pair identity is inconsistent")
         return self
 
 
@@ -608,18 +623,56 @@ def pair_source_view(
         "train",
         construction.partitions.manifest.targets.official_train_count,
     )
-    return CmnistPairSourceView(
+    capability = CmnistPairSourceView(
         train_pool=train,
         partitions=construction.partitions,
-        construction_seed=construction.manifest.construction_seed,
-        label_flip_prob=float(construction.manifest.label_flip_prob),
+        dataset_manifest=construction.manifest,
     )
+    _ = _validated_pair_source_manifest(capability)
+    return capability
+
+
+def _validated_pair_source_manifest(
+    sources: CmnistPairSourceView,
+) -> CmnistDatasetManifest:
+    manifest = CmnistDatasetManifest.model_validate(
+        sources.dataset_manifest.model_dump(mode="python")
+    )
+    partition_manifest = CmnistPartitionManifest.model_validate(
+        sources.partitions.manifest.model_dump(mode="python")
+    )
+    if partition_manifest != manifest.partition_manifest:
+        raise ValueError(
+            "pair-source partitions do not match the construction manifest"
+        )
+    observed_memberships = (
+        sources.partitions.train_e01_source_indices,
+        sources.partitions.train_e02_source_indices,
+        sources.partitions.validation_source_indices,
+        sources.partitions.test_source_indices,
+    )
+    expected_memberships = tuple(
+        record.source_indices for record in partition_manifest.partitions
+    )
+    if observed_memberships != expected_memberships:
+        raise ValueError(
+            "pair-source partition membership does not match its manifest"
+        )
+    train = _validated_pool(
+        sources.train_pool,
+        "train",
+        partition_manifest.targets.official_train_count,
+    )
+    if _pool_digest(train) != manifest.official_train_pool_digest:
+        raise ValueError(
+            "pair-source training pool digest does not match the construction manifest"
+        )
+    return manifest
 
 
 def build_clean_oracle_pairs(
     sources: CmnistPairSourceView,
     *,
-    dataset_manifest_digest: str,
     pair_seed: int,
     pair_count: int = 256,
 ) -> CmnistOraclePairSet:
@@ -627,6 +680,8 @@ def build_clean_oracle_pairs(
 
     if type(sources) is not CmnistPairSourceView:
         raise TypeError("clean oracle pairs require CmnistPairSourceView")
+    dataset_manifest = _validated_pair_source_manifest(sources)
+    dataset_manifest_digest = dataset_manifest.canonical_digest()
     support = (
         sources.partitions.train_e01_source_indices
         + sources.partitions.train_e02_source_indices
@@ -655,9 +710,9 @@ def build_clean_oracle_pairs(
         [
             int(clean_item)
             ^ _keyed_bernoulli(
-                sources.label_flip_prob,
+                float(dataset_manifest.label_flip_prob),
                 "label",
-                sources.construction_seed,
+                dataset_manifest.construction_seed,
                 _source_id("train", source_index),
             )
             for source_index, clean_item in zip(
@@ -672,6 +727,7 @@ def build_clean_oracle_pairs(
         OraclePairRecord(
             pair_id=canonical_digest_value(
                 {
+                    "dataset_manifest_digest": dataset_manifest_digest,
                     "method": ORACLE_PAIR_METHOD_ID,
                     "pair_seed": pair_seed,
                     "source_id": _source_id("train", source_index),
@@ -696,7 +752,7 @@ def build_clean_oracle_pairs(
     )
     source_ids = tuple(record.source_id for record in records)
     manifest = CmnistOraclePairManifest(
-        schema_version="grit.cmnist-oracle-pairs/v1",
+        schema_version="grit.cmnist-oracle-pairs/v2",
         dataset_manifest_digest=dataset_manifest_digest,
         construction_method_id=ORACLE_PAIR_METHOD_ID,
         pair_seed=pair_seed,

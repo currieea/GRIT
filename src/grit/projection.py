@@ -6,13 +6,14 @@ from dataclasses import dataclass
 from typing import Annotated, Literal, Protocol, TypeAlias, cast
 
 import torch
-from pydantic import Field, FiniteFloat, StrictInt
+from pydantic import Field, FiniteFloat, StrictInt, StrictStr
 
 from grit.schemas import StrictBoundaryModel
 
 NonNegativeInt: TypeAlias = Annotated[StrictInt, Field(ge=0)]
 NonNegativeFloat: TypeAlias = Annotated[FiniteFloat, Field(ge=0.0)]
 PositiveFloat: TypeAlias = Annotated[FiniteFloat, Field(gt=0.0)]
+NonEmptyStr: TypeAlias = Annotated[StrictStr, Field(min_length=1)]
 
 
 class _SvdOperation(Protocol):
@@ -29,11 +30,13 @@ _full_svd = cast(_SvdOperation, torch.linalg.svd)
 
 
 class ProjectionDiagnostics(StrictBoundaryModel):
-    schema_version: Literal["grit.linear-projection/v1"]
+    schema_version: Literal["grit.linear-projection/v2"]
     operation: Literal["uncentered_left_minus_right"]
     backend: Literal["torch.linalg.svd"]
     fitting_device: Literal["cpu"]
     fitting_dtype: Literal["torch.float64"]
+    pair_manifest_digest: NonEmptyStr
+    feature_cache_manifest_digest: NonEmptyStr
     pair_count: NonNegativeInt
     feature_dimension: NonNegativeInt
     requested_rank: NonNegativeInt
@@ -91,6 +94,8 @@ def fit_linear_projection(
     right: torch.Tensor,
     *,
     requested_rank: int,
+    pair_manifest_digest: str,
+    feature_cache_manifest_digest: str,
     relative_singular_value_tolerance: float = 1e-12,
 ) -> FittedLinearProjection:
     """Fit the approved deterministic full SVD to uncentered pair differences."""
@@ -137,11 +142,13 @@ def fit_linear_projection(
         feature_dimension,
     )
     diagnostics = ProjectionDiagnostics(
-        schema_version="grit.linear-projection/v1",
+        schema_version="grit.linear-projection/v2",
         operation="uncentered_left_minus_right",
         backend="torch.linalg.svd",
         fitting_device="cpu",
         fitting_dtype="torch.float64",
+        pair_manifest_digest=pair_manifest_digest,
+        feature_cache_manifest_digest=feature_cache_manifest_digest,
         pair_count=pair_count,
         feature_dimension=feature_dimension,
         requested_rank=requested_rank,

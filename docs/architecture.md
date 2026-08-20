@@ -174,7 +174,9 @@ training-only PairSourceView + OraclePairRelationView + OraclePairBuilderConfig 
 Oracle, conditional, and nearest produce the same conceptual pair-set contract. The
 oracle relation is a separate capability that estimated builders cannot receive.
 Milestone 4 implements only the CMNIST training-source capability and 256-source clean
-red-minus-green oracle builder with a canonical pair manifest.
+red-minus-green oracle builder with a canonical pair manifest. The capability binds the
+validated source-pool content and dataset manifest; stable pair IDs and the pair manifest
+derive that dataset identity rather than accepting one from the caller.
 
 ### Projection
 
@@ -192,6 +194,9 @@ features + fitted Projection -> transformed features
 The runner's representation pipeline applies the same fitted transform to training and
 every permitted evaluation role. Projection does not live in a dataset adapter, model,
 algorithm, or trainer.
+CMNIST projection diagnostics are bound to the exact pair-manifest and feature-cache-
+manifest digests used by fitting. The final-test feature capability is likewise bound to
+the exact cache manifest, not only to dataset or source IDs.
 
 ### Algorithms
 

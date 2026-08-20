@@ -16,8 +16,11 @@ from pydantic import Field, StrictInt, StrictStr, model_validator
 
 from grit.cmnist import (
     CmnistConstruction,
+    CmnistDatasetManifest,
+    CmnistOraclePairManifest,
     CmnistOraclePairSet,
     MnistPool,
+    OraclePairRecord,
     RenderedCmnistTable,
 )
 from grit.config import (
@@ -376,7 +379,7 @@ class CmnistFeatureCache:
 
         descriptor = FinalTestSplitDescriptor(
             dataset_id="cmnist",
-            manifest_id=self.manifest.source_manifest_digest,
+            manifest_id=self.manifest.canonical_digest(),
             name="test_ood",
             role="final_test",
             source_partition_id="test_sources",
@@ -404,6 +407,10 @@ class CmnistFeatureCache:
             raise ValueError(
                 "final feature access requires an authorized test_ood view"
             )
+        if view.descriptor.manifest_id != self.manifest.canonical_digest():
+            raise FeatureCacheValidationError(
+                "authorized final view does not match the feature cache manifest"
+            )
         expected = tuple(example.source_id for example in view.examples)
         if expected != self._test_ood.source_ids:
             raise FeatureCacheValidationError(
@@ -423,6 +430,7 @@ def prepare_cmnist_feature_cache(
 ) -> CmnistFeatureCacheManifest:
     """Encode and write the fixed CMNIST environment/pair feature tables."""
 
+    _validate_pairs_for_feature_preparation(construction, pairs)
     if output_dir.exists() and any(output_dir.iterdir()) and not overwrite:
         raise FileExistsError(
             f"feature cache directory is not empty: {output_dir}; pass overwrite=True"
@@ -454,6 +462,149 @@ def prepare_cmnist_feature_cache(
         manifest.canonical_json() + "\n", encoding="utf-8"
     )
     return manifest
+
+
+def _validate_pairs_for_feature_preparation(
+    construction: CmnistConstruction,
+    pairs: CmnistOraclePairSet,
+) -> None:
+    """Reject mixed or malformed pair inputs before the cache writes any files."""
+
+    try:
+        dataset_manifest = CmnistDatasetManifest.model_validate(
+            construction.manifest.model_dump(mode="python")
+        )
+        pair_manifest = CmnistOraclePairManifest.model_validate(
+            pairs.manifest.model_dump(mode="python")
+        )
+        pair_records = tuple(
+            OraclePairRecord.model_validate(record.model_dump(mode="python"))
+            for record in pairs.records
+        )
+    except ValueError as error:
+        raise FeatureCacheValidationError(
+            "CMNIST construction or oracle-pair metadata is invalid"
+        ) from error
+
+    dataset_manifest_digest = dataset_manifest.canonical_digest()
+    if pair_manifest.dataset_manifest_digest != dataset_manifest_digest:
+        raise FeatureCacheValidationError(
+            "oracle pair dataset manifest does not match the CMNIST construction"
+        )
+    if pair_records != pair_manifest.records:
+        raise FeatureCacheValidationError(
+            "oracle pair-set records do not match the pair manifest"
+        )
+    pair_count = len(pair_records)
+    if pair_count != pair_manifest.realized_count:
+        raise FeatureCacheValidationError(
+            "oracle pair-set record count does not match the pair manifest"
+        )
+    if (
+        pairs.left_red.ndim != 4
+        or pairs.right_green.ndim != 4
+        or pairs.left_red.shape != pairs.right_green.shape
+        or int(pairs.left_red.shape[0]) != pair_count
+    ):
+        raise FeatureCacheValidationError(
+            "oracle pair endpoint rows must align with the pair records"
+        )
+    if not bool(torch.isfinite(pairs.left_red).all()) or not bool(
+        torch.isfinite(pairs.right_green).all()
+    ):
+        raise FeatureCacheValidationError("oracle pair endpoints must be finite")
+
+    source_indices: dict[str, int] = {}
+    digits: dict[str, int] = {}
+    clean_labels: dict[str, int] = {}
+    noisy_targets: dict[str, int] = {}
+    grayscale: dict[str, torch.Tensor] = {}
+    training_inputs = (
+        (
+            construction.train_e01,
+            construction.partitions.train_e01_source_indices,
+            dataset_manifest.partition_manifest.partitions[0].source_indices,
+        ),
+        (
+            construction.train_e02,
+            construction.partitions.train_e02_source_indices,
+            dataset_manifest.partition_manifest.partitions[1].source_indices,
+        ),
+    )
+    for table, indices, manifested_indices in training_inputs:
+        row_count = len(table.source_ids)
+        if (
+            indices != manifested_indices
+            or len(indices) != row_count
+            or table.images.ndim != 4
+            or int(table.images.shape[1]) != 3
+            or int(table.images.shape[0]) != row_count
+            or int(table.digits.shape[0]) != row_count
+            or int(table.clean_labels.shape[0]) != row_count
+            or int(table.targets.shape[0]) != row_count
+        ):
+            raise FeatureCacheValidationError(
+                "CMNIST construction training rows are internally inconsistent"
+            )
+        recovered = table.images[:, 0] + table.images[:, 1]
+        for row, (source_id, source_index) in enumerate(
+            zip(table.source_ids, indices, strict=True)
+        ):
+            if source_id != f"mnist:train:{source_index}":
+                raise FeatureCacheValidationError(
+                    "CMNIST training source identity does not match its source index"
+                )
+            if source_id in source_indices:
+                raise FeatureCacheValidationError(
+                    "CMNIST training source identities must be unique"
+                )
+            source_indices[source_id] = source_index
+            digits[source_id] = int(table.digits[row].item())
+            clean_labels[source_id] = int(table.clean_labels[row].item())
+            noisy_targets[source_id] = int(table.targets[row].item())
+            grayscale[source_id] = recovered[row]
+
+    for row, record in enumerate(pair_records):
+        source_id = str(record.source_id)
+        if source_id not in source_indices:
+            raise FeatureCacheValidationError(
+                "oracle pair record does not name a selected training source"
+            )
+        observed_metadata = (
+            int(record.official_source_index),
+            int(record.digit),
+            int(record.clean_label),
+            int(record.noisy_target),
+        )
+        expected_metadata = (
+            source_indices[source_id],
+            digits[source_id],
+            clean_labels[source_id],
+            noisy_targets[source_id],
+        )
+        if observed_metadata != expected_metadata:
+            raise FeatureCacheValidationError(
+                "oracle pair metadata does not match its CMNIST training source"
+            )
+        gray = grayscale[source_id]
+        red = pairs.left_red[row]
+        green = pairs.right_green[row]
+        zeros = torch.zeros_like(gray)
+        if (
+            red.shape != green.shape
+            or red.ndim != 3
+            or int(red.shape[0]) != 3
+            or red.shape[1:] != gray.shape
+            or not torch.equal(red[0], gray)
+            or not torch.equal(green[1], gray)
+            or not torch.equal(red[1], zeros)
+            or not torch.equal(red[2], zeros)
+            or not torch.equal(green[0], zeros)
+            or not torch.equal(green[2], zeros)
+        ):
+            raise FeatureCacheValidationError(
+                "oracle pair endpoints violate the clean red/green recoloring invariant"
+            )
 
 
 def load_cmnist_feature_cache(

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import inspect
+from dataclasses import replace
 from typing import Literal, cast
 
 import pytest
@@ -22,6 +24,7 @@ from grit.cmnist import (
     partition_cmnist_sources,
 )
 from grit.data import ValidationView
+from grit.schemas import canonical_digest_value
 
 _TRAIN_DIGIT_COUNTS = (5923, 6742, 5958, 6131, 5842, 5421, 5918, 6265, 5851, 5949)
 _TEST_DIGIT_COUNTS = (980, 1135, 1032, 1010, 982, 892, 958, 1028, 974, 1009)
@@ -201,19 +204,16 @@ def test_clean_oracle_pairs_are_unique_training_only_recolors() -> None:
     )
     pairs = build_clean_oracle_pairs(
         pair_source_view(construction, train),
-        dataset_manifest_digest=construction.manifest.canonical_digest(),
         pair_seed=19,
         pair_count=16,
     )
     repeated = build_clean_oracle_pairs(
         pair_source_view(construction, train),
-        dataset_manifest_digest=construction.manifest.canonical_digest(),
         pair_seed=19,
         pair_count=16,
     )
     changed_seed = build_clean_oracle_pairs(
         pair_source_view(construction, train),
-        dataset_manifest_digest=construction.manifest.canonical_digest(),
         pair_seed=20,
         pair_count=16,
     )
@@ -223,6 +223,19 @@ def test_clean_oracle_pairs_are_unique_training_only_recolors() -> None:
         *construction.train_e02.source_ids,
     }
     assert len(source_ids) == len(set(source_ids)) == 16
+    assert pairs.manifest.dataset_manifest_digest == (
+        construction.manifest.canonical_digest()
+    )
+    first = pairs.records[0]
+    assert first.pair_id == canonical_digest_value(
+        {
+            "dataset_manifest_digest": construction.manifest.canonical_digest(),
+            "method": "cmnist-clean-oracle-pairs-v1",
+            "pair_seed": 19,
+            "source_id": first.source_id,
+            "orientation": "red_minus_green",
+        }
+    )
     assert repeated.manifest == pairs.manifest
     assert changed_seed.manifest.membership_digest != pairs.manifest.membership_digest
     assert set(source_ids) <= training_ids
@@ -242,6 +255,60 @@ def test_clean_oracle_pairs_are_unique_training_only_recolors() -> None:
     )
 
 
+@pytest.mark.parametrize("changed_field", ("pixels", "digits"))
+def test_pair_source_rejects_same_indices_with_changed_pool_content(
+    changed_field: str,
+) -> None:
+    train, test = _small_pools()
+    construction = construct_cmnist(
+        train,
+        test,
+        construction_seed=3,
+        targets=_small_targets(),
+    )
+    images = train.images.clone()
+    digits = train.digits.clone()
+    if changed_field == "pixels":
+        images[0, 0, 0] = 1
+    else:
+        digits[0] = 1
+    changed_pool = MnistPool(
+        official_split="train",
+        source_indices=train.source_indices.clone(),
+        images=images,
+        digits=digits,
+    )
+    with pytest.raises(ValueError, match="pool digest"):
+        pair_source_view(construction, changed_pool)
+
+
+def test_pair_dataset_digest_is_derived_from_the_capability() -> None:
+    assert "dataset_manifest_digest" not in inspect.signature(
+        build_clean_oracle_pairs
+    ).parameters
+    train, test = _small_pools()
+    construction = construct_cmnist(
+        train,
+        test,
+        construction_seed=3,
+        targets=_small_targets(),
+    )
+    capability = pair_source_view(construction, train)
+    pairs = build_clean_oracle_pairs(capability, pair_seed=1, pair_count=2)
+    assert capability.dataset_manifest_digest == (
+        construction.manifest.canonical_digest()
+    )
+    assert pairs.manifest.dataset_manifest_digest == capability.dataset_manifest_digest
+    spoofed = replace(
+        capability,
+        dataset_manifest=capability.dataset_manifest.model_copy(
+            update={"official_train_pool_digest": "sha256:spoofed-pool"}
+        ),
+    )
+    with pytest.raises(ValueError, match="pool digest"):
+        build_clean_oracle_pairs(spoofed, pair_seed=1, pair_count=2)
+
+
 def test_oracle_builder_rejects_a_validation_view() -> None:
     train, test = _small_pools()
     construction = construct_cmnist(
@@ -255,7 +322,6 @@ def test_oracle_builder_rejects_a_validation_view() -> None:
     with pytest.raises(TypeError, match="CmnistPairSourceView"):
         build_clean_oracle_pairs(
             invalid,
-            dataset_manifest_digest=construction.manifest.canonical_digest(),
             pair_seed=1,
             pair_count=2,
         )

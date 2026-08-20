@@ -393,6 +393,36 @@ Verification:
 - No real MNIST or CLIP artifact was downloaded, and no reportable scientific sweep was
   executed.
 
+### Milestone 4 artifact-lineage correction
+
+- Bound the CMNIST pair-source capability to the validated dataset manifest and exact
+  official-training-pool content digest. The oracle builder now derives its dataset
+  dependency internally, and dataset identity contributes to every stable pair ID.
+- Made feature preparation reject mixed construction/pair identities, pair-set/manifest
+  disagreement, inconsistent record metadata, and invalid clean recoloring endpoints
+  before creating output or encoding inputs.
+- Required the exact pair-manifest and feature-cache-manifest digests in canonical
+  projection diagnostics and passed the validated runner identities used for fitting. The
+  internal pair-manifest and projection-diagnostic schema versions advance because these
+  identity fields are now required.
+- Bound final-test handles/views to the exact feature-cache manifest, so another cache with
+  identical test source IDs but different encoder, normalization, or feature content is
+  rejected.
+- Restricted the CMNIST oracle pair construction ID to
+  `cmnist-clean-oracle-pairs-v1`. Added no generalized artifact framework or new execution
+  scope.
+
+Verification:
+
+- `uv lock --check` — passed (41 packages resolved).
+- `uv run --frozen ruff check .` — passed.
+- `uv run --frozen basedpyright` — 0 errors, warnings, or notes.
+- `UV_CACHE_DIR=/tmp/grit-uv-cache uv run --offline --frozen pytest` — 56 passed on
+  Python 3.10.20, including the deterministic end-to-end smoke lifecycle.
+- `git diff --check` — passed before the checkpoint commit.
+- No real dataset/feature download, reportable sweep, Waterbirds work, W&B integration,
+  or legacy implementation change was performed.
+
 ## Next proposed checkpoint
 
 Review the implemented Milestone 4 CMNIST ERM/oracle-GRIT vertical slice. Begin Waterbirds

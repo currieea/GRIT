@@ -165,10 +165,24 @@ def test_erm_with_projection_is_rejected() -> None:
 
 
 def test_oracle_pairs_accept_only_approved_training_sources() -> None:
+    with pytest.raises(ValidationError, match="cmnist-clean-oracle-pairs-v1"):
+        OraclePairsConfig.model_validate(
+            {
+                "kind": "oracle",
+                "construction_id": "invalid-pair-construction",
+                "source_partition_ids": (
+                    "train_e01_sources",
+                    "train_e02_sources",
+                ),
+                "pair_count": 256,
+                "pair_seed": 0,
+                "orientation": "red_minus_green",
+            }
+        )
     with pytest.raises(ValidationError, match="approved training source partitions"):
         OraclePairsConfig(
             kind="oracle",
-            construction_id="invalid-leaking-pairs",
+            construction_id="cmnist-clean-oracle-pairs-v1",
             source_partition_ids=("validation_sources", "test_sources"),
             pair_count=256,
             pair_seed=0,
@@ -177,7 +191,7 @@ def test_oracle_pairs_accept_only_approved_training_sources() -> None:
     with pytest.raises(ValidationError, match="pair_count=256"):
         OraclePairsConfig(
             kind="oracle",
-            construction_id="invalid-pair-count",
+            construction_id="cmnist-clean-oracle-pairs-v1",
             source_partition_ids=("train_e01_sources", "train_e02_sources"),
             pair_count=255,
             pair_seed=0,

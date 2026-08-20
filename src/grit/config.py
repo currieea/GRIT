@@ -79,7 +79,7 @@ class OraclePairsConfig(StrictBoundaryModel):
     """Configuration identity only; this does not implement pair construction."""
 
     kind: Literal["oracle"]
-    construction_id: NonEmptyStr
+    construction_id: Literal["cmnist-clean-oracle-pairs-v1"]
     source_partition_ids: tuple[NonEmptyStr, ...]
     pair_count: PositiveInt
     pair_seed: StrictInt

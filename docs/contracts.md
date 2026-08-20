@@ -488,6 +488,11 @@ registered protocol, split role, dataset-manifest identity, and lifecycle phase.
 are defenses against accidental misuse inside one process, not a claim of security against
 arbitrary hostile Python code.
 
+The implemented CMNIST feature-backed final handle carries the exact canonical feature-
+cache-manifest digest. Opening a final view against another cache is rejected even when its
+dataset and ordered test source IDs match; normalization, encoder, or feature-content
+changes therefore cannot cross the final-evaluation boundary unnoticed.
+
 CMNIST uses the approved `cmnist-stratified-hash-v1` source-partition algorithm documented
 in [`experiments/cmnist.md`](experiments/cmnist.md). The Waterbirds acquisition or
 reconstruction implementation remains unresolved. Configurations require registered
@@ -612,6 +617,15 @@ PairSet
 identity, ordered endpoint identities, and construction key. It is not a row number alone.
 `construction_key` records deterministic construction information when a random seed is
 not sufficient, such as a source relation row or algorithm-version key.
+
+The implemented CMNIST pair-source capability carries the validated dataset manifest, and
+its constructor verifies the supplied training-pool content digest and partition membership
+against that manifest. The clean-oracle builder has no caller-supplied dataset-digest
+argument: it revalidates the capability and derives both the pair-manifest dependency and
+stable pair IDs from the capability's canonical dataset identity. CMNIST feature-cache
+preparation then checks that dependency, the pair-set/manifest record equality, every
+record's source metadata, and the aligned clean red/green endpoint intervention before it
+creates the output directory or invokes an encoder.
 
 Left/right source indices are stable row indices in the pair-source-view manifest, not
 unscoped raw dataset offsets. Protected semantic source IDs are populated only when the
@@ -753,6 +767,11 @@ pair/feature dimensions; nonfinite-input checks; orthonormality, symmetry, and i
 residuals; backend/dtype/device; and pair/feature manifest identities. A zero numerical
 rank is valid and yields identity even when requested rank is positive, while retaining the
 requested/effective distinction in results.
+
+For the implemented CMNIST fitter, the exact pair-manifest and feature-cache-manifest
+digests are required fit inputs and required canonical diagnostic fields. The runner passes
+the identities of the validated pair set and loaded cache used to produce the endpoint
+feature matrices; diagnostic JSON round trips retain both identities.
 
 Serialization separates lightweight metadata from tensor-heavy artifacts. Canonical JSON
 contains config, dimensions, ranks, diagnostics, hashes, and `ArtifactRef` values. The

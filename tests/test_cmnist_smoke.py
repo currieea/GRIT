@@ -9,6 +9,7 @@ from typing import cast
 import pytest
 
 from grit.config import CmnistSourceCounts, SeedSets
+from grit.projection import ProjectionDiagnostics
 from grit.results import OrdinaryRunResult
 from grit.runner import CmnistSmokeRunConfig, CmnistSmokeSummary, run_cmnist_smoke
 from grit.schemas import CmnistSelector
@@ -83,6 +84,12 @@ def test_hermetic_cmnist_smoke_runs_both_methods_through_final_gate(
     assert all(result.restoration is not None for result in results)
     assert all(result.final_test_metrics is not None for result in results)
     assert all(result.resolved_config.reportable is False for result in results)
+
+    projection = ProjectionDiagnostics.model_validate_json(
+        (output_root / "runs/grit/projection-1.json").read_text(encoding="utf-8")
+    )
+    assert projection.pair_manifest_digest == summary.pair_manifest_digest
+    assert projection.feature_cache_manifest_digest == summary.feature_manifest_digest
 
     final_metrics = results[0].final_test_metrics
     if final_metrics is None:

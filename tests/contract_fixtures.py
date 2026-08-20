@@ -115,7 +115,7 @@ def ordinary_grit_config(
         representation=feature_config(),
         pairs=OraclePairsConfig(
             kind="oracle",
-            construction_id="synthetic-oracle-pairs-v1",
+            construction_id="cmnist-clean-oracle-pairs-v1",
             source_partition_ids=("train_e01_sources", "train_e02_sources"),
             pair_count=256,
             pair_seed=0,
@@ -168,7 +168,7 @@ def diagnostic_grit_config() -> CmnistTestOracleExperimentConfig:
         representation=feature_config(),
         pairs=OraclePairsConfig(
             kind="oracle",
-            construction_id="synthetic-oracle-pairs-v1",
+            construction_id="cmnist-clean-oracle-pairs-v1",
             source_partition_ids=("train_e01_sources", "train_e02_sources"),
             pair_count=256,
             pair_seed=0,
