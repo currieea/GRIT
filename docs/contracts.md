@@ -342,6 +342,12 @@ secrets are never serialized. The canonical byte representation is hashed with a
 explicit algorithm identifier. YAML may be an authoring format, but it is not the
 canonical identity format.
 
+The implemented boundary revalidates nested model instances and public selector inputs.
+This is not a claim that Pydantic makes Python a security sandbox: low-level
+`model_copy()` and `model_construct()` can bypass construction-time checks. Normal
+serialized parsing and selection/freeze entry points therefore reconstruct their external
+records, seed sets, and finalist artifacts through strict validation before using them.
+
 ## 3. Dataset and split contracts
 
 **Classification:** split roles, role-scoped views, and the absence of final-test data from
@@ -993,6 +999,16 @@ own ordered top-three artifact, and freeze their own five-seed winner. Confirmat
 the union of those finalist candidate IDs, so a candidate appearing in both branches is not
 duplicated; its fresh records may contribute to both prespecified selectors.
 
+The implemented Milestone 3 boundary enforces this as connected typed artifacts. Tuning
+ranking accepts exactly the configured three tuning seeds and no other stage.
+`TuningFinalistsArtifact` contains one method/selector's deterministic ordered top three.
+The confirmation union embeds the primary and secondary artifacts and emits their ordered
+candidate-ID union without duplication. Each five-seed comparison accepts exactly its own
+artifact's three candidates and the configured three tuning plus two confirmation seeds;
+the artifact is then embedded in `FrozenCandidateSelection`. Missing, duplicate, extra, or
+mis-staged seeds, cross-method records, and candidates outside that selector's artifact are
+rejected without adding a scheduler.
+
 For Waterbirds-CF, selection maximizes official-validation worst-group accuracy; ties
 prefer higher adjusted average accuracy using validated Waterbirds-CF training-manifest
 weights, then lower projection rank when rank is actually a candidate axis, earlier epoch
@@ -1010,6 +1026,19 @@ CMNIST test-oracle envelopes use `CmnistTestOracleSelectionConfig`,
 such as `diagnostics/test_oracle/`. They are not accepted by
 `ValidationSelectionTable` and cannot become a frozen candidate or checkpoint selection.
 The Waterbirds initial study rejects test-oracle selection configuration entirely.
+
+The implemented diagnostic metric is one eligible oracle trial and retains its record,
+run, candidate, method, scientific-configuration digest, projection rank, checkpoint,
+epoch, seed, and `test_ood` accuracy identity. A diagnostic-only selector chooses the
+maximum accuracy over all eligible records. Exact ties use the documented
+`stable_trial_identity` lexical fallback over method, candidate, scientific-config digest,
+projection rank (`None` before integer ranks), run, checkpoint, epoch, seed, and record ID;
+they do not consult an ordinary selector. Its decision records every eligible contributing
+record ID and the complete selected-trial identity. The diagnostic result's `run_id`
+identifies the envelope computation, not every eligible trial: trial
+run/configuration/checkpoint identities are intentionally allowed to differ. Result
+validation recomputes the decision from the supplied envelope and rejects inconsistent
+candidate, run, checkpoint, contributor, or winner identities.
 
 ## 9. Results, provenance, and tracking
 
@@ -1056,9 +1085,9 @@ OrdinaryRunResult(CommonRunResultFields)
 
 CmnistTestOracleDiagnosticResult(CommonRunResultFields)
   result_kind: cmnist_test_oracle_diagnostic
-  diagnostic_history: diagnostic-only history artifact plus summary
-  oracle_decision: CmnistTestOracleDecision | None
-  oracle_metrics: tuple[DiagnosticMetricRecord, ...]
+  diagnostic_metrics: tuple[DiagnosticMetricRecord, ...]
+  oracle_decision: selected trial identity, maximum accuracy, stable tie policy,
+                   and every eligible contributing record ID
 
 Both variants
   timing: phase timestamps, durations, and clock policy
@@ -1191,6 +1220,8 @@ focused synthetic suite (test function spelling was allowed to remain internal):
 | `test_cmnist_selector_finalist_union_retains_separate_winners` | Primary/secondary finalist union is confirmed once while decisions remain separate. |
 | `test_fake_checkpoint_restoration_recovers_selected_inference_state` | Minimal checkpoint identity restores selected fake state rather than last state. |
 | `test_ordinary_and_test_oracle_results_are_discriminated_round_trips` | Ordinary and CMNIST test-oracle result types cannot be confused and serialize canonically. |
+| `test_test_oracle_envelope_selects_across_trials_and_round_trips` | Distinct configurations, ranks, runs, and checkpoints remain eligible; maximum accuracy plus stable identity selects the traced diagnostic winner. |
+| `test_tuning_finalists_gate_confirmation_and_freeze` | Exactly three tuning seeds produce each selector's ordered top three; only those candidates may enter its exact five-seed comparison and freeze. |
 | `test_null_event_sink_has_no_semantic_effect` | Tracking absence cannot change selection or results. |
 | `test_in_memory_lifecycle_blocks_final_metric_feedback` | Validation selects a fake checkpoint, restoration occurs before final evaluation, and final metrics cannot flow back to training or either ordinary selector. |
 

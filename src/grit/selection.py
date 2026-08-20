@@ -58,6 +58,7 @@ class DiagnosticMetricRecord(_MetricIdentity):
     seed_stage: SeedStage
     split_name: Literal["test_ood"]
     metric_name: Literal["accuracy"]
+    projection_rank: NonNegativeInt | None
 
 
 class CheckpointIdentity(StrictBoundaryModel):
@@ -148,6 +149,47 @@ class CandidateSelectionDecision(StrictBoundaryModel):
         return self
 
 
+class TuningFinalistsArtifact(StrictBoundaryModel):
+    """Durable ordered top three for one method and ordinary selector."""
+
+    artifact_id: NonEmptyStr
+    selector: CmnistSelector
+    method_id: NonEmptyStr
+    tuning_seeds: Annotated[tuple[StrictInt, ...], Field(min_length=3, max_length=3)]
+    ordered_candidates: Annotated[
+        tuple[CandidateSelectionDecision, ...], Field(min_length=3, max_length=3)
+    ]
+
+    @model_validator(mode="after")
+    def _validate_finalists(self) -> TuningFinalistsArtifact:
+        if len(set(self.tuning_seeds)) != 3:
+            raise ValueError("tuning finalist seeds must be unique")
+        candidate_ids = tuple(
+            decision.candidate_id for decision in self.ordered_candidates
+        )
+        if len(set(candidate_ids)) != 3:
+            raise ValueError("tuning finalists must contain three unique candidates")
+        expected_seed_keys = {(SeedStage.TUNING, seed) for seed in self.tuning_seeds}
+        for decision in self.ordered_candidates:
+            if decision.selector is not self.selector:
+                raise ValueError("finalist selector does not match artifact selector")
+            if decision.method_id != self.method_id:
+                raise ValueError("finalist method does not match artifact method")
+            observed_seed_keys = {
+                (checkpoint.seed_stage, checkpoint.seed)
+                for checkpoint in decision.contributing_checkpoint_decisions
+            }
+            if observed_seed_keys != expected_seed_keys:
+                raise ValueError(
+                    "each tuning finalist requires exactly the artifact tuning seeds"
+                )
+        if self.ordered_candidates != tuple(
+            sorted(self.ordered_candidates, key=_candidate_sort_key)
+        ):
+            raise ValueError("tuning finalists must preserve deterministic rank order")
+        return self
+
+
 class FrozenCandidateSelection(StrictBoundaryModel):
     frozen_selection_id: NonEmptyStr
     selector: CmnistSelector
@@ -155,6 +197,7 @@ class FrozenCandidateSelection(StrictBoundaryModel):
     candidate_id: NonEmptyStr
     scientific_config_digest: NonEmptyStr
     seed_sets: SeedSets
+    finalists: TuningFinalistsArtifact
     decision: CandidateSelectionDecision
 
     @model_validator(mode="after")
@@ -173,6 +216,24 @@ class FrozenCandidateSelection(StrictBoundaryModel):
         )
         if observed != expected:
             raise ValueError("frozen candidate fields must match its decision")
+        if self.finalists.selector is not self.selector:
+            raise ValueError("frozen candidate selector does not match finalists")
+        if self.finalists.method_id != self.method_id:
+            raise ValueError("frozen candidate method does not match finalists")
+        if self.finalists.tuning_seeds != self.seed_sets.tuning:
+            raise ValueError("frozen candidate seed sets do not match finalists")
+        finalist_by_id = {
+            finalist.candidate_id: finalist
+            for finalist in self.finalists.ordered_candidates
+        }
+        tuning_decision = finalist_by_id.get(self.candidate_id)
+        if tuning_decision is None:
+            raise ValueError("frozen candidate is outside the tuning finalists")
+        if (
+            tuning_decision.scientific_config_digest != self.scientific_config_digest
+            or tuning_decision.projection_rank != self.decision.projection_rank
+        ):
+            raise ValueError("frozen candidate identity does not match its finalist")
         observed_seed_keys = {
             (checkpoint.seed_stage, checkpoint.seed)
             for checkpoint in self.decision.contributing_checkpoint_decisions
@@ -215,15 +276,50 @@ class FrozenCheckpointSelection(StrictBoundaryModel):
 class FinalistUnion(StrictBoundaryModel):
     """Primary/secondary top sets confirmed once without merging their winners."""
 
-    primary_candidate_ids: tuple[NonEmptyStr, ...]
-    secondary_candidate_ids: tuple[NonEmptyStr, ...]
+    method_id: NonEmptyStr
+    primary: TuningFinalistsArtifact
+    secondary: TuningFinalistsArtifact
     confirmation_candidate_ids: tuple[NonEmptyStr, ...]
 
     @model_validator(mode="after")
     def _validate_union(self) -> FinalistUnion:
-        expected = tuple(
-            dict.fromkeys(self.primary_candidate_ids + self.secondary_candidate_ids)
+        if self.primary.selector is not CmnistSelector.PRIMARY_ROBUST:
+            raise ValueError("primary finalist artifact has the wrong selector")
+        if self.secondary.selector is not CmnistSelector.SECONDARY_SOURCE:
+            raise ValueError("secondary finalist artifact has the wrong selector")
+        if (
+            self.primary.method_id != self.method_id
+            or self.secondary.method_id != self.method_id
+        ):
+            raise ValueError("finalist union methods must match")
+        if self.primary.tuning_seeds != self.secondary.tuning_seeds:
+            raise ValueError("finalist union tuning seeds must match")
+        primary_ids = tuple(
+            decision.candidate_id for decision in self.primary.ordered_candidates
         )
+        secondary_ids = tuple(
+            decision.candidate_id for decision in self.secondary.ordered_candidates
+        )
+        primary_by_id = {
+            decision.candidate_id: (
+                decision.scientific_config_digest,
+                decision.projection_rank,
+            )
+            for decision in self.primary.ordered_candidates
+        }
+        secondary_by_id = {
+            decision.candidate_id: (
+                decision.scientific_config_digest,
+                decision.projection_rank,
+            )
+            for decision in self.secondary.ordered_candidates
+        }
+        for candidate_id in set(primary_by_id) & set(secondary_by_id):
+            if primary_by_id[candidate_id] != secondary_by_id[candidate_id]:
+                raise ValueError(
+                    "shared primary/secondary finalist identity is inconsistent"
+                )
+        expected = tuple(dict.fromkeys(primary_ids + secondary_ids))
         if self.confirmation_candidate_ids != expected:
             raise ValueError(
                 "confirmation candidates must be the ordered finalist union"
@@ -236,10 +332,44 @@ class DiagnosticSelectionDecision(StrictBoundaryModel):
 
     decision_kind: Literal["cmnist_test_oracle"]
     decision_id: NonEmptyStr
+    selected_record_id: NonEmptyStr
+    run_id: NonEmptyStr
     candidate_id: NonEmptyStr
+    method_id: NonEmptyStr
+    scientific_config_digest: NonEmptyStr
     checkpoint_id: NonEmptyStr
+    epoch: NonNegativeInt
+    seed: StrictInt
+    projection_rank: NonNegativeInt | None
     objective_value: FiniteFloat
     contributing_record_ids: tuple[NonEmptyStr, ...]
+    tie_break: Literal["stable_trial_identity"]
+
+    @model_validator(mode="after")
+    def _validate_contributors(self) -> DiagnosticSelectionDecision:
+        if not self.contributing_record_ids:
+            raise ValueError("test-oracle selection requires eligible records")
+        if len(set(self.contributing_record_ids)) != len(self.contributing_record_ids):
+            raise ValueError("test-oracle contributing record IDs must be unique")
+        if self.selected_record_id not in self.contributing_record_ids:
+            raise ValueError("selected test-oracle record must be a contributor")
+        return self
+
+
+def _candidate_sort_key(
+    decision: CandidateSelectionDecision,
+) -> tuple[float, float, int, str]:
+    rank_key = decision.projection_rank if decision.projection_rank is not None else 0
+    return (
+        -float(decision.objective_value),
+        -float(decision.mean_accuracy),
+        rank_key,
+        decision.candidate_id,
+    )
+
+
+def _revalidate_seed_sets(seed_sets: SeedSets) -> SeedSets:
+    return SeedSets.model_validate(seed_sets.model_dump(mode="python"))
 
 
 def _require_validation_records(
@@ -250,7 +380,120 @@ def _require_validation_records(
         raise ValueError("selection requires validation metric records")
     if any(type(record) is not ValidationMetricRecord for record in materialized):
         raise TypeError("ordinary selectors accept ValidationMetricRecord values only")
-    return materialized
+    return tuple(
+        ValidationMetricRecord.model_validate(record.model_dump(mode="python"))
+        for record in materialized
+    )
+
+
+def _require_diagnostic_records(
+    records: Sequence[DiagnosticMetricRecord],
+) -> tuple[DiagnosticMetricRecord, ...]:
+    materialized = tuple(records)
+    if not materialized:
+        raise ValueError("test-oracle selection requires diagnostic metric records")
+    if any(type(record) is not DiagnosticMetricRecord for record in materialized):
+        raise TypeError(
+            "test-oracle selection accepts DiagnosticMetricRecord values only"
+        )
+    validated = tuple(
+        DiagnosticMetricRecord.model_validate(record.model_dump(mode="python"))
+        for record in materialized
+    )
+    record_ids = tuple(record.record_id for record in validated)
+    if len(set(record_ids)) != len(record_ids):
+        raise ValueError("diagnostic metric record IDs must be unique")
+    methods = {record.method_id for record in validated}
+    if len(methods) != 1:
+        raise ValueError("test-oracle envelopes select methods independently")
+
+    candidate_identities: dict[str, tuple[str, str, int | None]] = {}
+    run_identities: dict[str, tuple[str, str, str, int | None, int]] = {}
+    checkpoint_identities: dict[str, tuple[str, str, str, int, int, int | None]] = {}
+    for record in validated:
+        candidate_identity = (
+            record.method_id,
+            record.scientific_config_digest,
+            record.projection_rank,
+        )
+        prior_candidate = candidate_identities.setdefault(
+            record.candidate_id, candidate_identity
+        )
+        if prior_candidate != candidate_identity:
+            raise ValueError("diagnostic candidate identity is inconsistent")
+        run_identity = (
+            record.candidate_id,
+            record.method_id,
+            record.scientific_config_digest,
+            record.projection_rank,
+            record.seed,
+        )
+        prior_run = run_identities.setdefault(record.run_id, run_identity)
+        if prior_run != run_identity:
+            raise ValueError("diagnostic run identity is inconsistent")
+        checkpoint_identity = (
+            record.run_id,
+            record.candidate_id,
+            record.scientific_config_digest,
+            record.epoch,
+            record.seed,
+            record.projection_rank,
+        )
+        prior_checkpoint = checkpoint_identities.setdefault(
+            record.checkpoint_id, checkpoint_identity
+        )
+        if prior_checkpoint != checkpoint_identity:
+            raise ValueError("diagnostic checkpoint identity is inconsistent")
+    return validated
+
+
+def _diagnostic_tie_key(
+    record: DiagnosticMetricRecord,
+) -> tuple[str, str, str, int, str, str, int, int, str]:
+    rank_key = record.projection_rank if record.projection_rank is not None else -1
+    return (
+        record.method_id,
+        record.candidate_id,
+        record.scientific_config_digest,
+        rank_key,
+        record.run_id,
+        record.checkpoint_id,
+        record.epoch,
+        record.seed,
+        record.record_id,
+    )
+
+
+def select_test_oracle(
+    records: Sequence[DiagnosticMetricRecord],
+) -> DiagnosticSelectionDecision:
+    """Select the maximum CMNIST test accuracy in a diagnostic-only envelope."""
+
+    diagnostic_records = _require_diagnostic_records(records)
+    selected = min(
+        diagnostic_records,
+        key=lambda record: (-float(record.value), _diagnostic_tie_key(record)),
+    )
+    contributor_ids = tuple(
+        record.record_id
+        for record in sorted(diagnostic_records, key=_diagnostic_tie_key)
+    )
+    return DiagnosticSelectionDecision(
+        decision_kind="cmnist_test_oracle",
+        decision_id=f"test-oracle:{selected.record_id}",
+        selected_record_id=selected.record_id,
+        run_id=selected.run_id,
+        candidate_id=selected.candidate_id,
+        method_id=selected.method_id,
+        scientific_config_digest=selected.scientific_config_digest,
+        checkpoint_id=selected.checkpoint_id,
+        epoch=selected.epoch,
+        seed=selected.seed,
+        projection_rank=selected.projection_rank,
+        objective_value=selected.value,
+        contributing_record_ids=contributor_ids,
+        tie_break="stable_trial_identity",
+    )
 
 
 def _selector_splits(selector: CmnistSelector) -> tuple[str, ...]:
@@ -378,15 +621,14 @@ def select_checkpoint(
     )
 
 
-def rank_candidates(
+def _rank_candidates_for_seed_keys(
     records: Sequence[ValidationMetricRecord],
     selector: CmnistSelector,
+    expected_seed_keys: set[tuple[SeedStage, int]],
 ) -> tuple[CandidateSelectionDecision, ...]:
-    """Rank candidates from tuning/confirmation validation records only."""
+    """Rank candidates after enforcing one exact configured stage/seed table."""
 
     validation_records = _require_validation_records(records)
-    if any(record.seed_stage is SeedStage.FINAL for record in validation_records):
-        raise ValueError("final-stage validation cannot enter candidate selection")
     methods = {record.method_id for record in validation_records}
     if len(methods) != 1:
         raise ValueError("methods must be selected independently")
@@ -400,18 +642,15 @@ def rank_candidates(
         decision = select_checkpoint(run_records, selector)
         by_candidate[candidate_id].append(decision)
 
-    seed_keys_by_candidate = {
-        candidate_id: {(decision.seed_stage, decision.seed) for decision in decisions}
-        for candidate_id, decisions in by_candidate.items()
-    }
-    if len({frozenset(keys) for keys in seed_keys_by_candidate.values()}) != 1:
-        raise ValueError(
-            "candidate comparisons require identical validation seed stages"
-        )
-    for decisions in by_candidate.values():
+    for candidate_id, decisions in by_candidate.items():
         seed_keys = [(decision.seed_stage, decision.seed) for decision in decisions]
         if len(seed_keys) != len(set(seed_keys)):
             raise ValueError("a candidate has duplicate runs for one seed stage")
+        if set(seed_keys) != expected_seed_keys:
+            raise ValueError(
+                f"candidate {candidate_id!r} does not have exactly the required "
+                "stage/seed records"
+            )
 
     ranked: list[CandidateSelectionDecision] = []
     for candidate_id, decisions in by_candidate.items():
@@ -441,107 +680,183 @@ def rank_candidates(
             )
         )
 
-    def candidate_key(
-        decision: CandidateSelectionDecision,
-    ) -> tuple[float, float, int, str]:
-        rank_key = (
-            decision.projection_rank if decision.projection_rank is not None else 0
-        )
-        return (
-            -float(decision.objective_value),
-            -float(decision.mean_accuracy),
-            rank_key,
-            decision.candidate_id,
-        )
-
-    return tuple(sorted(ranked, key=candidate_key))
+    return tuple(sorted(ranked, key=_candidate_sort_key))
 
 
-def select_candidate(
+def rank_tuning_candidates(
     records: Sequence[ValidationMetricRecord],
     selector: CmnistSelector,
-) -> CandidateSelectionDecision:
-    """Select a candidate using aggregated validation outcomes only."""
+    seed_sets: SeedSets,
+) -> tuple[CandidateSelectionDecision, ...]:
+    """Rank one method using exactly the configured three tuning seeds."""
 
-    return rank_candidates(records, selector)[0]
+    validated_seed_sets = _revalidate_seed_sets(seed_sets)
+    validation_records = _require_validation_records(records)
+    if any(record.seed_stage is not SeedStage.TUNING for record in validation_records):
+        raise ValueError("tuning ranking accepts tuning-stage records only")
+    expected = {(SeedStage.TUNING, seed) for seed in validated_seed_sets.tuning}
+    return _rank_candidates_for_seed_keys(validation_records, selector, expected)
+
+
+def make_tuning_finalists(
+    records: Sequence[ValidationMetricRecord],
+    selector: CmnistSelector,
+    seed_sets: SeedSets,
+) -> TuningFinalistsArtifact:
+    """Persist one selector's ordered top three after tuning only."""
+
+    validated_seed_sets = _revalidate_seed_sets(seed_sets)
+    ranked = rank_tuning_candidates(records, selector, validated_seed_sets)
+    if len(ranked) < 3:
+        raise ValueError("tuning requires at least three candidate configurations")
+    top_three = ranked[:3]
+    method_id = top_three[0].method_id
+    return TuningFinalistsArtifact(
+        artifact_id=f"tuning-finalists:{method_id}:{selector.value}",
+        selector=selector,
+        method_id=method_id,
+        tuning_seeds=validated_seed_sets.tuning,
+        ordered_candidates=top_three,
+    )
+
+
+def select_confirmed_candidate(
+    records: Sequence[ValidationMetricRecord],
+    finalists: TuningFinalistsArtifact,
+    seed_sets: SeedSets,
+) -> CandidateSelectionDecision:
+    """Compare one selector's top three using exactly its combined five seeds."""
+
+    validated_seed_sets = _revalidate_seed_sets(seed_sets)
+    validated_finalists = TuningFinalistsArtifact.model_validate(
+        finalists.model_dump(mode="python")
+    )
+    if validated_finalists.tuning_seeds != validated_seed_sets.tuning:
+        raise ValueError("finalist artifact tuning seeds do not match configuration")
+    validation_records = _require_validation_records(records)
+    if any(
+        record.seed_stage not in {SeedStage.TUNING, SeedStage.CONFIRMATION}
+        for record in validation_records
+    ):
+        raise ValueError(
+            "confirmation comparison accepts tuning and confirmation records only"
+        )
+    finalist_by_id = {
+        finalist.candidate_id: finalist
+        for finalist in validated_finalists.ordered_candidates
+    }
+    observed_candidate_ids = {record.candidate_id for record in validation_records}
+    if observed_candidate_ids != set(finalist_by_id):
+        raise ValueError(
+            "confirmation comparison must contain exactly its selector finalists"
+        )
+    if any(
+        record.method_id != validated_finalists.method_id
+        for record in validation_records
+    ):
+        raise ValueError("confirmation records do not match finalist method")
+    expected = {
+        *((SeedStage.TUNING, seed) for seed in validated_seed_sets.tuning),
+        *((SeedStage.CONFIRMATION, seed) for seed in validated_seed_sets.confirmation),
+    }
+    ranked = _rank_candidates_for_seed_keys(
+        validation_records,
+        validated_finalists.selector,
+        expected,
+    )
+    for decision in ranked:
+        tuning_decision = finalist_by_id[decision.candidate_id]
+        if (
+            decision.scientific_config_digest
+            != tuning_decision.scientific_config_digest
+            or decision.projection_rank != tuning_decision.projection_rank
+        ):
+            raise ValueError(
+                "confirmation candidate identity does not match tuning finalist"
+            )
+    return ranked[0]
 
 
 def make_finalist_union(
-    primary_ranked: Sequence[CandidateSelectionDecision],
-    secondary_ranked: Sequence[CandidateSelectionDecision],
-    *,
-    finalists_per_selector: int = 3,
+    primary: TuningFinalistsArtifact,
+    secondary: TuningFinalistsArtifact,
 ) -> FinalistUnion:
-    """Return one confirmation set while preserving both selector rankings."""
+    """Return one ordered confirmation union without merging selector artifacts."""
 
-    if finalists_per_selector < 1:
-        raise ValueError("finalists_per_selector must be positive")
-    primary_all = tuple(primary_ranked)
-    secondary_all = tuple(secondary_ranked)
-    if len(primary_all) < finalists_per_selector:
-        raise ValueError("primary ranking has too few finalists")
-    if len(secondary_all) < finalists_per_selector:
-        raise ValueError("secondary ranking has too few finalists")
-    if any(item.selector is not CmnistSelector.PRIMARY_ROBUST for item in primary_all):
-        raise ValueError("primary finalists must use the primary selector")
-    if any(
-        item.selector is not CmnistSelector.SECONDARY_SOURCE for item in secondary_all
-    ):
-        raise ValueError("secondary finalists must use the secondary selector")
-    methods = {item.method_id for item in primary_all + secondary_all}
-    if len(methods) != 1:
-        raise ValueError("primary and secondary finalists must belong to one method")
-    primary_candidates = {
-        item.candidate_id: (item.scientific_config_digest, item.projection_rank)
-        for item in primary_all
-    }
-    secondary_candidates = {
-        item.candidate_id: (item.scientific_config_digest, item.projection_rank)
-        for item in secondary_all
-    }
-    if primary_candidates != secondary_candidates:
-        raise ValueError(
-            "primary and secondary rankings must describe the same candidate set"
-        )
-    primary = primary_all[:finalists_per_selector]
-    secondary = secondary_all[:finalists_per_selector]
-    primary_ids = tuple(item.candidate_id for item in primary)
-    secondary_ids = tuple(item.candidate_id for item in secondary)
+    validated_primary = TuningFinalistsArtifact.model_validate(
+        primary.model_dump(mode="python")
+    )
+    validated_secondary = TuningFinalistsArtifact.model_validate(
+        secondary.model_dump(mode="python")
+    )
+    primary_ids = tuple(
+        item.candidate_id for item in validated_primary.ordered_candidates
+    )
+    secondary_ids = tuple(
+        item.candidate_id for item in validated_secondary.ordered_candidates
+    )
     union_ids = tuple(dict.fromkeys(primary_ids + secondary_ids))
     return FinalistUnion(
-        primary_candidate_ids=primary_ids,
-        secondary_candidate_ids=secondary_ids,
+        method_id=validated_primary.method_id,
+        primary=validated_primary,
+        secondary=validated_secondary,
         confirmation_candidate_ids=union_ids,
     )
 
 
 def freeze_candidate(
     decision: CandidateSelectionDecision,
+    finalists: TuningFinalistsArtifact,
     seed_sets: SeedSets,
 ) -> FrozenCandidateSelection:
-    """Freeze one selector's validation-selected scientific candidate."""
+    """Freeze one confirmed winner through its selector-specific finalists."""
 
+    validated_seed_sets = _revalidate_seed_sets(seed_sets)
+    validated_decision = CandidateSelectionDecision.model_validate(
+        decision.model_dump(mode="python")
+    )
+    validated_finalists = TuningFinalistsArtifact.model_validate(
+        finalists.model_dump(mode="python")
+    )
     observed_seed_keys = {
         (checkpoint.seed_stage, checkpoint.seed)
-        for checkpoint in decision.contributing_checkpoint_decisions
+        for checkpoint in validated_decision.contributing_checkpoint_decisions
     }
     expected_seed_keys = {
-        *((SeedStage.TUNING, seed) for seed in seed_sets.tuning),
-        *((SeedStage.CONFIRMATION, seed) for seed in seed_sets.confirmation),
+        *((SeedStage.TUNING, seed) for seed in validated_seed_sets.tuning),
+        *((SeedStage.CONFIRMATION, seed) for seed in validated_seed_sets.confirmation),
     }
     if observed_seed_keys != expected_seed_keys:
         raise ValueError(
             "candidate freeze requires exactly the configured tuning and "
             "confirmation seeds"
         )
+    finalist_by_id = {
+        finalist.candidate_id: finalist
+        for finalist in validated_finalists.ordered_candidates
+    }
+    tuning_decision = finalist_by_id.get(validated_decision.candidate_id)
+    if tuning_decision is None:
+        raise ValueError("candidate cannot be frozen outside its finalist artifact")
+    if validated_decision.selector is not validated_finalists.selector:
+        raise ValueError("candidate selector does not match finalist artifact")
+    if validated_decision.method_id != validated_finalists.method_id:
+        raise ValueError("candidate method does not match finalist artifact")
+    if (
+        validated_decision.scientific_config_digest
+        != tuning_decision.scientific_config_digest
+        or validated_decision.projection_rank != tuning_decision.projection_rank
+    ):
+        raise ValueError("candidate identity does not match tuning finalist")
     return FrozenCandidateSelection(
-        frozen_selection_id=f"frozen:{decision.decision_id}",
-        selector=decision.selector,
-        method_id=decision.method_id,
-        candidate_id=decision.candidate_id,
-        scientific_config_digest=decision.scientific_config_digest,
-        seed_sets=seed_sets,
-        decision=decision,
+        frozen_selection_id=f"frozen:{validated_decision.decision_id}",
+        selector=validated_decision.selector,
+        method_id=validated_decision.method_id,
+        candidate_id=validated_decision.candidate_id,
+        scientific_config_digest=validated_decision.scientific_config_digest,
+        seed_sets=validated_seed_sets,
+        finalists=validated_finalists,
+        decision=validated_decision,
     )
 
 
@@ -551,26 +866,32 @@ def freeze_final_checkpoint(
 ) -> FrozenCheckpointSelection:
     """Freeze a final run's checkpoint without allowing candidate mutation."""
 
-    if decision.seed_stage is not SeedStage.FINAL:
+    validated_decision = CheckpointSelectionDecision.model_validate(
+        decision.model_dump(mode="python")
+    )
+    validated_candidate = FrozenCandidateSelection.model_validate(
+        candidate.model_dump(mode="python")
+    )
+    if validated_decision.seed_stage is not SeedStage.FINAL:
         raise ValueError("a frozen final checkpoint requires final-stage validation")
-    if decision.selector is not candidate.selector:
+    if validated_decision.selector is not validated_candidate.selector:
         raise ValueError("checkpoint selector does not match the frozen candidate")
-    if decision.method_id != candidate.method_id:
+    if validated_decision.method_id != validated_candidate.method_id:
         raise ValueError("checkpoint method does not match the frozen candidate")
-    if decision.seed not in candidate.seed_sets.final:
+    if validated_decision.seed not in validated_candidate.seed_sets.final:
         raise ValueError("final checkpoint seed is not configured for final evaluation")
-    if decision.checkpoint.candidate_id != candidate.candidate_id:
+    if validated_decision.checkpoint.candidate_id != validated_candidate.candidate_id:
         raise ValueError("final-stage validation cannot change the frozen candidate")
     if (
-        decision.checkpoint.scientific_config_digest
-        != candidate.scientific_config_digest
+        validated_decision.checkpoint.scientific_config_digest
+        != validated_candidate.scientific_config_digest
     ):
         raise ValueError("final-stage validation cannot change frozen hyperparameters")
     return FrozenCheckpointSelection(
-        frozen_checkpoint_id=f"frozen:{decision.decision_id}",
-        candidate_selection_id=candidate.frozen_selection_id,
-        selector=candidate.selector,
-        method_id=candidate.method_id,
-        checkpoint=decision.checkpoint,
-        decision=decision,
+        frozen_checkpoint_id=f"frozen:{validated_decision.decision_id}",
+        candidate_selection_id=validated_candidate.frozen_selection_id,
+        selector=validated_candidate.selector,
+        method_id=validated_candidate.method_id,
+        checkpoint=validated_decision.checkpoint,
+        decision=validated_decision,
     )

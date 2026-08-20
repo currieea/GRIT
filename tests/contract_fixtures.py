@@ -111,6 +111,34 @@ def diagnostic_config() -> CmnistTestOracleExperimentConfig:
     )
 
 
+def diagnostic_grit_config() -> CmnistTestOracleExperimentConfig:
+    return CmnistTestOracleExperimentConfig(
+        schema_version="grit.experiment/v1",
+        run_kind="cmnist_test_oracle_diagnostic",
+        experiment_name="synthetic-cmnist-grit-test-oracle",
+        protocol_id="cmnist/v1",
+        dataset=dataset_config(),
+        representation=feature_config(),
+        pairs=OraclePairsConfig(
+            kind="oracle",
+            construction_id="synthetic-oracle-pairs-v1",
+            source_partition_ids=("train_e01_sources", "train_e02_sources"),
+            pair_count=256,
+        ),
+        projection=LinearProjectionConfig(
+            kind="linear_pair_difference",
+            requested_rank=2,
+            center_differences=False,
+        ),
+        algorithm=GritAlgorithmConfig(kind="grit"),
+        seed_sets=seed_sets(),
+        diagnostic_selection=CmnistTestOracleSelectionConfig(
+            selector="test_ood_accuracy",
+            test_oracle=True,
+        ),
+    )
+
+
 def validation_records(
     *,
     candidate_id: str,

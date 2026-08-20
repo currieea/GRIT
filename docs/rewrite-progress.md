@@ -250,6 +250,35 @@ Verification:
 - Documentation links, milestone statuses, and scope paths reviewed; no legacy or protocol
   file changed.
 
+### Milestone 3 contract correction
+
+- Replaced the single-winner-shaped CMNIST diagnostic result with a genuine test-oracle
+  envelope. Eligible records retain distinct configuration/rank, run, checkpoint, epoch,
+  seed, candidate, method, and metric identities; maximum `test_ood` accuracy plus an
+  explicit stable identity tie-break selects the fully traced winner.
+- Connected tuning, finalist, confirmation, and freeze boundaries. Each method/selector's
+  exact three-seed tuning table produces an ordered top-three artifact; confirmation uses
+  the deduplicated primary/secondary union, while each selector's five-seed comparison and
+  freeze remain restricted to its own artifact.
+- Added strict rejection for missing, duplicate, extra, and mis-staged seeds, non-finalist
+  freezes, cross-selector finalist use, cross-method aggregation, inconsistent diagnostic
+  identities, and diagnostic records passed to ordinary selectors.
+- Enabled Pydantic instance revalidation and explicitly reconstruct external selector,
+  seed-set, decision, and finalist inputs at public boundaries so ordinary parsing paths do
+  not trust malformed `model_copy()` values.
+- Bound strict BasedPyright explicitly to uv's project `.venv`; strict mode and the existing
+  `src/grit`/`tests` include paths remain unchanged.
+- Added no dataset, feature, pair-construction, projection, PyTorch training, production
+  runner, W&B, artifact-store, or resume implementation.
+
+Verification:
+
+- `uv lock --check` — passed
+- `uv run --frozen ruff check .` — passed
+- `uv run --frozen basedpyright` — 0 errors, warnings, or notes
+- `uv run --offline --frozen pytest` — 27 passed on Python 3.10.20
+- `git diff --check` — passed
+
 ## Approved decisions
 
 - The staged rewrite plan and target architectural direction are approved.

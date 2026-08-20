@@ -31,6 +31,7 @@ class StrictBoundaryModel(BaseModel):
         allow_inf_nan=False,
         extra="forbid",
         frozen=True,
+        revalidate_instances="always",
         strict=True,
         validate_default=True,
     )

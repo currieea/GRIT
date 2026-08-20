@@ -43,19 +43,21 @@ from grit.schemas import CmnistSelector, SeedStage
 from grit.selection import (
     CheckpointIdentity,
     DiagnosticMetricRecord,
-    DiagnosticSelectionDecision,
     FinalTestMetricRecord,
     FrozenCandidateSelection,
     FrozenCheckpointSelection,
     ValidationMetricRecord,
     freeze_candidate,
     freeze_final_checkpoint,
-    select_candidate,
+    make_tuning_finalists,
     select_checkpoint,
+    select_confirmed_candidate,
+    select_test_oracle,
 )
 from grit.tracking import LifecycleEvent, NullEventSink
 from tests.contract_fixtures import (
     diagnostic_config,
+    diagnostic_grit_config,
     ordinary_erm_config,
 )
 
@@ -187,6 +189,37 @@ def _final_descriptor() -> FinalTestSplitDescriptor:
     )
 
 
+def _diagnostic_metric(
+    *,
+    record_id: str,
+    run_id: str,
+    candidate_id: str,
+    scientific_config_digest: str,
+    checkpoint_id: str,
+    epoch: int,
+    seed: int,
+    value: float,
+    projection_rank: int,
+) -> DiagnosticMetricRecord:
+    return DiagnosticMetricRecord(
+        record_id=record_id,
+        run_id=run_id,
+        candidate_id=candidate_id,
+        method_id="grit",
+        scientific_config_digest=scientific_config_digest,
+        checkpoint_id=checkpoint_id,
+        epoch=epoch,
+        seed=seed,
+        value=value,
+        sample_count=10_000,
+        metric_kind="diagnostic_test_oracle",
+        seed_stage=SeedStage.TUNING,
+        split_name="test_ood",
+        metric_name="accuracy",
+        projection_rank=projection_rank,
+    )
+
+
 def _validation_views() -> tuple[ValidationView, ValidationView, ValidationView]:
     def build(
         name: Literal["val_e01", "val_e02", "val_e05"],
@@ -226,17 +259,24 @@ def _run_completed_lifecycle() -> CompletedLifecycle:
     validation_views = _validation_views()
     evaluator = FakeValidationEvaluator()
 
-    search_records: list[ValidationMetricRecord] = []
+    tuning_records: list[ValidationMetricRecord] = []
+    confirmation_records: list[ValidationMetricRecord] = []
     for candidate_id, digest, score in (
         ("candidate:selected", scientific_config_digest, 0.8),
         ("candidate:other", "sha256:other-config", 0.7),
+        ("candidate:third", "sha256:third-config", 0.6),
     ):
         for seed_stage, seeds in (
             (SeedStage.TUNING, (101, 102, 103)),
             (SeedStage.CONFIRMATION, (201, 202)),
         ):
             for seed in seeds:
-                search_records.extend(
+                target = (
+                    tuning_records
+                    if seed_stage is SeedStage.TUNING
+                    else confirmation_records
+                )
+                target.extend(
                     evaluator.evaluate(
                         validation_views,
                         candidate_id=candidate_id,
@@ -250,8 +290,19 @@ def _run_completed_lifecycle() -> CompletedLifecycle:
                         projection_rank=None,
                     )
                 )
+    finalists = make_tuning_finalists(
+        tuning_records,
+        CmnistSelector.PRIMARY_ROBUST,
+        config.seed_sets,
+    )
+    combined_decision = select_confirmed_candidate(
+        (*tuning_records, *confirmation_records),
+        finalists,
+        config.seed_sets,
+    )
     candidate = freeze_candidate(
-        select_candidate(search_records, CmnistSelector.PRIMARY_ROBUST),
+        combined_decision,
+        finalists,
         config.seed_sets,
     )
     assert candidate.candidate_id == "candidate:selected"
@@ -449,11 +500,11 @@ def test_ordinary_and_diagnostic_results_are_separate_discriminated_roots() -> N
     with pytest.raises(ValidationError, match="diagnostic_selection"):
         parse_run_result_json(mixed_ordinary)
 
-    config = diagnostic_config()
+    config = diagnostic_grit_config()
     handle = issue_final_test_handle(
         handle_id="handle:diagnostic",
-        run_id="run:diagnostic",
-        candidate_id="candidate:oracle",
+        run_id="run:rank-one",
+        candidate_id="candidate:rank-one",
         scientific_config_digest=config.scientific_config_digest(),
         diagnostic_config_digest=config.canonical_digest(),
         descriptor=_final_descriptor(),
@@ -462,46 +513,82 @@ def test_ordinary_and_diagnostic_results_are_separate_discriminated_roots() -> N
     diagnostic_view = open_cmnist_test_oracle(handle, config)
     assert isinstance(diagnostic_view, CmnistTestOracleView)
     assert diagnostic_view.descriptor.role == "final_test"
-    metric = DiagnosticMetricRecord(
-        record_id="metric:diagnostic",
-        run_id="run:diagnostic",
-        candidate_id="candidate:oracle",
-        method_id="erm",
-        scientific_config_digest=config.scientific_config_digest(),
-        checkpoint_id="checkpoint:oracle",
-        epoch=2,
-        seed=101,
-        value=0.99,
-        sample_count=len(diagnostic_view.examples),
-        metric_kind="diagnostic_test_oracle",
-        seed_stage=SeedStage.TUNING,
-        split_name="test_ood",
-        metric_name="accuracy",
+    metrics = (
+        _diagnostic_metric(
+            record_id="metric:rank-one:epoch-one",
+            run_id="run:rank-one",
+            candidate_id="candidate:rank-one",
+            scientific_config_digest="sha256:rank-one-config",
+            checkpoint_id="checkpoint:rank-one:epoch-one",
+            epoch=1,
+            seed=101,
+            value=0.90,
+            projection_rank=1,
+        ),
+        _diagnostic_metric(
+            record_id="metric:rank-one:epoch-two",
+            run_id="run:rank-one",
+            candidate_id="candidate:rank-one",
+            scientific_config_digest="sha256:rank-one-config",
+            checkpoint_id="checkpoint:rank-one:epoch-two",
+            epoch=2,
+            seed=101,
+            value=0.95,
+            projection_rank=1,
+        ),
+        _diagnostic_metric(
+            record_id="metric:rank-two:run-one",
+            run_id="run:rank-two:one",
+            candidate_id="candidate:rank-two",
+            scientific_config_digest="sha256:rank-two-config",
+            checkpoint_id="checkpoint:rank-two:one",
+            epoch=3,
+            seed=102,
+            value=0.95,
+            projection_rank=2,
+        ),
+        _diagnostic_metric(
+            record_id="metric:rank-two:run-two",
+            run_id="run:rank-two:two",
+            candidate_id="candidate:rank-two",
+            scientific_config_digest="sha256:rank-two-config",
+            checkpoint_id="checkpoint:rank-two:two",
+            epoch=4,
+            seed=103,
+            value=0.85,
+            projection_rank=2,
+        ),
     )
-    decision = DiagnosticSelectionDecision(
-        decision_kind="cmnist_test_oracle",
-        decision_id="diagnostic-selection:1",
-        candidate_id=metric.candidate_id,
-        checkpoint_id=metric.checkpoint_id,
-        objective_value=metric.value,
-        contributing_record_ids=(metric.record_id,),
-    )
+    decision = select_test_oracle(metrics)
+    assert decision.selected_record_id == "metric:rank-one:epoch-two"
+    assert decision.run_id == "run:rank-one"
+    assert decision.candidate_id == "candidate:rank-one"
+    assert decision.scientific_config_digest == "sha256:rank-one-config"
+    assert decision.checkpoint_id == "checkpoint:rank-one:epoch-two"
+    assert decision.projection_rank == 1
+    assert decision.tie_break == "stable_trial_identity"
+    assert set(decision.contributing_record_ids) == {
+        metric.record_id for metric in metrics
+    }
+    assert select_test_oracle(tuple(reversed(metrics))) == decision
     code, environment = _provenance()
     diagnostic = CmnistTestOracleDiagnosticResult(
         schema_version="grit.run-result/v1",
         result_kind="cmnist_test_oracle_diagnostic",
-        run_id="run:diagnostic",
+        run_id="envelope:diagnostic",
         resolved_config=config,
         resolved_config_digest=config.canonical_digest(),
         status=SucceededStatus(kind="succeeded"),
         code=code,
         environment=environment,
         diagnostic_selection=decision,
-        diagnostic_metrics=(metric,),
+        diagnostic_metrics=metrics,
         artifacts=(),
     )
     parsed = parse_run_result_json(diagnostic.canonical_json())
     assert parsed == diagnostic
+    assert parsed.canonical_json() == diagnostic.canonical_json()
+    assert parsed.canonical_digest() == diagnostic.canonical_digest()
 
     mixed_diagnostic = diagnostic.canonical_json().replace(
         '{"artifacts"', '{"candidate_selection":{},"artifacts"', 1
@@ -649,7 +736,7 @@ def test_successful_result_requires_bound_nonempty_final_metrics() -> None:
         metric.model_copy(update={"projection_rank": 1})
         for metric in result.validation_metrics
     )
-    with pytest.raises(ValidationError, match="rank does not match"):
+    with pytest.raises(ValidationError, match="does not match"):
         OrdinaryRunResult.model_validate(
             result.model_dump(mode="python")
             | {
@@ -660,44 +747,75 @@ def test_successful_result_requires_bound_nonempty_final_metrics() -> None:
         )
 
 
-def test_diagnostic_result_binds_method_records_and_objective() -> None:
-    config = diagnostic_config()
-    metric = DiagnosticMetricRecord(
-        record_id="metric:diagnostic",
-        run_id="run:diagnostic",
-        candidate_id="candidate:oracle",
-        method_id="grit",
-        scientific_config_digest=config.scientific_config_digest(),
-        checkpoint_id="checkpoint:oracle",
-        epoch=2,
+def test_diagnostic_envelope_rejects_mismatched_trial_identities() -> None:
+    config = diagnostic_grit_config()
+    first = _diagnostic_metric(
+        record_id="metric:first",
+        run_id="run:first",
+        candidate_id="candidate:first",
+        scientific_config_digest="sha256:first",
+        checkpoint_id="checkpoint:first",
+        epoch=1,
         seed=101,
-        value=0.99,
-        sample_count=2,
-        metric_kind="diagnostic_test_oracle",
-        seed_stage=SeedStage.TUNING,
-        split_name="test_ood",
-        metric_name="accuracy",
+        value=0.8,
+        projection_rank=1,
     )
-    decision = DiagnosticSelectionDecision(
-        decision_kind="cmnist_test_oracle",
-        decision_id="diagnostic-selection:bad",
-        candidate_id=metric.candidate_id,
-        checkpoint_id=metric.checkpoint_id,
-        objective_value=0.5,
-        contributing_record_ids=("metric:unrelated",),
+    second = _diagnostic_metric(
+        record_id="metric:second",
+        run_id="run:second",
+        candidate_id="candidate:second",
+        scientific_config_digest="sha256:second",
+        checkpoint_id="checkpoint:second",
+        epoch=2,
+        seed=102,
+        value=0.9,
+        projection_rank=2,
+    )
+    inconsistent_candidate = second.model_copy(
+        update={"candidate_id": first.candidate_id}
+    )
+    with pytest.raises(ValueError, match="candidate identity is inconsistent"):
+        select_test_oracle((first, inconsistent_candidate))
+
+    inconsistent_checkpoint = second.model_copy(
+        update={"checkpoint_id": first.checkpoint_id}
+    )
+    with pytest.raises(ValueError, match="checkpoint identity is inconsistent"):
+        select_test_oracle((first, inconsistent_checkpoint))
+
+    metrics = (first, second)
+    decision = select_test_oracle(metrics)
+    mismatched_decision = decision.model_copy(
+        update={"checkpoint_id": "checkpoint:unrelated"}
     )
     code, environment = _provenance()
-    with pytest.raises(ValidationError, match="method does not match"):
+    with pytest.raises(ValidationError, match="eligible oracle envelope"):
         CmnistTestOracleDiagnosticResult(
             schema_version="grit.run-result/v1",
             result_kind="cmnist_test_oracle_diagnostic",
-            run_id="run:diagnostic",
+            run_id="envelope:diagnostic",
             resolved_config=config,
             resolved_config_digest=config.canonical_digest(),
             status=SucceededStatus(kind="succeeded"),
             code=code,
             environment=environment,
+            diagnostic_selection=mismatched_decision,
+            diagnostic_metrics=metrics,
+            artifacts=(),
+        )
+
+    erm_config = diagnostic_config()
+    with pytest.raises(ValidationError, match="method does not match"):
+        CmnistTestOracleDiagnosticResult(
+            schema_version="grit.run-result/v1",
+            result_kind="cmnist_test_oracle_diagnostic",
+            run_id="envelope:wrong-method",
+            resolved_config=erm_config,
+            resolved_config_digest=erm_config.canonical_digest(),
+            status=SucceededStatus(kind="succeeded"),
+            code=code,
+            environment=environment,
             diagnostic_selection=decision,
-            diagnostic_metrics=(metric,),
+            diagnostic_metrics=metrics,
             artifacts=(),
         )

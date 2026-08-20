@@ -12,15 +12,17 @@ from grit.schemas import CmnistSelector, SeedStage
 from grit.selection import (
     DiagnosticMetricRecord,
     FinalTestMetricRecord,
+    TuningFinalistsArtifact,
     ValidationMetricRecord,
     freeze_candidate,
     freeze_final_checkpoint,
     make_finalist_union,
-    rank_candidates,
-    select_candidate,
+    make_tuning_finalists,
+    rank_tuning_candidates,
     select_checkpoint,
+    select_confirmed_candidate,
 )
-from tests.contract_fixtures import ordinary_grit_config, validation_records
+from tests.contract_fixtures import ordinary_grit_config, seed_sets, validation_records
 
 
 def _candidate_records(
@@ -29,7 +31,7 @@ def _candidate_records(
     *,
     rank: int,
     scientific_config_digest: str,
-    seeds: tuple[int, ...] = (101,),
+    seeds: tuple[int, ...] = (101, 102, 103),
     seed_stage: SeedStage = SeedStage.TUNING,
 ) -> tuple[ValidationMetricRecord, ...]:
     records: list[ValidationMetricRecord] = []
@@ -50,6 +52,26 @@ def _candidate_records(
             )
         )
     return tuple(records)
+
+
+def _stage_records(
+    candidates: tuple[tuple[str, tuple[float, float, float]], ...],
+    *,
+    seed_stage: SeedStage,
+    seeds: tuple[int, ...],
+) -> tuple[ValidationMetricRecord, ...]:
+    return tuple(
+        record
+        for candidate_id, scores in candidates
+        for record in _candidate_records(
+            candidate_id,
+            scores,
+            rank=2,
+            scientific_config_digest=f"sha256:{candidate_id}",
+            seeds=seeds,
+            seed_stage=seed_stage,
+        )
+    )
 
 
 def test_validation_selectors_reject_final_and_diagnostic_metric_types() -> None:
@@ -84,6 +106,7 @@ def test_validation_selectors_reject_final_and_diagnostic_metric_types() -> None
         seed_stage=SeedStage.TUNING,
         split_name="test_ood",
         metric_name="accuracy",
+        projection_rank=None,
     )
     invalid_final = cast(
         Sequence[ValidationMetricRecord], cast(object, (final_metric,))
@@ -94,7 +117,33 @@ def test_validation_selectors_reject_final_and_diagnostic_metric_types() -> None
     with pytest.raises(TypeError, match="ValidationMetricRecord"):
         select_checkpoint(invalid_final, CmnistSelector.PRIMARY_ROBUST)
     with pytest.raises(TypeError, match="ValidationMetricRecord"):
-        select_candidate(invalid_diagnostic, CmnistSelector.PRIMARY_ROBUST)
+        rank_tuning_candidates(
+            invalid_diagnostic,
+            CmnistSelector.PRIMARY_ROBUST,
+            seed_sets(),
+        )
+
+
+def test_public_selector_revalidates_model_copy_inputs() -> None:
+    records = validation_records(
+        candidate_id="candidate:a",
+        scientific_config_digest="sha256:a",
+        run_id="run:a",
+        seed_stage=SeedStage.TUNING,
+        seed=101,
+        checkpoint_id="checkpoint:a",
+        epoch=1,
+        scores=(0.7, 0.7, 0.7),
+        projection_rank=1,
+        method_id="grit",
+    )
+    malformed = records[0].model_copy(update={"split_name": "test_ood"})
+    malformed_records = cast(
+        Sequence[ValidationMetricRecord],
+        cast(object, (malformed, *records[1:])),
+    )
+    with pytest.raises(ValidationError, match="split_name"):
+        select_checkpoint(malformed_records, CmnistSelector.PRIMARY_ROBUST)
 
 
 def test_primary_and_secondary_selectors_apply_distinct_prespecified_splits() -> None:
@@ -112,8 +161,12 @@ def test_primary_and_secondary_selectors_apply_distinct_prespecified_splits() ->
             scientific_config_digest="sha256:robust",
         ),
     )
-    primary = select_candidate(records, CmnistSelector.PRIMARY_ROBUST)
-    secondary = select_candidate(records, CmnistSelector.SECONDARY_SOURCE)
+    primary = rank_tuning_candidates(
+        records, CmnistSelector.PRIMARY_ROBUST, seed_sets()
+    )[0]
+    secondary = rank_tuning_candidates(
+        records, CmnistSelector.SECONDARY_SOURCE, seed_sets()
+    )[0]
     assert primary.candidate_id == "candidate:robust"
     assert secondary.candidate_id == "candidate:source-strong"
 
@@ -134,7 +187,9 @@ def test_candidate_ties_use_mean_rank_then_stable_identity_deterministically() -
         ),
     )
     assert (
-        select_candidate(mean_tie_records, CmnistSelector.PRIMARY_ROBUST).candidate_id
+        rank_tuning_candidates(
+            mean_tie_records, CmnistSelector.PRIMARY_ROBUST, seed_sets()
+        )[0].candidate_id
         == "candidate:high-mean"
     )
 
@@ -153,7 +208,9 @@ def test_candidate_ties_use_mean_rank_then_stable_identity_deterministically() -
         ),
     )
     assert (
-        select_candidate(rank_tie_records, CmnistSelector.PRIMARY_ROBUST).candidate_id
+        rank_tuning_candidates(
+            rank_tie_records, CmnistSelector.PRIMARY_ROBUST, seed_sets()
+        )[0].candidate_id
         == "candidate:rank-one"
     )
 
@@ -171,10 +228,14 @@ def test_candidate_ties_use_mean_rank_then_stable_identity_deterministically() -
             scientific_config_digest="sha256:a",
         ),
     )
-    forward = select_candidate(identity_tie_records, CmnistSelector.PRIMARY_ROBUST)
-    reverse = select_candidate(
-        tuple(reversed(identity_tie_records)), CmnistSelector.PRIMARY_ROBUST
-    )
+    forward = rank_tuning_candidates(
+        identity_tie_records, CmnistSelector.PRIMARY_ROBUST, seed_sets()
+    )[0]
+    reverse = rank_tuning_candidates(
+        tuple(reversed(identity_tie_records)),
+        CmnistSelector.PRIMARY_ROBUST,
+        seed_sets(),
+    )[0]
     assert forward.candidate_id == reverse.candidate_id == "candidate:a"
 
 
@@ -273,7 +334,7 @@ def test_candidate_selection_rejects_duplicate_seed_runs() -> None:
         *tuple(
             record.model_copy(
                 update={
-                    "run_id": "run:candidate:a:duplicate",
+                    "run_id": f"{record.run_id}:duplicate",
                     "record_id": f"{record.record_id}:duplicate",
                 }
             )
@@ -286,37 +347,149 @@ def test_candidate_selection_rejects_duplicate_seed_runs() -> None:
         ),
     )
     with pytest.raises(ValueError, match="duplicate runs"):
-        rank_candidates(records, CmnistSelector.PRIMARY_ROBUST)
+        rank_tuning_candidates(
+            records,
+            CmnistSelector.PRIMARY_ROBUST,
+            seed_sets(),
+        )
 
 
-def test_candidate_and_checkpoint_freezes_are_distinct_and_final_is_bounded() -> None:
-    scientific_config_digest = ordinary_grit_config().scientific_config_digest()
-    tuning = _candidate_records(
+def test_tuning_requires_exact_configured_seeds_and_rejects_other_stages() -> None:
+    one_seed = _candidate_records(
         "candidate:a",
         (0.7, 0.7, 0.7),
         rank=2,
-        scientific_config_digest=scientific_config_digest,
-        seeds=(101, 102, 103),
+        scientific_config_digest="sha256:a",
+        seeds=(101,),
     )
-    candidate = freeze_candidate(
-        select_candidate(
+    with pytest.raises(ValueError, match="exactly the required"):
+        rank_tuning_candidates(
+            one_seed,
+            CmnistSelector.PRIMARY_ROBUST,
+            seed_sets(),
+        )
+
+    premature_confirmation = _candidate_records(
+        "candidate:a",
+        (0.7, 0.7, 0.7),
+        rank=2,
+        scientific_config_digest="sha256:a",
+        seeds=(201,),
+        seed_stage=SeedStage.CONFIRMATION,
+    )
+    with pytest.raises(ValueError, match="tuning-stage"):
+        rank_tuning_candidates(
             (
-                *tuning,
                 *_candidate_records(
                     "candidate:a",
                     (0.7, 0.7, 0.7),
                     rank=2,
-                    scientific_config_digest=scientific_config_digest,
-                    seeds=(201, 202),
-                    seed_stage=SeedStage.CONFIRMATION,
+                    scientific_config_digest="sha256:a",
                 ),
+                *premature_confirmation,
             ),
             CmnistSelector.PRIMARY_ROBUST,
-        ),
-        ordinary_grit_config().seed_sets,
+            seed_sets(),
+        )
+
+
+def test_connected_finalists_confirmation_and_freeze_protocol() -> None:
+    candidates = (
+        ("candidate:a", (0.9, 0.9, 0.4)),
+        ("candidate:b", (0.8, 0.8, 0.8)),
+        ("candidate:c", (0.7, 0.7, 0.7)),
+        ("candidate:d", (0.6, 0.6, 0.6)),
     )
+    seeds = seed_sets()
+    tuning = _stage_records(
+        candidates,
+        seed_stage=SeedStage.TUNING,
+        seeds=seeds.tuning,
+    )
+    primary = make_tuning_finalists(tuning, CmnistSelector.PRIMARY_ROBUST, seeds)
+    primary_ids = tuple(
+        decision.candidate_id for decision in primary.ordered_candidates
+    )
+    assert primary_ids == ("candidate:b", "candidate:c", "candidate:d")
+    tuning_for_primary = tuple(
+        record for record in tuning if record.candidate_id in primary_ids
+    )
+    confirmation = _stage_records(
+        tuple(item for item in candidates if item[0] in primary_ids),
+        seed_stage=SeedStage.CONFIRMATION,
+        seeds=seeds.confirmation,
+    )
+    decision = select_confirmed_candidate(
+        (*tuning_for_primary, *confirmation),
+        primary,
+        seeds,
+    )
+    candidate = freeze_candidate(decision, primary, seeds)
+    assert candidate.candidate_id in primary_ids
+
+    with pytest.raises(ValueError, match="exactly the required"):
+        select_confirmed_candidate(
+            (*tuning_for_primary, *confirmation[:-3]),
+            primary,
+            seeds,
+        )
+    extra_confirmation = _candidate_records(
+        primary_ids[0],
+        (0.8, 0.8, 0.8),
+        rank=2,
+        scientific_config_digest=f"sha256:{primary_ids[0]}",
+        seeds=(999,),
+        seed_stage=SeedStage.CONFIRMATION,
+    )
+    with pytest.raises(ValueError, match="exactly the required"):
+        select_confirmed_candidate(
+            (*tuning_for_primary, *confirmation, *extra_confirmation),
+            primary,
+            seeds,
+        )
+    duplicate_confirmation = tuple(
+        record.model_copy(
+            update={
+                "record_id": f"{record.record_id}:duplicate",
+                "run_id": f"{record.run_id}:duplicate",
+            }
+        )
+        for record in confirmation[:3]
+    )
+    with pytest.raises(ValueError, match="duplicate runs"):
+        select_confirmed_candidate(
+            (*tuning_for_primary, *confirmation, *duplicate_confirmation),
+            primary,
+            seeds,
+        )
+
+    nonfinalist_candidates = (
+        ("candidate:x", (0.95, 0.95, 0.95)),
+        ("candidate:y", (0.85, 0.85, 0.85)),
+        ("candidate:z", (0.75, 0.75, 0.75)),
+    )
+    other_tuning = _stage_records(
+        nonfinalist_candidates,
+        seed_stage=SeedStage.TUNING,
+        seeds=seeds.tuning,
+    )
+    other_artifact = make_tuning_finalists(
+        other_tuning, CmnistSelector.PRIMARY_ROBUST, seeds
+    )
+    other_confirmation = _stage_records(
+        nonfinalist_candidates,
+        seed_stage=SeedStage.CONFIRMATION,
+        seeds=seeds.confirmation,
+    )
+    outside_decision = select_confirmed_candidate(
+        (*other_tuning, *other_confirmation), other_artifact, seeds
+    )
+    with pytest.raises(ValueError, match="outside its finalist artifact"):
+        freeze_candidate(outside_decision, primary, seeds)
+
+    scientific_config_digest = candidate.scientific_config_digest
     final_a = validation_records(
-        candidate_id="candidate:a",
+        candidate_id=candidate.candidate_id,
         scientific_config_digest=scientific_config_digest,
         run_id="run:final-a",
         seed_stage=SeedStage.FINAL,
@@ -334,7 +507,7 @@ def test_candidate_and_checkpoint_freezes_are_distinct_and_final_is_bounded() ->
     assert checkpoint.frozen_checkpoint_id != candidate.frozen_selection_id
 
     final_b = validation_records(
-        candidate_id="candidate:b",
+        candidate_id="candidate:outside",
         scientific_config_digest="sha256:different-config",
         run_id="run:final-b",
         seed_stage=SeedStage.FINAL,
@@ -349,8 +522,12 @@ def test_candidate_and_checkpoint_freezes_are_distinct_and_final_is_bounded() ->
         freeze_final_checkpoint(
             select_checkpoint(final_b, CmnistSelector.PRIMARY_ROBUST), candidate
         )
-    with pytest.raises(ValueError, match="final-stage"):
-        select_candidate(final_a, CmnistSelector.PRIMARY_ROBUST)
+    with pytest.raises(ValueError, match="tuning-stage"):
+        rank_tuning_candidates(
+            final_a,
+            CmnistSelector.PRIMARY_ROBUST,
+            seeds,
+        )
 
 
 def test_primary_secondary_finalists_form_one_union_and_keep_separate_winners() -> None:
@@ -360,21 +537,21 @@ def test_primary_secondary_finalists_form_one_union_and_keep_separate_winners() 
         ("candidate:c", (0.7, 0.7, 0.7)),
         ("candidate:d", (0.6, 0.6, 0.6)),
     )
-    records = tuple(
-        record
-        for candidate_id, scores in candidates
-        for record in _candidate_records(
-            candidate_id,
-            scores,
-            rank=2,
-            scientific_config_digest=f"sha256:{candidate_id}",
-        )
+    records = _stage_records(
+        candidates,
+        seed_stage=SeedStage.TUNING,
+        seeds=seed_sets().tuning,
     )
-    primary = rank_candidates(records, CmnistSelector.PRIMARY_ROBUST)
-    secondary = rank_candidates(records, CmnistSelector.SECONDARY_SOURCE)
-    finalists = make_finalist_union(primary, secondary, finalists_per_selector=3)
-    assert primary[0].candidate_id == "candidate:b"
-    assert secondary[0].candidate_id == "candidate:a"
+    primary = make_tuning_finalists(records, CmnistSelector.PRIMARY_ROBUST, seed_sets())
+    secondary = make_tuning_finalists(
+        records, CmnistSelector.SECONDARY_SOURCE, seed_sets()
+    )
+    finalists = make_finalist_union(primary, secondary)
+    assert (
+        TuningFinalistsArtifact.model_validate_json(primary.canonical_json()) == primary
+    )
+    assert primary.ordered_candidates[0].candidate_id == "candidate:b"
+    assert secondary.ordered_candidates[0].candidate_id == "candidate:a"
     assert finalists.confirmation_candidate_ids == (
         "candidate:b",
         "candidate:c",
@@ -382,23 +559,29 @@ def test_primary_secondary_finalists_form_one_union_and_keep_separate_winners() 
         "candidate:a",
     )
 
-    mixed_method = secondary[0].model_copy(update={"method_id": "erm"})
-    with pytest.raises(ValueError, match="one method"):
-        make_finalist_union(
-            primary,
-            (mixed_method, *secondary[1:]),
-            finalists_per_selector=3,
+    assert len(finalists.confirmation_candidate_ids) == len(
+        set(finalists.confirmation_candidate_ids)
+    )
+
+    primary_ids = {decision.candidate_id for decision in primary.ordered_candidates}
+    primary_only_records = tuple(
+        record for record in records if record.candidate_id in primary_ids
+    )
+    primary_confirmation = _stage_records(
+        tuple(item for item in candidates if item[0] in primary_ids),
+        seed_stage=SeedStage.CONFIRMATION,
+        seeds=seed_sets().confirmation,
+    )
+    with pytest.raises(ValueError, match="exactly its selector finalists"):
+        select_confirmed_candidate(
+            (*primary_only_records, *primary_confirmation),
+            secondary,
+            seed_sets(),
         )
 
-    conflicting_candidate = secondary[0].model_copy(
-        update={"scientific_config_digest": "sha256:conflicting"}
-    )
-    with pytest.raises(ValueError, match="same candidate set"):
-        make_finalist_union(
-            primary,
-            (conflicting_candidate, *secondary[1:]),
-            finalists_per_selector=3,
-        )
+    mixed_method = secondary.model_copy(update={"method_id": "erm"})
+    with pytest.raises(ValidationError, match="method"):
+        make_finalist_union(primary, mixed_method)
 
 
 def test_metric_records_reject_nan_and_infinity() -> None:

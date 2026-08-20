@@ -21,6 +21,7 @@ from grit.selection import (
     FrozenCandidateSelection,
     FrozenCheckpointSelection,
     ValidationMetricRecord,
+    select_test_oracle,
 )
 
 NonEmptyStr: TypeAlias = Annotated[StrictStr, Field(min_length=1)]
@@ -305,27 +306,11 @@ class CmnistTestOracleDiagnosticResult(StrictBoundaryModel):
             for metric in metrics
         ):
             raise ValueError("diagnostic metric method does not match result algorithm")
-        metric_ids = tuple(metric.record_id for metric in metrics)
-        if len(set(metric_ids)) != len(metric_ids):
-            raise ValueError("diagnostic metric record IDs must be unique")
-        if decision.contributing_record_ids != metric_ids:
-            raise ValueError("diagnostic decision must cite supplied metric records")
-        if float(decision.objective_value) != max(
-            float(metric.value) for metric in metrics
-        ):
-            raise ValueError("diagnostic decision objective does not match its metrics")
-        for metric in metrics:
-            if metric.run_id != self.run_id:
-                raise ValueError("diagnostic metric run does not match result")
-            if (
-                metric.scientific_config_digest
-                != self.resolved_config.scientific_config_digest()
-            ):
-                raise ValueError("diagnostic metric config does not match result")
-            if metric.candidate_id != decision.candidate_id:
-                raise ValueError("diagnostic metric candidate does not match decision")
-            if metric.checkpoint_id != decision.checkpoint_id:
-                raise ValueError("diagnostic metric checkpoint does not match decision")
+        expected_decision = select_test_oracle(metrics)
+        if decision != expected_decision:
+            raise ValueError(
+                "diagnostic selection does not match the eligible oracle envelope"
+            )
         return self
 
 

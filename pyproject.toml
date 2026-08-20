@@ -40,3 +40,5 @@ select = ["B", "E", "F", "I", "UP"]
 include = ["src/grit", "tests"]
 pythonVersion = "3.10"
 typeCheckingMode = "strict"
+venvPath = "."
+venv = ".venv"
