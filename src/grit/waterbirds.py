@@ -635,6 +635,193 @@ class WaterbirdsConstruction:
             ) from error
 
 
+class WaterbirdsSupervisedRecord(StrictBoundaryModel):
+    """Training metadata deliberately stripped of background and pair identity."""
+
+    record_id: NonEmptyStr
+    bird_label: BinaryInt
+    image_sha256: NonEmptyStr
+
+
+class WaterbirdsEvaluationRecord(StrictBoundaryModel):
+    """Group-bearing metadata available only to validation/final evaluators."""
+
+    record_id: NonEmptyStr
+    bird_label: BinaryInt
+    background: BinaryInt
+    group_id: GroupId
+    image_sha256: NonEmptyStr
+
+
+class WaterbirdsTrainingView:
+    """Role-scoped supervised training capability with oracle metadata redacted."""
+
+    __slots__ = ("__dataset_manifest_digest", "__paths", "__records")
+
+    def __init__(
+        self,
+        *,
+        dataset_manifest_digest: str,
+        records: tuple[WaterbirdsSupervisedRecord, ...],
+        paths: dict[str, Path],
+    ) -> None:
+        self.__dataset_manifest_digest = dataset_manifest_digest
+        self.__records = records
+        self.__paths = dict(paths)
+
+    @property
+    def dataset_manifest_digest(self) -> str:
+        return self.__dataset_manifest_digest
+
+    @property
+    def records(self) -> tuple[WaterbirdsSupervisedRecord, ...]:
+        return self.__records
+
+    def path_for(self, record_id: str) -> Path:
+        try:
+            return self.__paths[record_id]
+        except KeyError as error:
+            raise KeyError(
+                f"record is outside the Waterbirds training view: {record_id}"
+            ) from error
+
+
+class WaterbirdsValidationView:
+    """Role-scoped validation capability with approved four-group metadata."""
+
+    __slots__ = ("__dataset_manifest_digest", "__paths", "__records")
+
+    def __init__(
+        self,
+        *,
+        dataset_manifest_digest: str,
+        records: tuple[WaterbirdsEvaluationRecord, ...],
+        paths: dict[str, Path],
+    ) -> None:
+        self.__dataset_manifest_digest = dataset_manifest_digest
+        self.__records = records
+        self.__paths = dict(paths)
+
+    @property
+    def dataset_manifest_digest(self) -> str:
+        return self.__dataset_manifest_digest
+
+    @property
+    def records(self) -> tuple[WaterbirdsEvaluationRecord, ...]:
+        return self.__records
+
+    def path_for(self, record_id: str) -> Path:
+        try:
+            return self.__paths[record_id]
+        except KeyError as error:
+            raise KeyError(
+                f"record is outside the Waterbirds validation view: {record_id}"
+            ) from error
+
+
+class WaterbirdsOracleRelationView:
+    """Training-only oracle relation capability, issued separately from endpoints."""
+
+    __slots__ = ("__dataset_manifest_json",)
+
+    def __init__(self, *, dataset_manifest_json: str) -> None:
+        self.__dataset_manifest_json = dataset_manifest_json
+
+    def validated_manifest(self) -> WaterbirdsDatasetManifest:
+        return WaterbirdsDatasetManifest.model_validate_json(
+            self.__dataset_manifest_json
+        )
+
+    @property
+    def dataset_manifest_digest(self) -> str:
+        return self.validated_manifest().canonical_digest()
+
+    @property
+    def relationships(self) -> tuple[WaterbirdsOracleRelationship, ...]:
+        return self.validated_manifest().relationships
+
+
+def waterbirds_training_view(
+    construction: WaterbirdsConstruction,
+) -> WaterbirdsTrainingView:
+    """Issue common ERM/GRIT supervision without backgrounds or relations."""
+
+    manifest = _validated_construction(construction)
+    records = tuple(
+        WaterbirdsSupervisedRecord(
+            record_id=record.record_id,
+            bird_label=record.bird_label,
+            image_sha256=record.image_sha256,
+        )
+        for record in manifest.records
+        if record.split_role == "training"
+    )
+    return WaterbirdsTrainingView(
+        dataset_manifest_digest=manifest.canonical_digest(),
+        records=records,
+        paths={
+            record.record_id: construction.path_for(record.record_id)
+            for record in records
+        },
+    )
+
+
+def waterbirds_validation_view(
+    construction: WaterbirdsConstruction,
+) -> WaterbirdsValidationView:
+    """Issue validation-only group-bearing records."""
+
+    manifest = _validated_construction(construction)
+    records = tuple(
+        WaterbirdsEvaluationRecord(
+            record_id=record.record_id,
+            bird_label=record.bird_label,
+            background=record.background,
+            group_id=record.group_id,
+            image_sha256=record.image_sha256,
+        )
+        for record in manifest.records
+        if record.split_role == "validation"
+    )
+    return WaterbirdsValidationView(
+        dataset_manifest_digest=manifest.canonical_digest(),
+        records=records,
+        paths={
+            record.record_id: construction.path_for(record.record_id)
+            for record in records
+        },
+    )
+
+
+def waterbirds_oracle_relation_view(
+    construction: WaterbirdsConstruction,
+) -> WaterbirdsOracleRelationView:
+    """Issue exact pair identities only to the explicit oracle path."""
+
+    manifest = _validated_construction(construction)
+    return WaterbirdsOracleRelationView(dataset_manifest_json=manifest.canonical_json())
+
+
+def _validated_construction(
+    construction: WaterbirdsConstruction,
+) -> WaterbirdsDatasetManifest:
+    if type(construction) is not WaterbirdsConstruction:
+        raise TypeError("Waterbirds views require a WaterbirdsConstruction")
+    manifest = WaterbirdsDatasetManifest.model_validate_json(
+        construction.manifest.canonical_json()
+    )
+    expected_ids = {record.record_id for record in manifest.records}
+    if set(construction.image_paths) != expected_ids:
+        raise ValueError("Waterbirds construction paths do not match manifest records")
+    for record in manifest.records:
+        path = construction.path_for(record.record_id)
+        if not path.is_file() or _file_sha256(path) != record.image_sha256:
+            raise ValueError(
+                f"Waterbirds construction image identity is invalid: {record.record_id}"
+            )
+    return manifest
+
+
 def waterbirds_group_id(label: int, background: int) -> GroupId:
     mapping: dict[tuple[int, int], GroupId] = {
         (0, 0): "landbird_land",

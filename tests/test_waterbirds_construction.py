@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 import pytest
@@ -16,9 +17,17 @@ from grit.waterbirds import (
     ParsedWaterbirdsAssets,
     ProductionWaterbirdsProfile,
     WaterbirdsDatasetManifest,
+    WaterbirdsOracleRelationView,
     composite_groupdro,
     construct_waterbirds_cf,
     parse_places_backgrounds,
+    waterbirds_oracle_relation_view,
+    waterbirds_training_view,
+    waterbirds_validation_view,
+)
+from grit.waterbirds_pairs import (
+    WaterbirdsOraclePairManifest,
+    build_waterbirds_oracle_pairs,
 )
 from tests.waterbirds_fixtures import make_waterbirds_fixture
 
@@ -183,3 +192,82 @@ def test_places_parser_rejects_missing_approved_category(tmp_path: Path) -> None
 
     with pytest.raises(FileNotFoundError, match="ocean"):
         parse_places_backgrounds(fixture.assets.places_root)
+
+
+def test_training_view_redacts_backgrounds_and_oracle_relations(tmp_path: Path) -> None:
+    fixture = make_waterbirds_fixture(tmp_path / "assets")
+    construction = construct_waterbirds_cf(
+        fixture.assets, fixture.profile, tmp_path / "output"
+    )
+    erm_view = waterbirds_training_view(construction)
+    grit_view = waterbirds_training_view(construction)
+    validation = waterbirds_validation_view(construction)
+
+    assert tuple(record.record_id for record in erm_view.records) == tuple(
+        record.record_id for record in grit_view.records
+    )
+    assert not hasattr(erm_view.records[0], "pair_id")
+    assert not hasattr(erm_view.records[0], "background")
+    assert {record.group_id for record in validation.records} == {
+        "landbird_land",
+        "landbird_water",
+        "waterbird_land",
+        "waterbird_water",
+    }
+    assert all(
+        record.split_role == "validation"
+        for record in construction.validation_records()
+    )
+
+
+def test_oracle_pairs_require_separate_capability_and_bind_dataset(
+    tmp_path: Path,
+) -> None:
+    fixture = make_waterbirds_fixture(tmp_path / "assets")
+    construction = construct_waterbirds_cf(
+        fixture.assets, fixture.profile, tmp_path / "output"
+    )
+    training = waterbirds_training_view(construction)
+    relations = waterbirds_oracle_relation_view(construction)
+    pair_set = build_waterbirds_oracle_pairs(relations)
+
+    assert pair_set.manifest.dataset_manifest_digest == (
+        construction.manifest.canonical_digest()
+    )
+    assert pair_set.manifest.pair_count == 3
+    assert pair_set.manifest.landbird_pair_count == 2
+    assert pair_set.manifest.waterbird_pair_count == 1
+    assert pair_set.manifest.orientation == "land_minus_water"
+    with pytest.raises(TypeError, match="OracleRelationView"):
+        build_waterbirds_oracle_pairs(cast(WaterbirdsOracleRelationView, training))
+
+
+def test_oracle_pair_manifest_round_trip_rejects_tampering(tmp_path: Path) -> None:
+    fixture = make_waterbirds_fixture(tmp_path / "assets")
+    construction = construct_waterbirds_cf(
+        fixture.assets, fixture.profile, tmp_path / "output"
+    )
+    pair_set = build_waterbirds_oracle_pairs(
+        waterbirds_oracle_relation_view(construction)
+    )
+    restored = WaterbirdsOraclePairManifest.model_validate_json(
+        pair_set.manifest.canonical_json()
+    )
+    assert restored == pair_set.manifest
+
+    payload = json.loads(pair_set.manifest.canonical_json())
+    payload["records"][0]["orientation"] = "water_minus_land"
+    with pytest.raises(ValidationError):
+        WaterbirdsOraclePairManifest.model_validate_json(json.dumps(payload))
+
+
+def test_view_issuance_rejects_changed_image_bytes(tmp_path: Path) -> None:
+    fixture = make_waterbirds_fixture(tmp_path / "assets")
+    construction = construct_waterbirds_cf(
+        fixture.assets, fixture.profile, tmp_path / "output"
+    )
+    path = construction.path_for(construction.training_records()[0].record_id)
+    path.write_bytes(b"changed")
+
+    with pytest.raises(ValueError, match="image identity"):
+        waterbirds_training_view(construction)

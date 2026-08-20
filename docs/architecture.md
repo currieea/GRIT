@@ -171,7 +171,8 @@ acquisition or generalized artifact store is part of this boundary.
 
 ### Pair builders
 
-Status: **CMNIST clean-oracle builder implemented; estimated builders deferred.**
+Status: **CMNIST and Waterbirds-CF clean-oracle builders implemented; estimated builders
+deferred.**
 
 Pair builders select aligned source examples and return explicit indices, metadata, and
 provenance. They do not calculate classifier loss or own a training loop.
@@ -187,6 +188,13 @@ Milestone 4 implements only the CMNIST training-source capability and 256-source
 red-minus-green oracle builder with a canonical pair manifest. The capability binds the
 validated source-pool content and dataset manifest; stable pair IDs and the pair manifest
 derive that dataset identity rather than accepting one from the caller.
+
+Milestone 5 keeps all 4,795 Waterbirds-CF endpoints in one shared supervised view whose
+records omit background and pair fields. The separately issued oracle-relation capability
+can produce only the construction's exact 184 landbird and 56 waterbird land-minus-water
+relationships, bound to the canonical dataset digest. The non-reportable fixture uses its
+declared reduced strata, while the production pair manifest rejects any count other than
+184/56. ERM cannot be passed to this builder through its public typed interface.
 
 ### Projection
 

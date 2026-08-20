@@ -447,3 +447,20 @@ do not prebuild Milestone 6 search/tracking infrastructure.
 - Production source acquisition and execution remain deferred to the experiment server;
   no real Waterbirds, CUB, Places, or CLIP asset was downloaded and no reportable result
   was produced.
+
+### Milestone 5 checkpoint: scoped supervision and oracle relationships
+
+- Added a common Waterbirds-CF supervised capability whose records expose image identity
+  and bird label but structurally omit training background and pair identities. ERM and
+  oracle GRIT therefore receive identical endpoint record IDs without giving ERM oracle
+  relation information.
+- Added a separate oracle-relation capability and canonical pair manifest. It revalidates
+  the dataset boundary, retains exact endpoint/construction provenance, binds the dataset
+  manifest digest, fixes land-minus-water orientation, and enforces 184 landbird plus 56
+  waterbird relations for production.
+- Added a validation-only view that exposes the four approved group fields to evaluation,
+  not optimization. View issuance rechecks all underlying image bytes against the dataset
+  manifest.
+- Hermetic tests prove common supervised membership, ERM metadata redaction, separate
+  oracle access, fixture/production strata, canonical round trips, tamper rejection, and
+  changed-image rejection. Estimated pair builders remain deferred.
