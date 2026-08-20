@@ -957,18 +957,20 @@ Epoch selection operates within one candidate/seed and returns an actual checkpo
 Candidate selection aggregates the selected validation outcomes across a declared seed
 stage. The search coordinator cannot aggregate a tuning checkpoint that was never
 persisted. Tuning writes a durable `TuningFinalistsArtifact` containing the ordered top
-three for one method and selector. Confirmation adds only the declared fresh seeds; it does
-not revisit test results. The combined five-seed decision produces a durable
-`FrozenCandidateSelection`. Final runs use fresh final seeds and that frozen scientific
-configuration. Each final-seed run then creates a `FrozenCheckpointSelection` using
-validation only. The reported final metrics come from those restored selected checkpoints,
-never implicitly from the last live weights.
+three for one method and selector. Confirmation accepts only the declared fresh-seed
+records and reuses the tuning checkpoint decisions stored in that artifact; callers cannot
+replace the tuning evidence. It does not revisit test results. The combined five-seed
+decision produces a durable `FrozenCandidateSelection`. Final runs use fresh final seeds
+and that frozen scientific configuration. Each final-seed run then creates a
+`FrozenCheckpointSelection` using validation only. The reported final metrics come from
+those restored selected checkpoints, never implicitly from the last live weights.
 
 Validation records from tuning and confirmation stages may contribute to candidate
-selection according to the configured stage. A final-stage validation record may select
-the epoch/checkpoint within that already-frozen candidate and final seed, but is rejected
-by every candidate or hyperparameter selector. Stage-specific table constructors enforce
-that distinction.
+selection according to the configured stage: tuning records contribute only through the
+persisted finalist artifact, while the confirmation boundary accepts only confirmation
+records. A final-stage validation record may select the epoch/checkpoint within that
+already-frozen candidate and final seed, but is rejected by every candidate or
+hyperparameter selector. Stage-specific table constructors enforce that distinction.
 
 A future resumable checkpoint envelope may contain:
 
@@ -1004,8 +1006,9 @@ ranking accepts exactly the configured three tuning seeds and no other stage.
 `TuningFinalistsArtifact` contains one method/selector's deterministic ordered top three.
 The confirmation union embeds the primary and secondary artifacts and emits their ordered
 candidate-ID union without duplication. Each five-seed comparison accepts exactly its own
-artifact's three candidates and the configured three tuning plus two confirmation seeds;
-the artifact is then embedded in `FrozenCandidateSelection`. Missing, duplicate, extra, or
+artifact's three candidates, reuses its stored decisions for the configured three tuning
+seeds, and accepts new records only for the two confirmation seeds; the artifact is then
+embedded in `FrozenCandidateSelection`. Missing, duplicate, extra, or
 mis-staged seeds, cross-method records, and candidates outside that selector's artifact are
 rejected without adding a scheduler.
 

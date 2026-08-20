@@ -258,8 +258,9 @@ Verification:
   explicit stable identity tie-break selects the fully traced winner.
 - Connected tuning, finalist, confirmation, and freeze boundaries. Each method/selector's
   exact three-seed tuning table produces an ordered top-three artifact; confirmation uses
-  the deduplicated primary/secondary union, while each selector's five-seed comparison and
-  freeze remain restricted to its own artifact.
+  the deduplicated primary/secondary union, accepts only fresh confirmation records, and
+  reuses the tuning decisions embedded in each selector's artifact. Each five-seed
+  comparison and freeze remain restricted to that artifact.
 - Added strict rejection for missing, duplicate, extra, and mis-staged seeds, non-finalist
   freezes, cross-selector finalist use, cross-method aggregation, inconsistent diagnostic
   identities, and diagnostic records passed to ordinary selectors.

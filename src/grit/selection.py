@@ -721,11 +721,11 @@ def make_tuning_finalists(
 
 
 def select_confirmed_candidate(
-    records: Sequence[ValidationMetricRecord],
+    confirmation_records: Sequence[ValidationMetricRecord],
     finalists: TuningFinalistsArtifact,
     seed_sets: SeedSets,
 ) -> CandidateSelectionDecision:
-    """Compare one selector's top three using exactly its combined five seeds."""
+    """Combine fresh confirmation records with the artifact's tuning decisions."""
 
     validated_seed_sets = _revalidate_seed_sets(seed_sets)
     validated_finalists = TuningFinalistsArtifact.model_validate(
@@ -733,13 +733,13 @@ def select_confirmed_candidate(
     )
     if validated_finalists.tuning_seeds != validated_seed_sets.tuning:
         raise ValueError("finalist artifact tuning seeds do not match configuration")
-    validation_records = _require_validation_records(records)
+    validation_records = _require_validation_records(confirmation_records)
     if any(
-        record.seed_stage not in {SeedStage.TUNING, SeedStage.CONFIRMATION}
+        record.seed_stage is not SeedStage.CONFIRMATION
         for record in validation_records
     ):
         raise ValueError(
-            "confirmation comparison accepts tuning and confirmation records only"
+            "confirmation comparison accepts confirmation-stage records only"
         )
     finalist_by_id = {
         finalist.candidate_id: finalist
@@ -755,26 +755,55 @@ def select_confirmed_candidate(
         for record in validation_records
     ):
         raise ValueError("confirmation records do not match finalist method")
-    expected = {
-        *((SeedStage.TUNING, seed) for seed in validated_seed_sets.tuning),
-        *((SeedStage.CONFIRMATION, seed) for seed in validated_seed_sets.confirmation),
+    expected_confirmation = {
+        (SeedStage.CONFIRMATION, seed)
+        for seed in validated_seed_sets.confirmation
     }
-    ranked = _rank_candidates_for_seed_keys(
+    confirmation_decisions = _rank_candidates_for_seed_keys(
         validation_records,
         validated_finalists.selector,
-        expected,
+        expected_confirmation,
     )
-    for decision in ranked:
-        tuning_decision = finalist_by_id[decision.candidate_id]
+    combined_decisions: list[CandidateSelectionDecision] = []
+    for confirmation_decision in confirmation_decisions:
+        tuning_decision = finalist_by_id[confirmation_decision.candidate_id]
         if (
-            decision.scientific_config_digest
+            confirmation_decision.scientific_config_digest
             != tuning_decision.scientific_config_digest
-            or decision.projection_rank != tuning_decision.projection_rank
+            or confirmation_decision.projection_rank
+            != tuning_decision.projection_rank
         ):
             raise ValueError(
                 "confirmation candidate identity does not match tuning finalist"
             )
-    return ranked[0]
+        contributing_decisions = (
+            *tuning_decision.contributing_checkpoint_decisions,
+            *confirmation_decision.contributing_checkpoint_decisions,
+        )
+        combined_decisions.append(
+            CandidateSelectionDecision(
+                decision_id=(
+                    "candidate-selection:"
+                    f"{validated_finalists.selector.value}:"
+                    f"{confirmation_decision.candidate_id}:confirmed"
+                ),
+                selector=validated_finalists.selector,
+                method_id=validated_finalists.method_id,
+                candidate_id=confirmation_decision.candidate_id,
+                scientific_config_digest=tuning_decision.scientific_config_digest,
+                objective_value=fmean(
+                    float(decision.objective_value)
+                    for decision in contributing_decisions
+                ),
+                mean_accuracy=fmean(
+                    float(decision.mean_accuracy)
+                    for decision in contributing_decisions
+                ),
+                projection_rank=tuning_decision.projection_rank,
+                contributing_checkpoint_decisions=contributing_decisions,
+            )
+        )
+    return min(combined_decisions, key=_candidate_sort_key)
 
 
 def make_finalist_union(

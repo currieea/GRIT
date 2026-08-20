@@ -296,7 +296,7 @@ def _run_completed_lifecycle() -> CompletedLifecycle:
         config.seed_sets,
     )
     combined_decision = select_confirmed_candidate(
-        (*tuning_records, *confirmation_records),
+        confirmation_records,
         finalists,
         config.seed_sets,
     )

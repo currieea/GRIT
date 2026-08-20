@@ -420,16 +420,30 @@ def test_connected_finalists_confirmation_and_freeze_protocol() -> None:
         seeds=seeds.confirmation,
     )
     decision = select_confirmed_candidate(
-        (*tuning_for_primary, *confirmation),
+        confirmation,
         primary,
         seeds,
+    )
+    stored_tuning = next(
+        finalist
+        for finalist in primary.ordered_candidates
+        if finalist.candidate_id == decision.candidate_id
+    )
+    assert decision.contributing_checkpoint_decisions[:3] == (
+        stored_tuning.contributing_checkpoint_decisions
     )
     candidate = freeze_candidate(decision, primary, seeds)
     assert candidate.candidate_id in primary_ids
 
+    with pytest.raises(ValueError, match="confirmation-stage"):
+        select_confirmed_candidate(
+            (*tuning_for_primary, *confirmation),
+            primary,
+            seeds,
+        )
     with pytest.raises(ValueError, match="exactly the required"):
         select_confirmed_candidate(
-            (*tuning_for_primary, *confirmation[:-3]),
+            confirmation[:-3],
             primary,
             seeds,
         )
@@ -443,7 +457,7 @@ def test_connected_finalists_confirmation_and_freeze_protocol() -> None:
     )
     with pytest.raises(ValueError, match="exactly the required"):
         select_confirmed_candidate(
-            (*tuning_for_primary, *confirmation, *extra_confirmation),
+            (*confirmation, *extra_confirmation),
             primary,
             seeds,
         )
@@ -458,7 +472,7 @@ def test_connected_finalists_confirmation_and_freeze_protocol() -> None:
     )
     with pytest.raises(ValueError, match="duplicate runs"):
         select_confirmed_candidate(
-            (*tuning_for_primary, *confirmation, *duplicate_confirmation),
+            (*confirmation, *duplicate_confirmation),
             primary,
             seeds,
         )
@@ -482,7 +496,7 @@ def test_connected_finalists_confirmation_and_freeze_protocol() -> None:
         seeds=seeds.confirmation,
     )
     outside_decision = select_confirmed_candidate(
-        (*other_tuning, *other_confirmation), other_artifact, seeds
+        other_confirmation, other_artifact, seeds
     )
     with pytest.raises(ValueError, match="outside its finalist artifact"):
         freeze_candidate(outside_decision, primary, seeds)
@@ -564,9 +578,6 @@ def test_primary_secondary_finalists_form_one_union_and_keep_separate_winners() 
     )
 
     primary_ids = {decision.candidate_id for decision in primary.ordered_candidates}
-    primary_only_records = tuple(
-        record for record in records if record.candidate_id in primary_ids
-    )
     primary_confirmation = _stage_records(
         tuple(item for item in candidates if item[0] in primary_ids),
         seed_stage=SeedStage.CONFIRMATION,
@@ -574,7 +585,7 @@ def test_primary_secondary_finalists_form_one_union_and_keep_separate_winners() 
     )
     with pytest.raises(ValueError, match="exactly its selector finalists"):
         select_confirmed_candidate(
-            (*primary_only_records, *primary_confirmation),
+            primary_confirmation,
             secondary,
             seed_sets(),
         )
