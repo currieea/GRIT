@@ -196,10 +196,23 @@ relationships, bound to the canonical dataset digest. The non-reportable fixture
 declared reduced strata, while the production pair manifest rejects any count other than
 184/56. ERM cannot be passed to this builder through its public typed interface.
 
+### Frozen features
+
+Status: **Pinned OpenAI CLIP boundary and dataset-specific CMNIST/Waterbirds caches
+implemented; production weights and Waterbirds assets remain server inputs.**
+
+Waterbirds feature preparation accepts the validated construction and a path-capable
+encoder, processes variable-sized images through the pinned OpenAI CLIP preprocessing,
+and writes one referenced float32 array plus a canonical manifest. The manifest binds the
+dataset, encoder revision, weights, preprocessing, normalization, row/image identities,
+and array digest. Training tables redact background metadata; validation tables expose
+the approved group fields. The deterministic fake encoder marks every cache
+non-reportable and exists only for offline lifecycle tests.
+
 ### Projection
 
-Status: **CMNIST CPU-float64 linear projection implemented; broader reuse and final artifact
-format remain provisional.**
+Status: **CMNIST and Waterbirds CPU-float64 linear projection paths implemented; final
+artifact format remains provisional.**
 
 Projection estimates nuisance directions from a `PairSet` and transforms feature rows.
 It is classifier-independent and independently testable.
@@ -212,9 +225,11 @@ features + fitted Projection -> transformed features
 The runner's representation pipeline applies the same fitted transform to training and
 every permitted evaluation role. Projection does not live in a dataset adapter, model,
 algorithm, or trainer.
-CMNIST projection diagnostics are bound to the exact pair-manifest and feature-cache-
-manifest digests used by fitting. The final-test feature capability is likewise bound to
-the exact cache manifest, not only to dataset or source IDs.
+CMNIST and Waterbirds projection diagnostics are bound to the exact pair-manifest and
+feature-cache-manifest digests used by fitting. Waterbirds resolves the canonical land and
+water endpoint rows only after checking their dataset, role, label, background, and image
+identities against the cache. The final-test feature capability is likewise bound to the
+exact cache manifest, not only to dataset or source IDs.
 
 ### Algorithms
 

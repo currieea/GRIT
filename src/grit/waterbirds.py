@@ -746,7 +746,7 @@ def waterbirds_training_view(
 ) -> WaterbirdsTrainingView:
     """Issue common ERM/GRIT supervision without backgrounds or relations."""
 
-    manifest = _validated_construction(construction)
+    manifest = validate_waterbirds_construction(construction)
     records = tuple(
         WaterbirdsSupervisedRecord(
             record_id=record.record_id,
@@ -771,7 +771,7 @@ def waterbirds_validation_view(
 ) -> WaterbirdsValidationView:
     """Issue validation-only group-bearing records."""
 
-    manifest = _validated_construction(construction)
+    manifest = validate_waterbirds_construction(construction)
     records = tuple(
         WaterbirdsEvaluationRecord(
             record_id=record.record_id,
@@ -798,11 +798,11 @@ def waterbirds_oracle_relation_view(
 ) -> WaterbirdsOracleRelationView:
     """Issue exact pair identities only to the explicit oracle path."""
 
-    manifest = _validated_construction(construction)
+    manifest = validate_waterbirds_construction(construction)
     return WaterbirdsOracleRelationView(dataset_manifest_json=manifest.canonical_json())
 
 
-def _validated_construction(
+def validate_waterbirds_construction(
     construction: WaterbirdsConstruction,
 ) -> WaterbirdsDatasetManifest:
     if type(construction) is not WaterbirdsConstruction:

@@ -72,6 +72,13 @@ class ImageEncoder(Protocol):
     def encode(self, images: torch.Tensor) -> torch.Tensor: ...
 
 
+class PilImageEncoder(Protocol):
+    @property
+    def identity(self) -> EncoderIdentity: ...
+
+    def encode_pil(self, images: tuple[Image.Image, ...]) -> torch.Tensor: ...
+
+
 class _ClipModel(Protocol):
     def eval(self) -> object: ...
 
@@ -161,24 +168,29 @@ class OfficialOpenAiClipEncoder:
             raise ValueError("CLIP input images must be finite floating-point tensors")
         if float(images.min()) < 0.0 or float(images.max()) > 1.0:
             raise ValueError("CLIP input images must lie in [0, 1]")
+        pil_images = tuple(_to_pil_image(image) for image in images)
+        return self.encode_pil(pil_images)
+
+    def encode_pil(self, images: tuple[Image.Image, ...]) -> torch.Tensor:
+        """Encode variable-sized RGB images with the pinned CLIP preprocessing."""
+
+        if not images:
+            raise ValueError("CLIP input must contain at least one image")
+        if self.batch_size <= 0:
+            raise ValueError("CLIP batch_size must be positive")
         model, preprocess = self._resolved_model()
         batches: list[torch.Tensor] = []
         with torch.inference_mode():
-            for start in range(0, int(images.shape[0]), self.batch_size):
-                stop = min(start + self.batch_size, int(images.shape[0]))
+            for start in range(0, len(images), self.batch_size):
+                stop = min(start + self.batch_size, len(images))
                 inputs = torch.stack(
-                    [
-                        preprocess(_to_pil_image(image))
-                        for image in images[start:stop]
-                    ]
+                    [preprocess(image.convert("RGB")) for image in images[start:stop]]
                 )
                 batches.append(
                     model.encode_image(inputs).detach().cpu().to(torch.float32)
                 )
-        if not batches:
-            raise ValueError("CLIP input must contain at least one image")
         features = torch.cat(batches, dim=0)
-        _validate_feature_matrix(features, expected_rows=int(images.shape[0]))
+        _validate_feature_matrix(features, expected_rows=len(images))
         return features
 
     def _resolved_model(self) -> tuple[_ClipModel, _ClipPreprocess]:
@@ -669,12 +681,8 @@ def load_torchvision_mnist_pools(
     """Explicit disk/download adapter; core construction accepts injected pools."""
 
     try:
-        train = _mnist_factory(
-            root=str(data_root), train=True, download=allow_download
-        )
-        test = _mnist_factory(
-            root=str(data_root), train=False, download=allow_download
-        )
+        train = _mnist_factory(root=str(data_root), train=True, download=allow_download)
+        test = _mnist_factory(root=str(data_root), train=False, download=allow_download)
     except RuntimeError as error:
         raise FileNotFoundError(
             "MNIST artifacts are absent; rerun preparation with --allow-download"

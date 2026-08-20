@@ -464,3 +464,27 @@ do not prebuild Milestone 6 search/tracking infrastructure.
 - Hermetic tests prove common supervised membership, ERM metadata redaction, separate
   oracle access, fixture/production strata, canonical round trips, tamper rejection, and
   changed-image rejection. Estimated pair builders remain deferred.
+
+### Milestone 5 checkpoint: frozen features and oracle projection
+
+- Extended the pinned official OpenAI CLIP adapter to accept variable-sized PIL images
+  through the same model preprocessing, without changing CMNIST behavior or downloading
+  weights implicitly.
+- Added a Waterbirds-CF float32 feature cache whose canonical manifest binds the dataset,
+  image/order metadata, encoder revision, exact weights/preprocessing identity,
+  normalization, referenced array shape/dtype, and byte digest. Cache output is written
+  only after construction and encoder output validate.
+- Added role-scoped cached tables: supervised training omits backgrounds while validation
+  carries four-group metadata. Normalized and unnormalized caches have distinct identities
+  and cannot satisfy one another's load requirements.
+- Oracle pair feature resolution requires the same dataset manifest and rechecks both
+  endpoints' training roles, labels, backgrounds, image hashes, and canonical land-minus-
+  water ordering before fitting.
+- Reused the small deterministic full `torch.linalg.svd` implementation on CPU float64.
+  Diagnostics canonically retain the exact Waterbirds pair/cache digests, complete
+  spectrum, requested/effective ranks, and numerical residuals; rank zero remains the
+  identity.
+- Hermetic tests cover cache determinism across preparation batch sizes, canonical round
+  trips, file tampering, cross-construction pair rejection, normalization separation,
+  write-late failure, exact projection lineage, and rank-zero behavior. No real CLIP
+  weights or Waterbirds assets were used.
