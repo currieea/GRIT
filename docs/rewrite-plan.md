@@ -103,6 +103,10 @@ Status: **Implemented and verified**
 
 ## Milestone 3: Define shared contracts
 
+Status: **Proposal awaiting user review.** The documentation proposal exists, but the
+contracts and synthetic fixtures in the exit criteria are not implemented. See
+[`contracts.md`](contracts.md).
+
 ### Work
 
 - Typed experiment configuration and validation.

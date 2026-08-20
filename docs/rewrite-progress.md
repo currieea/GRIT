@@ -6,7 +6,7 @@ boundaries and after material decisions; do not use it as a raw command transcri
 ## Current state
 
 - Branch: `rewrite`
-- Active milestone: Shared contracts design (Milestone 3)
+- Active milestone: Shared contracts proposal awaiting user review (Milestone 3)
 - Legacy implementation: Preserved and statically characterized; runtime reproduction deferred
 - New implementation: Package and tooling scaffold only; no algorithms or datasets ported
 
@@ -148,6 +148,39 @@ Verification:
   available, and no dataset or feature artifacts are tracked.
 - The path-restricted legacy diff from the merge base was empty.
 
+### Milestone 3 shared-contract proposal
+
+- Added a concrete, documentation-only contract proposal covering typed experiment
+  configuration, dataset/split capabilities, pairs, projections, algorithms/trainers,
+  leakage-resistant evaluation, validation-only selection, checkpoint restoration,
+  results, provenance, and optional tracking.
+- Traced the approved CMNIST and Waterbirds split roles, pair permissions, selectors,
+  test restrictions, and multi-seed stages through the proposed public lifecycle.
+- Documented canonical serialization and tensor-artifact references, four non-executable
+  protocol mappings, and named synthetic contract tests for the next implementation goal.
+- Recorded evidence-backed inherited algorithm requirements separately from provisional
+  future-method needs, without reproducing the inherited ERM ownership hierarchy.
+- Integrated a read-only inherited-interface audit and an adversarial leakage/selection
+  review, including separate candidate/checkpoint freezes and ordinary/diagnostic schema
+  branches.
+- Collected architectural recommendations awaiting user approval and kept all unresolved
+  scientific choices explicit.
+
+Verification:
+
+- Required documents were reread in full; the proposal was checked against both protocol
+  traces and received separate read-only inherited-interface and adversarial leakage/
+  selection reviews.
+- Relative documentation links and milestone status statements were reviewed locally.
+- `uv run --frozen ruff check .` — passed
+- `uv run --frozen basedpyright` — 0 errors, warnings, or notes
+- `uv run --frozen pytest` — 1 passed on Python 3.10.20
+- `git diff --check` — passed
+- Path-restricted diffs confirmed no changes to legacy implementation, `pyproject.toml`,
+  `uv.lock`, package code, or tests.
+- Documentation only; no production contracts, executable configurations, runtime
+  dependencies, dataset code, or algorithm code were added.
+
 ## Approved decisions
 
 - The staged rewrite plan and target architectural direction are approved.
@@ -189,15 +222,31 @@ Verification:
 
 - ColoredMNIST deterministic source-partition algorithm
 - ColoredMNIST conditional/random and nearest-pair definitions
+- Optional reporting-only paired ID rendering of ColoredMNIST final-test sources
 - Waterbirds source acquisition and reconstruction implementation
 - Waterbirds conditional/random and nearest-pair definitions
 - Method-specific search spaces for GroupDRO and later methods
 - Experimental PyTorch, CLIP, CUDA, deterministic-operation, and upper Python versions
-- Configuration/schema implementation
-- Exact algorithm and dataset public interfaces
+- Approval or revision of the proposed configuration/schema mechanism and public
+  interfaces in [`contracts.md`](contracts.md)
+- Safe numerical artifact container, projection fitting dtype/device policy, and CMNIST
+  checkpoint tie completion proposed in the contract decision register
+
+## Decisions awaiting approval
+
+- The full Milestone 3 responsibility, capability, serialization, and lifecycle proposal
+  in [`contracts.md`](contracts.md)
+- Pydantic v2 rather than a handwritten standard-library boundary-schema decoder
+- Discriminated ordinary/test-oracle roots plus distinct frozen candidate and per-run
+  checkpoint decisions
+- Bounded algorithm-owned updates/optimizer stepping within trainer-owned iteration
+- Versioned checkpoint envelopes and canonical local JSON with referenced numerical
+  artifacts
+- Deterministic CPU-float64 projection fitting and the proposed CMNIST checkpoint tie rule
 
 ## Next proposed checkpoint
 
-Propose the Milestone 3 typed configuration, dataset bundle, pair, projection, algorithm,
-selection, and result contracts for review. Keep protocol-unresolved construction and
-estimated-pair choices out of the interfaces until they are explicitly approved.
+Review, approve, or revise the Milestone 3 proposal. After approval, implement its strict
+boundary schemas, capability types, and synthetic contract tests in the documented order.
+Remain in Milestone 3; do not begin pair mathematics, dataset construction, algorithms, or
+the Milestone 4 extraction work.

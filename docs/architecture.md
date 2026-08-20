@@ -1,6 +1,6 @@
 # Target architecture for the GRIT rewrite
 
-Status: **Approved direction; concrete interfaces remain milestone-scoped**
+Status: **Approved direction; Milestone 3 interface proposal awaiting user review**
 
 ## Architectural intent
 
@@ -12,6 +12,10 @@ those responsibilities to explicit components.
 The architecture should remain practical for PyTorch and WILDS-style datasets. It should
 adopt the clean boundaries of Kernel-GRIT without assuming that this broader repository
 has only one training loop or only frozen representations.
+
+[`contracts.md`](contracts.md) is the concrete Milestone 3 proposal for the conceptual
+types below. Its names, capability boundaries, serialization rules, and recommendations
+are not approved or implemented yet.
 
 ## Proposed layout
 
@@ -53,7 +57,7 @@ src/grit/
   algorithms/
     base.py
     erm.py
-    ecmp.py
+    grit.py  # ECMP remains an inherited/historical name, not the new owner hierarchy
     groupdro.py
     irm.py
     rex.py
@@ -107,19 +111,16 @@ algorithm.
 
 Conceptual output:
 
-```python
-DatasetBundle(
-    train=...,
-    validation=...,
-    test=...,
-    counterfactual=...,
-    metadata=...,
-    group_spec=...,
-    manifest=...,
-)
+```text
+source artifacts + typed dataset config
+  -> internal DatasetBundle + manifests
+  -> role-scoped training, pair-source, validation, final-test, and diagnostic capabilities
 ```
 
-The final concrete type remains to be designed.
+The full bundle is internal to dataset construction and the runner's capability broker.
+Trainers, pair builders, evaluators, and selectors do not receive a dictionary containing
+every split. Repeated views of one source partition carry stable source identities as well
+as distinct example/view identities.
 
 ### Pair builders
 
@@ -127,10 +128,12 @@ Pair builders select aligned source examples and return explicit indices, metada
 provenance. They do not calculate classifier loss or own a training loop.
 
 ```text
-DatasetBundle + PairBuilderConfig -> PairSet
+training-only PairSourceView + PairBuilderConfig -> PairSet
+training-only PairSourceView + OraclePairRelationView + OraclePairBuilderConfig -> PairSet
 ```
 
-Oracle, conditional, and nearest are implementations of the same conceptual contract.
+Oracle, conditional, and nearest produce the same conceptual pair-set contract. The
+oracle relation is a separate capability that estimated builders cannot receive.
 
 ### Projection
 
@@ -142,6 +145,10 @@ PairSet -> fitted Projection
 features + fitted Projection -> transformed features
 ```
 
+The runner's representation pipeline applies the same fitted transform to training and
+every permitted evaluation role. Projection does not live in a dataset adapter, model,
+algorithm, or trainer.
+
 ### Algorithms
 
 Algorithms own method-specific optimization state and updates. They receive prepared
@@ -149,8 +156,9 @@ models, batches, and context; they do not discover datasets or decide which spli
 the final checkpoint.
 
 The common algorithm interface must allow both ordinary single-batch updates and methods
-with specialized epoch/update behavior. Avoid forcing every method through an abstraction
-that only fits ERM.
+with multiple optimizer steps, parameter replacement, checkpointable non-model state, and
+step-level validation feedback. Validation feedback is role-limited data, not evaluator or
+loader access. Avoid forcing every method through an abstraction that only fits ERM.
 
 ### Experiment runner
 
@@ -160,21 +168,29 @@ The runner owns the lifecycle:
 resolve config
   -> load dataset bundle
   -> construct optional pairs/projection
-  -> initialize model and algorithm
-  -> train
-  -> evaluate permitted validation metrics
-  -> select and restore checkpoint
-  -> evaluate final test
+  -> run each candidate on tuning seeds with validation-selected checkpoints
+  -> freeze per-method/per-selector top-three finalist artifacts
+  -> run finalists on confirmation seeds
+  -> freeze one five-seed candidate per method and selector
+  -> run each fresh final seed
+  -> freeze that run's validation-selected checkpoint
+  -> restore the matching checkpoint
+  -> evaluate final test for that run
   -> write result and provenance
 ```
 
-The runner must not implement algorithm-specific mathematics.
+The runner must not implement algorithm-specific mathematics. Its distinct candidate and
+per-run checkpoint tokens ensure final-seed validation can choose an epoch but cannot
+change frozen hyperparameters. Final-test access becomes legal only after both decisions
+are frozen and the matching checkpoint is restored.
 
 ### Selection policy
 
 Selection is an explicit configuration and result object. Ordinary selection receives
-only approved validation metrics. A separately labeled diagnostic may calculate a
-test-oracle envelope, but it must not silently replace the ordinary result.
+only a validation-record type; final-test records are structurally excluded rather than
+hidden behind metric names. A separately labeled diagnostic may calculate a permitted
+test-oracle envelope, but it uses distinct configuration/result types and cannot replace
+the ordinary result.
 
 ### Tracking
 
@@ -235,12 +251,15 @@ entry points.
 
 ## Unresolved architectural decisions
 
-- Exact configuration library and schema mechanism
-- Concrete dataset and batch types
-- Whether projection occurs in dataset adapters, model wrappers, or runner preparation
-- Minimum algorithm interface needed by Fish and SWAD
-- Checkpoint storage format and retention policy
-- Local search scheduler and W&B integration boundary
+- Approval or revision of the concrete types and capability boundaries proposed in
+  [`contracts.md`](contracts.md)
+- Configuration library: proposed Pydantic v2 versus a strict standard-library decoder
+- Exact safe numerical artifact format and checkpoint retention policy
+- CPU-float64 projection fitting policy and runtime conversion rules
+- CMNIST checkpoint tie-breaking after the already-approved candidate tie sequence
 - Upper supported Python version and the compatible PyTorch/CLIP/CUDA matrix
 
-Resolve these through the first two vertical slices rather than speculative abstraction.
+Scientific construction and estimated-pair choices remain in their protocol documents.
+After proposal review, implement and test only the smallest shared contracts needed before
+closing Milestone 3. Milestone 4 and the later CMNIST slice require their own approved
+goals; leave provisional later-method and raw-image details to vertical evidence.
