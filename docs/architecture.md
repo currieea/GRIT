@@ -77,11 +77,7 @@ src/grit/
     local.py
     wandb.py
 
-scripts/
-  run_experiment.py
-  run_search.py
-  preprocess.py
-  summarize_results.py
+  cli/  # add command modules only when their commands are implemented
 
 configs/
   cmnist/
@@ -98,6 +94,8 @@ tests/
 
 This is a target map, not a requirement to create every file before it is needed.
 Prefer adding the smallest coherent component required by the current vertical slice.
+Command modules and their console entry points are added together; an empty `cli/`
+package or speculative entry points are not scaffold requirements.
 
 ## Component boundaries
 
@@ -184,6 +182,20 @@ Local structured output is canonical. W&B mirrors configurations, histories, and
 artifacts but does not define selection semantics. A run must remain possible without
 W&B.
 
+### Command-line interfaces
+
+New executable logic lives in package modules under `src/grit/cli/`. A command module
+parses user input and delegates scientific work to typed package components; it does not
+become a second orchestration or algorithm layer. Once a real command is implemented, its
+user-facing command is exposed through a `[project.scripts]` entry point in
+`pyproject.toml`.
+
+The existing top-level `scripts/` directory remains inherited preprocessing and
+compatibility evidence. Its files are not templates for rewrite commands and are not
+brought wholesale under strict lint or type checking. All new Python implementation,
+including command implementations, must live under the checked `src/grit/` package;
+tests remain under `tests/`.
+
 ## Configuration principles
 
 - Experiment settings live in data files rather than executable sweep modules.
@@ -217,7 +229,9 @@ Every completed run should record at least:
 During migration, the old and new paths coexist. `main.py` may eventually become a
 compatibility shim, but it must not be redirected until a new vertical slice is verified.
 Legacy numerical behavior and recommended rigorous behavior may be exposed as distinct
-configurations where comparison is useful.
+configurations where comparison is useful. Existing top-level preprocessing scripts may
+remain compatibility references, but new commands use package modules and installed
+entry points.
 
 ## Unresolved architectural decisions
 
@@ -227,6 +241,6 @@ configurations where comparison is useful.
 - Minimum algorithm interface needed by Fish and SWAD
 - Checkpoint storage format and retention policy
 - Local search scheduler and W&B integration boundary
-- Supported Python and PyTorch versions
+- Upper supported Python version and the compatible PyTorch/CLIP/CUDA matrix
 
 Resolve these through the first two vertical slices rather than speculative abstraction.

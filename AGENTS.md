@@ -27,8 +27,10 @@ protocol document, stop and ask for a decision instead of silently choosing a pr
 - Ordinary model and hyperparameter selection must not use test metrics.
 - Keep pair construction and nuisance projection independent of classifiers and training
   loops.
-- Keep reusable code in the future `src/grit/` package. Keep `scripts/` thin and put
-  experiment settings in `configs/`.
+- Keep all new reusable and executable Python code in `src/grit/`. Implement new commands
+  under `src/grit/cli/` and expose them through `[project.scripts]` only when the command
+  exists. The top-level `scripts/` files are inherited references, not a destination for
+  rewrite logic. Put experiment settings in `configs/`.
 - Prefer composition over the inherited pattern in which every method inherits dataset,
   training, evaluation, selection, and logging behavior from `ERM`.
 - Use explicit registries and typed configuration instead of dynamic `eval(...)` lookup.
@@ -58,6 +60,10 @@ uv run pytest
 
 Until that tooling exists on this branch, record the commands that were actually
 available and run in `docs/rewrite-progress.md`; do not claim unavailable checks passed.
+
+Ruff and BasedPyright intentionally check the new `src/grit/` package and `tests/`, not
+the inherited top-level implementation. Place implementation under `src/grit/` and its
+tests under `tests/` rather than expanding an unchecked legacy directory.
 
 ## Working with Codex goals and subagents
 

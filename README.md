@@ -8,22 +8,30 @@ GRIT removes spurious correlations by projecting input features onto the null sp
 
 The rigor-first rewrite is being built in `src/grit/` alongside the inherited
 implementation. Its experiment settings belong in `configs/`; the top-level `main.py`,
-`datasets/`, `models/`, `solver/`, and `experiments/` paths remain compatibility and
-historical references during migration.
+`datasets/`, `models/`, `solver/`, `experiments/`, and `scripts/` paths remain
+compatibility and historical references during migration.
 
 Create the locked development environment and run its checks with:
 
 ```bash
 uv sync --frozen --group dev
+uv run python --version
 uv run ruff check .
 uv run basedpyright
 uv run pytest
 ```
 
-The new scaffold requires Python 3.10 or newer. Exact supported versions for the later
-PyTorch/CLIP experiment stack remain a protocol decision.
+The tracked `.python-version` selects Python 3.10.20 as the current reproducible rewrite
+development interpreter. `pyproject.toml` retains a Python 3.10 minimum; the eventual
+upper Python bound and compatible PyTorch/CLIP/CUDA matrix remain unresolved. The
+rewrite scaffold intentionally does not install those experiment dependencies yet.
 
-## Setup
+## Inherited setup
+
+The commands below describe the preserved implementation and have not been reproduced as
+part of the rewrite scaffold. See the
+[inherited baseline record](docs/legacy-baseline.md) for static findings and runtime
+limitations.
 
 **Requirements:** Python 3.8, PyTorch, CUDA recommended.
 
@@ -38,7 +46,10 @@ You will also need a [WandB](https://wandb.ai) account (or pass `--no_wandb` to 
 
 The codebase supports: **ColoredMNIST**, **RotatedMNIST**, **PACS**, **Waterbirds**, **CelebA**, **Camelyon**.
 
-Set your data root via `--root_dir`. The default path in the codebase is `/local/scratch/a/bai116/datasets/`.
+The inherited code intends `--root_dir` to select a data root and embeds
+`/local/scratch/a/bai116/datasets/` as its default. Its current parser mistakenly defines
+that option as a boolean flag, so the documented path-valued form below is not valid
+without a compatibility fix.
 
 ### Using CLIP features (recommended)
 
@@ -55,7 +66,7 @@ Each script saves `x_array.pth`, `y_array.pth`, `split_array.pth`, `metadata_arr
 
 ## Running Experiments
 
-### Option 1: WandB sweeps (used for paper results)
+### Option 1: Historical W&B sweep launchers
 
 Each file under `experiments/<dataset>/` defines a grid sweep and launches an agent immediately:
 
@@ -68,7 +79,10 @@ python experiments/cmnist/irm.py            # IRM baseline
 # etc.
 ```
 
-### Option 2: Direct execution
+### Option 2: Historical direct command
+
+This command records the inherited intended interface; it is not currently valid as
+written because of the `--root_dir` parser issue above.
 
 ```bash
 python main.py \

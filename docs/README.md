@@ -11,6 +11,8 @@ now lives alongside the inherited implementation.
 - [`architecture.md`](architecture.md): target package layout and component boundaries.
 - [`rewrite-progress.md`](rewrite-progress.md): checkpoint log for completed work and
   unresolved decisions.
+- [`legacy-baseline.md`](legacy-baseline.md): exact inherited revision, representative
+  commands, static behavior characterization, and deferred runtime checks.
 - [`experiments/cmnist.md`](experiments/cmnist.md): approved ColoredMNIST core protocol
   and remaining construction decisions.
 - [`experiments/waterbirds.md`](experiments/waterbirds.md): approved Waterbirds-CF core

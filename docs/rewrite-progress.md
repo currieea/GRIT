@@ -7,7 +7,7 @@ boundaries and after material decisions; do not use it as a raw command transcri
 
 - Branch: `rewrite`
 - Active milestone: Shared contracts design (Milestone 3)
-- Legacy implementation: Preserved
+- Legacy implementation: Preserved and statically characterized; runtime reproduction deferred
 - New implementation: Package and tooling scaffold only; no algorithms or datasets ported
 
 ## Completed checkpoints
@@ -118,10 +118,43 @@ Verification:
   solely from `uv.lock`; an isolated interpreter imported `grit` version `0.1.0`.
 - Confirmed the diff contains no changes to tracked legacy implementation files.
 
+### Inherited baseline and package-scaffold follow-ups
+
+- Verified that local `main` and the `main`/`rewrite` merge base are both
+  `66c282b6846e8564d165b73d643670be727a2cab`.
+- Added a static baseline record covering inherited commands, responsibility boundaries,
+  model-selection and oracle-information flow, artifact assumptions, known concerns,
+  evidence levels, and runtime limitations.
+- Confirmed all 60 inherited W&B sweep launchers optimize `test.acc_avg`, while
+  `ERM.report()` separately tracks validation, in-domain-test, and test-best logs without
+  restoring a validation-selected checkpoint.
+- Defined `src/grit/cli/` plus future `[project.scripts]` entry points as the only path for
+  new commands. Existing top-level scripts remain unchecked legacy references.
+- Preserved the user-created `.python-version` pin to Python 3.10.20 and documented it as
+  the reproducible development interpreter without choosing experiment dependencies or
+  an upper compatibility bound.
+
+Verification:
+
+- `uv run python --version` — Python 3.10.20
+- `uv lock --check` — passed
+- `uv run --frozen ruff check .` — passed
+- `uv run --frozen basedpyright` — 0 errors, warnings, or notes
+- `uv run --frozen pytest` — 1 passed on Python 3.10.20
+- `git diff --check` — passed
+- Static inspection only for the inherited implementation; no dataset download, W&B
+  sweep, or costly legacy experiment was run.
+- Neither the inherited default data root nor a repository-local data directory was
+  available, and no dataset or feature artifacts are tracked.
+- The path-restricted legacy diff from the merge base was empty.
+
 ## Approved decisions
 
 - The staged rewrite plan and target architectural direction are approved.
-- The new development scaffold uses a `src/` package layout and Python 3.10 minimum.
+- The new development scaffold uses a `src/` package layout, Python 3.10 minimum, and
+  Python 3.10.20 as its current reproducible development interpreter.
+- New command implementations live under `src/grit/cli/` and receive `[project.scripts]`
+  entry points only when implemented; inherited top-level scripts remain legacy evidence.
 - The rewrite will prioritize rigorous experiment semantics over matching historical table
   values.
 - The inherited implementation remains available during vertical-slice development.

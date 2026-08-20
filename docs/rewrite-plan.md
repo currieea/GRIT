@@ -51,6 +51,8 @@ Preserve baseline
 
 ## Milestone 0: Preserve and characterize the inherited baseline
 
+Status: **Source preserved and statically characterized; runtime reproduction deferred**
+
 ### Work
 
 - Record the inherited Git revision and relevant historical commands.
@@ -61,7 +63,8 @@ Preserve baseline
 
 ### Exit criteria
 
-- The inherited path remains runnable where its external data is available.
+- The inherited source remains available unchanged; runtime runnability is not claimed
+  until its external data, services, and historical environment are available.
 - Important behavioral changes can be distinguished from mechanical restructuring.
 - Known legacy issues are documented.
 
