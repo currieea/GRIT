@@ -6,9 +6,9 @@ boundaries and after material decisions; do not use it as a raw command transcri
 ## Current state
 
 - Branch: `rewrite`
-- Active milestone: Experiment protocol design
+- Active milestone: Shared contracts design (Milestone 3)
 - Legacy implementation: Preserved
-- New implementation: Not started
+- New implementation: Package and tooling scaffold only; no algorithms or datasets ported
 
 ## Completed checkpoints
 
@@ -94,8 +94,34 @@ Verification:
   against the GRIT paper and official OpenAI CLIP examples.
 - Documentation-only changes; no experiment code or artifacts were modified.
 
+### Milestone 2 package and tooling scaffold
+
+- Approved the staged rewrite plan and target architectural direction while retaining
+  milestone-scoped decisions for concrete interfaces.
+- Added the locked `grit-research` package with a `src/grit/` layout and Python 3.10
+  development baseline.
+- Added empty, dataset-specific configuration roots for ColoredMNIST and Waterbirds;
+  executable YAML remains deferred until typed configuration contracts are approved.
+- Added Ruff, strict BasedPyright, and Pytest configuration scoped to the new rewrite
+  path, plus a minimal installed-package import/version test.
+- Kept the inherited `main.py`, `datasets/`, `models/`, `solver/`, `experiments/`, and
+  legacy preprocessing scripts unchanged.
+
+Verification:
+
+- `uv lock --python 3.10`
+- `uv sync --frozen --group dev`
+- `uv run --frozen ruff check .` — passed
+- `uv run --frozen basedpyright` — 0 errors, warnings, or notes
+- `uv run --frozen pytest` — 1 passed on Python 3.10.20
+- Repeated synchronization and all checks in a fresh temporary environment created
+  solely from `uv.lock`; an isolated interpreter imported `grit` version `0.1.0`.
+- Confirmed the diff contains no changes to tracked legacy implementation files.
+
 ## Approved decisions
 
+- The staged rewrite plan and target architectural direction are approved.
+- The new development scaffold uses a `src/` package layout and Python 3.10 minimum.
 - The rewrite will prioritize rigorous experiment semantics over matching historical table
   values.
 - The inherited implementation remains available during vertical-slice development.
@@ -133,12 +159,12 @@ Verification:
 - Waterbirds source acquisition and reconstruction implementation
 - Waterbirds conditional/random and nearest-pair definitions
 - Method-specific search spaces for GroupDRO and later methods
-- Supported Python/PyTorch versions
+- Experimental PyTorch, CLIP, CUDA, deterministic-operation, and upper Python versions
 - Configuration/schema implementation
 - Exact algorithm and dataset public interfaces
 
 ## Next proposed checkpoint
 
-Specify and implement the Waterbirds-CF source-acquisition, manifest, generator, and
-integrity-check interfaces. In parallel, resolve the remaining estimated-pair definitions
-and specify the minimal public interfaces for the new package scaffold.
+Propose the Milestone 3 typed configuration, dataset bundle, pair, projection, algorithm,
+selection, and result contracts for review. Keep protocol-unresolved construction and
+estimated-pair choices out of the interfaces until they are explicitly approved.

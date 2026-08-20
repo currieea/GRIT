@@ -1,8 +1,9 @@
 # Rewrite documentation
 
 This directory contains the design and experimental contracts for the GRIT rewrite.
-The documentation is intentionally established before the new implementation so that
-scientific decisions are reviewed rather than inferred from legacy code.
+The contracts were established before implementation began so that scientific decisions
+are reviewed rather than inferred from legacy code. The verified package/tooling scaffold
+now lives alongside the inherited implementation.
 
 ## Documents
 

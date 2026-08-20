@@ -1,6 +1,6 @@
 # Target architecture for the GRIT rewrite
 
-Status: **Proposed**
+Status: **Approved direction; concrete interfaces remain milestone-scoped**
 
 ## Architectural intent
 

@@ -4,6 +4,25 @@ GRIT removes spurious correlations by projecting input features onto the null sp
 
 > **Note:** The method is called **ECMP** throughout the codebase. It was renamed to **GRIT** in the most recent version of the paper.
 
+## Rewrite development
+
+The rigor-first rewrite is being built in `src/grit/` alongside the inherited
+implementation. Its experiment settings belong in `configs/`; the top-level `main.py`,
+`datasets/`, `models/`, `solver/`, and `experiments/` paths remain compatibility and
+historical references during migration.
+
+Create the locked development environment and run its checks with:
+
+```bash
+uv sync --frozen --group dev
+uv run ruff check .
+uv run basedpyright
+uv run pytest
+```
+
+The new scaffold requires Python 3.10 or newer. Exact supported versions for the later
+PyTorch/CLIP experiment stack remain a protocol decision.
+
 ## Setup
 
 **Requirements:** Python 3.8, PyTorch, CUDA recommended.

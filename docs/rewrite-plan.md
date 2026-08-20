@@ -1,6 +1,6 @@
 # GRIT full-scale rewrite plan
 
-Status: **Proposed**
+Status: **Approved**
 
 ## Objective
 
@@ -82,6 +82,8 @@ Preserve baseline
 - Remaining unresolved decisions are blocking and clearly listed.
 
 ## Milestone 2: Scaffold the new package and tooling
+
+Status: **Implemented and verified**
 
 ### Work
 
