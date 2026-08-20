@@ -1,6 +1,6 @@
 # Target architecture for the GRIT rewrite
 
-Status: **Approved core direction; minimal Milestone 3 implementation pending**
+Status: **Minimal Milestone 3 spine implemented and verified; awaiting user review**
 
 ## Architectural intent
 
@@ -34,6 +34,13 @@ The initial contract spine is deliberately small:
 CPU-float64 SVD fitting, earlier-epoch checkpoint ties, and union confirmation of CMNIST's
 two selector finalist sets are approved directions. Only the tie/selection behavior belongs
 in the contract spine; production SVD code waits for the CMNIST vertical slice.
+
+The current internal spine is intentionally flat and small:
+`schemas.py`, `config.py`, `data.py`, `selection.py`, `checkpoints.py`, `lifecycle.py`,
+`results.py`, and `tracking.py` under `src/grit/`. These are working module names, not a
+public layout commitment. They contain strict boundaries, selectors, a fake-state-capable
+restoration interface, the final-test gate, and the null sink; they do not contain real
+dataset, feature, pair, projection, algorithm, trainer, or tracking integrations.
 
 ## Provisional component map
 
@@ -303,8 +310,8 @@ entry points.
 - Upper supported Python version and the compatible PyTorch/CLIP/CUDA matrix
 
 Scientific construction and estimated-pair choices remain in their protocol documents.
-Implement and test the smallest contract spine before closing Milestone 3, then exercise
-and revise it directly in the CMNIST vertical slice. Waterbirds is the second proving
-ground; only after both slices should internal names or module boundaries be treated as
-stable shared interfaces. Generalized artifacts, full resume, production W&B, later-method
-hooks, and raw-image/accelerator abstractions remain explicitly deferred.
+The smallest contract spine is implemented and synthetically verified. After user approval,
+exercise and revise it directly in the CMNIST vertical slice. Waterbirds is the second
+proving ground; only after both slices should internal names or module boundaries be treated
+as stable shared interfaces. Generalized artifacts, full resume, production W&B,
+later-method hooks, and raw-image/accelerator abstractions remain explicitly deferred.

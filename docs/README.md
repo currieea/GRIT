@@ -2,16 +2,17 @@
 
 This directory contains the design and experimental contracts for the GRIT rewrite. Core
 scientific protocols were established before implementation so decisions are reviewed
-rather than inferred from legacy code. The Milestone 3 shared-interface contract is a
-proposal awaiting review. The verified package/tooling scaffold now lives alongside the
-inherited implementation.
+rather than inferred from legacy code. The approved minimal Milestone 3 contract spine is
+implemented and verified, and now awaits user review. It remains internal and revisable as
+the CMNIST and Waterbirds vertical slices exercise it alongside the preserved inherited
+implementation.
 
 ## Documents
 
 - [`rewrite-plan.md`](rewrite-plan.md): order of operations, milestones, and exit gates.
 - [`architecture.md`](architecture.md): target package layout and component boundaries.
-- [`contracts.md`](contracts.md): concrete Milestone 3 shared-contract proposal, leakage
-  capabilities, serialization rules, synthetic-test plan, and approval decisions.
+- [`contracts.md`](contracts.md): approved Milestone 3 core contracts, provisional design
+  guidance, deferred extensions, leakage boundaries, and synthetic-test evidence.
 - [`rewrite-progress.md`](rewrite-progress.md): checkpoint log for completed work and
   unresolved decisions.
 - [`legacy-baseline.md`](legacy-baseline.md): exact inherited revision, representative

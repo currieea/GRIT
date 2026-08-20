@@ -102,9 +102,9 @@ Status: **Implemented and verified**
 
 ## Milestone 3: Define shared contracts
 
-Status: **Core scope approved; minimal implementation pending.** Detailed future guidance
-is retained in [`contracts.md`](contracts.md), but only the contract spine below is a
-Milestone 3 deliverable.
+Status: **Minimal spine implemented and verified; awaiting user review.** Detailed future
+guidance is retained in [`contracts.md`](contracts.md), but only the contract spine below
+is a Milestone 3 deliverable. Milestone 4 has not started.
 
 ### Work
 

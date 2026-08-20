@@ -6,9 +6,11 @@ boundaries and after material decisions; do not use it as a raw command transcri
 ## Current state
 
 - Branch: `rewrite`
-- Active milestone: Approved minimal contract spine; implementation pending (Milestone 3)
+- Active milestone: Minimal contract spine implemented and verified; awaiting user review
+  (Milestone 3)
 - Legacy implementation: Preserved and statically characterized; runtime reproduction deferred
-- New implementation: Package and tooling scaffold only; no algorithms or datasets ported
+- New implementation: Internal CMNIST-focused contract spine; no production algorithms,
+  datasets, pairs, projections, trainers, or external tracking ported
 
 ## Completed checkpoints
 
@@ -210,6 +212,44 @@ Verification:
 - Path-restricted diffs confirmed no dependency, package, test, protocol, or legacy
   implementation change was made.
 
+### Milestone 3 minimal contract spine
+
+- Added the bounded `pydantic>=2.11,<3` runtime dependency and strict, frozen,
+  unknown-field-rejecting CMNIST configuration and result boundaries.
+- Added protocol-bound split descriptors and role-scoped in-memory views. Final-test
+  examples remain behind a gate requiring mutually matching frozen candidate, final-run
+  checkpoint selection, and restoration receipt.
+- Added structurally distinct validation, final-test, and CMNIST test-oracle diagnostic
+  metrics plus validation-only primary/secondary selectors with deterministic mean, rank,
+  earlier-epoch, and stable-identity ties.
+- Bound oracle-GRIT configuration to the two approved training source partitions and 256
+  pairs. Bound candidate freezes to the configured three tuning plus two confirmation
+  seeds and final checkpoints to the configured ten-seed set.
+- Kept selector-independent scientific candidate identity distinct from the full resolved
+  configuration digest so primary and secondary selection can reuse saved validation
+  records while retaining separate winners and result identities.
+- Added separate candidate and per-final-run checkpoint freezes, minimal fake-state
+  checkpoint restoration, canonical JSON/digests, ordinary versus diagnostic result
+  unions, and a null event sink.
+- Added an in-memory fake algorithm/trainer lifecycle proving trainer-owned iteration,
+  validation-only checkpoint choice, restoration of selected rather than last state, and
+  one-way final-test access. Canonical result parsing revalidates method, selector, seed,
+  checkpoint, contributor, and metric identities.
+- Kept all type and module names internal and revisable. Added no real dataset access,
+  feature cache, pair builder, projection mathematics, PyTorch training, W&B integration,
+  generalized artifact store, or faithful resume framework.
+
+Verification:
+
+- `uv lock --check` — passed
+- `uv run --frozen ruff check .` — passed
+- `uv run --frozen basedpyright` — 0 errors, warnings, or notes
+- `uv run --frozen pytest` — 25 passed on Python 3.10.20
+- `uv run --offline --frozen pytest` — 25 passed without network access
+- `git diff --check` — passed
+- Documentation links, milestone statuses, and scope paths reviewed; no legacy or protocol
+  file changed.
+
 ## Approved decisions
 
 - The staged rewrite plan and target architectural direction are approved.
@@ -290,9 +330,7 @@ Verification:
 
 ## Next proposed checkpoint
 
-Implement only the approved Milestone 3 contract spine: CMNIST-focused strict Pydantic
-boundaries, role-scoped views and metric types, validation-only selectors, minimal fake-
-state restoration, ordinary/test-oracle results, canonical JSON, a null sink, and the
-single in-memory leakage lifecycle with a fake bounded update under trainer-owned
-iteration. After that spine is verified, exercise and revise it in the CMNIST vertical
-slice; do not prebuild deferred frameworks.
+Obtain user approval for the verified Milestone 3 spine. Only then begin Milestone 4 by
+resolving the still-blocking deterministic CMNIST source-partition decision and exercising
+these internal contracts in the smallest ERM/oracle-GRIT vertical slice. Do not prebuild
+deferred frameworks.

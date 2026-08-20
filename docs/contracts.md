@@ -1,9 +1,9 @@
 # Shared contracts and design guidance
 
-Status: **Core direction approved; minimal Milestone 3 implementation pending.** Detailed
-type names, field sets, and module boundaries remain internal and revisable until both the
-CMNIST and Waterbirds vertical slices have exercised them. No production contract code or
-executable configuration is introduced by this documentation checkpoint.
+Status: **Minimal Milestone 3 spine implemented and verified; awaiting user review.**
+Detailed type names, field sets, and module boundaries remain internal and revisable until
+both the CMNIST and Waterbirds vertical slices have exercised them. The implementation is
+an in-memory contract boundary, not production experiment infrastructure.
 
 This proposal turns the approved experiment protocols into shared interfaces for the
 rewrite. It preserves useful mathematical behavior without preserving the inherited
@@ -36,8 +36,8 @@ not weaken their split, pair, selection, or reporting safeguards.
 
 The following direction is approved and must shape the smallest implementation:
 
-- Use Pydantic v2 for strict configuration and result boundary schemas. Adding the
-  dependency belongs to the implementation checkpoint, not this documentation-only one.
+- Use Pydantic v2 for strict configuration and result boundary schemas. The implementation
+  checkpoint adds the bounded `pydantic>=2.11,<3` dependency.
 - Compose datasets, algorithms, training, evaluation, selection, and reporting rather
   than inheriting them from `ERM`.
 - Give training, validation, final-test, and diagnostic consumers role-scoped views.
@@ -81,6 +81,15 @@ It consists only of:
 
 This spine should be the smallest coherent implementation. A concrete name from later in
 this document should be introduced only when the spine requires it.
+
+The implemented internal spine is the eight focused modules under `../src/grit/`:
+`schemas.py`, `config.py`, `data.py`, `selection.py`, `checkpoints.py`, `lifecycle.py`,
+`results.py`, and `tracking.py`. It binds CMNIST split names to their approved roles, binds
+oracle-pair configuration to the approved training source partitions, keeps full
+resolved-config identity separate from selector-independent scientific-candidate identity,
+and revalidates selection/checkpoint/seed evidence when authoritative result JSON is
+parsed. The focused synthetic tests live under `../tests/`; no dataset, feature, pair,
+projection, PyTorch trainer, or external tracking implementation was added.
 
 ### Provisional guidance to validate through CMNIST
 
@@ -1169,7 +1178,8 @@ No Waterbirds test-oracle selector exists in the initial study.
 
 ### Required initial Milestone 3 tests
 
-Only the following small test spine is part of the initial Milestone 3 exit criteria:
+The following small test spine is the Milestone 3 exit criterion and is now covered by the
+focused synthetic suite (test function spelling was allowed to remain internal):
 
 | Proposed test | Behavior proved |
 | --- | --- |
@@ -1346,16 +1356,16 @@ These must become explicit protocol decisions before their configurations can re
 
 ### Revised implementation order
 
-1. Implement the strict CMNIST-focused Pydantic config/result boundaries, role/metric
+1. **Implemented:** strict CMNIST-focused Pydantic config/result boundaries, role/metric
    types, canonical JSON, and rejection/round-trip tests.
-2. Implement validation-only deterministic checkpoint/candidate selectors, separate
-   freezes, minimal fake-state checkpoint restoration, and the null sink.
-3. Assemble the single in-memory lifecycle test and prove the final-test one-way gate.
-4. Review the spine for accidental framework growth and close Milestone 3 only when that
-   focused test suite passes.
-5. Exercise and revise the internal contracts in the CMNIST ERM/oracle-GRIT vertical
-   slice, adding production data, pair, projection, model, and training code only as that
-   slice demands.
+2. **Implemented:** validation-only deterministic checkpoint/candidate selectors,
+   separate freezes, minimal fake-state checkpoint restoration, and the null sink.
+3. **Implemented:** the in-memory lifecycle and one-way final-test gate.
+4. **Verified:** the spine was reviewed for leakage and accidental framework growth; the
+   focused suite passes without production experiment components.
+5. **After user approval:** exercise and revise the internal contracts in the CMNIST
+   ERM/oracle-GRIT vertical slice, adding production data, pair, projection, model, and
+   training code only as that slice demands.
 6. Exercise and revise the same boundaries in Waterbirds before treating type names or
    module boundaries as stable shared interfaces.
 
