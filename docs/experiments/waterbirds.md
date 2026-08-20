@@ -119,11 +119,14 @@ The paper-aligned reconstruction defines the following construction:
    assignments.
 2. Under a recorded construction seed, select without replacement 184 landbirds from
    the landbird-on-land training majority group and 56 waterbirds from the
-   waterbird-on-water training majority group.
+   waterbird-on-water training majority group. Rank stable record IDs by
+   `SHA-256(method ID, seed, selection namespace, record ID)`, with record ID as the
+   collision tie-break, and take the required prefix.
 3. Resolve each selected record to its original CUB image and segmentation mask.
-4. Build deterministic background pools from sorted Places filenames in the two land
-   and two water categories, shuffle them with the construction RNG, and sample without
-   replacement. Use 184 water backgrounds and 56 land backgrounds.
+4. Build deterministic background pools from the two land and two water categories.
+   Give each background a stable identity derived from category, relative path, and byte
+   hash; rank it with the same seeded SHA-256 rule in a background-specific namespace;
+   and sample without replacement. Use 184 water backgrounds and 56 land backgrounds.
 5. Apply the official GroupDRO crop, resize, mask, and compositing geometry to create 184
    landbird-on-water and 56 waterbird-on-land examples.
 6. Retain each selected majority Waterbirds image and its generated opposite-background
@@ -133,10 +136,12 @@ The paper-aligned reconstruction defines the following construction:
 8. Keep the released Waterbirds validation and test images and assignments byte-for-byte
    unchanged.
 
-The primary reconstruction seed is part of configuration and the manifest; changing it
-creates a different artifact version. Because the paper's original selection and
-background-assignment seeds are unavailable, the rewrite does not claim byte-level
-identity with the authors' historical Waterbirds-CF artifact.
+The primary reconstruction seed and exact construction method identifier
+`waterbirds-cf-sha256-v1` are part of configuration and the manifest; changing either
+creates a different artifact version. The NUL-delimited hash-ranking payload and stable
+identity tie-break make selection independent of input enumeration order. Because the
+paper's original selection and background-assignment seeds are unavailable, the rewrite
+does not claim byte-level identity with the authors' historical Waterbirds-CF artifact.
 
 Thus the expected Waterbirds-CF training set still has 4,795 records:
 
@@ -580,10 +585,11 @@ are not valid ordinary selections and numerical parity is not an exit requiremen
 - Acquire canonical Waterbirds, CUB images, CUB masks, and the required official
   Places365 training backgrounds on the server.
 - Record and verify all available published source hashes and licenses/terms.
-- Implement and validate the versioned construction without claiming byte-level identity
-  with the unavailable historical artifact.
-- Pin the exact Pillow/torchvision interpolation and image-encoding behavior used by the
-  GroupDRO-compatible compositor.
+- Execute the implemented versioned construction against acquired server assets and
+  validate its production manifest without claiming byte-level identity with the
+  unavailable historical artifact.
+- Record the server's exact Pillow build alongside the implemented LANCZOS geometry and
+  canonical PNG encoding before any reportable reconstruction is accepted.
 - Approve the conditional/random sampling algorithm and nearest-neighbor distance/reuse
   policy.
 - Set method-specific search ranges for GroupDRO and the estimated-pair variants.
@@ -605,6 +611,6 @@ are not valid ordinary selections and numerical parity is not an exit requiremen
 - [x] Deterministic server-side Waterbirds-CF reconstruction plan approved
 - [x] Minimal retained Places subset and storage plan approved
 - [ ] Source datasets acquired and hashes verified on the experiment server
-- [ ] Waterbirds-CF generator and integrity checks implemented
+- [x] Waterbirds-CF generator and integrity checks implemented and hermetically tested
 - [ ] Conditional and nearest-pair details approved
 - [ ] Later-method search spaces approved

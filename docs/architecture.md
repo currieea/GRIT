@@ -1,7 +1,7 @@
 # Target architecture for the GRIT rewrite
 
-Status: **Milestone 3 spine approved; Milestone 4 CMNIST vertical slice implemented and
-verified, awaiting user review**
+Status: **Milestone 4 CMNIST reviewed and complete; Milestone 5 Waterbirds vertical slice
+active**
 
 ## Architectural intent
 
@@ -136,8 +136,9 @@ package or speculative entry points are not scaffold requirements.
 
 ### Dataset bundle
 
-Status: **CMNIST-specific construction and manifests implemented; shared shape remains
-provisional through Waterbirds.**
+Status: **CMNIST construction and the Waterbirds-CF construction/manifest boundary are
+implemented; the shared shape remains provisional until the complete Waterbirds slice is
+reviewed.**
 
 A dataset adapter is responsible for constructing named splits, metadata, groups, and
 artifact provenance. It must not decide the model-selection policy or instantiate an
@@ -158,6 +159,15 @@ full bundle is internal to dataset construction and the runner's capability brok
 Trainers, pair builders, evaluators, and selectors do not receive a dictionary containing
 every split. Repeated views of one source partition carry stable source identities as well
 as distinct example/view identities.
+
+Milestone 5 adds a dataset-specific Waterbirds-CF parser and construction boundary. It
+validates the released Waterbirds, CUB image/mask/annotation, and four approved Places
+inventories; deterministically selects the 184/56 controlled sources and backgrounds by
+SHA-256 ranking; reproduces the GroupDRO center-crop/mask/composite geometry; preserves
+released validation/test bytes; and emits a canonical manifest with explicit supervised
+records and oracle relationships. A strict non-reportable fixture profile exercises the
+same path without relaxing the production 4,795-record and four-group profile. No source
+acquisition or generalized artifact store is part of this boundary.
 
 ### Pair builders
 

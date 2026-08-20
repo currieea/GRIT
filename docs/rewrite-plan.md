@@ -135,7 +135,7 @@ deliverable.
 
 ## Milestone 4: ColoredMNIST vertical slice
 
-Status: **Implemented and verified; awaiting user review**
+Status: **Reviewed, implemented, and verified**
 
 ### Work
 
@@ -160,6 +160,8 @@ Status: **Implemented and verified; awaiting user review**
   adapter, raw-image stack, or future-method hook layer was added without observed need.
 
 ## Milestone 5: Waterbirds vertical slice
+
+Status: **Active**
 
 ### Work
 

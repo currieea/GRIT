@@ -6,11 +6,10 @@ boundaries and after material decisions; do not use it as a raw command transcri
 ## Current state
 
 - Branch: `rewrite`
-- Active milestone: Milestone 4 implemented and verified; awaiting user review
+- Active milestone: Waterbirds ERM/oracle-GRIT vertical slice (Milestone 5)
 - Legacy implementation: Preserved and statically characterized; runtime reproduction deferred
-- New implementation: Approved CMNIST-focused contract spine plus a complete hermetic
-  CMNIST ERM/oracle-GRIT vertical slice; Waterbirds and reportable experiments remain
-  deferred pending review
+- New implementation: Reviewed CMNIST ERM/oracle-GRIT vertical slice plus the active
+  server-ready, hermetically verified Waterbirds-CF vertical-slice work
 
 ## Completed checkpoints
 
@@ -425,5 +424,26 @@ Verification:
 
 ## Next proposed checkpoint
 
-Review the implemented Milestone 4 CMNIST ERM/oracle-GRIT vertical slice. Begin Waterbirds
-only after approval; do not prebuild deferred frameworks.
+Complete and review the active Milestone 5 Waterbirds-CF ERM/oracle-GRIT vertical slice;
+do not prebuild Milestone 6 search/tracking infrastructure.
+
+### Milestone 5 checkpoint: deterministic Waterbirds-CF construction
+
+- Added strict parsers for caller-supplied released Waterbirds, CUB image/mask metadata,
+  and the four approved Places categories; the implementation does not download assets.
+- Added the versioned `waterbirds-cf-sha256-v1` construction. Stable SHA-256 ranking makes
+  the 184/56 source and opposite-background selection seeded, without replacement, and
+  independent of input enumeration order.
+- Reproduced the official GroupDRO center-crop, LANCZOS resize, mask, and uint8 composite
+  geometry while recording source, mask, foreground, background, generated-image, and
+  geometry identities.
+- The canonical dataset manifest validates production split/component/group counts,
+  explicit land-minus-water relationships, unique endpoints, construction lineage, and
+  byte-preserved released validation/test records. A separate strict fixture profile is
+  always non-reportable and cannot weaken the production inventory.
+- Hermetic tests cover replacement/count invariants, order and seed behavior, released
+  byte preservation, compositor behavior, canonical round trips, tampered relationships,
+  strict production counts, and missing approved background categories.
+- Production source acquisition and execution remain deferred to the experiment server;
+  no real Waterbirds, CUB, Places, or CLIP asset was downloaded and no reportable result
+  was produced.
