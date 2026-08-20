@@ -488,3 +488,23 @@ do not prebuild Milestone 6 search/tracking infrastructure.
   trips, file tampering, cross-construction pair rejection, normalization separation,
   write-late failure, exact projection lineage, and rank-zero behavior. No real CLIP
   weights or Waterbirds assets were used.
+
+### Milestone 5 checkpoint: four-group metrics and validation selection
+
+- Added strict, dataset-specific validation and final-test metric types with four required
+  group counts/accuracies, worst-group, raw-average, and adjusted-average values. Boundary
+  validation recomputes every aggregate and binds adjusted weights to the validated
+  Waterbirds-CF training group counts.
+- Implemented validation-only checkpoint selection by worst-group accuracy, adjusted
+  average, earlier epoch, and stable checkpoint identity. Final-test metric values are a
+  different type and are rejected by the ordinary selector API.
+- Implemented exact three-seed tuning ranking, durable ordered top-three finalists, and
+  exact two-seed confirmation. Confirmation reuses the tuning checkpoint decisions stored
+  inside the finalist artifact; it cannot replace them with caller-supplied copies.
+- Five-seed candidate freezes are selector/method/config/rank bound. Fresh final seeds may
+  choose an epoch using validation but cannot change the frozen candidate or
+  hyperparameters. Candidate ties use adjusted average, lower projection rank, then stable
+  identity; methods are selected independently.
+- Hermetic tests cover training-proportion weighting, missing groups, all tie stages,
+  missing/extra/wrong-stage seeds, finalist membership, retained tuning decisions,
+  method separation, final checkpoint freezing, and final-metric rejection.

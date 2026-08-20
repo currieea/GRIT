@@ -279,13 +279,22 @@ only after both decisions are frozen and the matching checkpoint is restored.
 
 ### Selection policy
 
-Status: **Approved core; exact record/type names provisional.**
+Status: **CMNIST and Waterbirds validation-only selectors implemented; exact shared
+record/type names remain provisional.**
 
 Selection is an explicit configuration and result object. Ordinary selection receives
 only a validation-record type; final-test records are structurally excluded rather than
 hidden behind metric names. A separately labeled diagnostic may calculate a permitted
 test-oracle envelope, but it uses distinct configuration/result types and cannot replace
 the ordinary result.
+
+Waterbirds uses one dataset-specific validation record containing all four group counts
+and accuracies. Worst-group accuracy is primary; adjusted average is recomputed with the
+validated Waterbirds-CF training group counts, never validation proportions. Checkpoint
+ties then use earlier epoch, while candidate ties additionally prefer lower projection
+rank and stable candidate identity. Three-seed ordered finalists retain their exact tuning
+decisions; confirmation accepts only the two fresh seed records and reuses those stored
+decisions for the five-seed winner. ERM and GRIT are ranked independently.
 
 ### Tracking
 
