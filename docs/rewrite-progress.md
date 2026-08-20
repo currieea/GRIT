@@ -43,25 +43,56 @@ Verification:
 
 ### Waterbirds construction and selection draft
 
-- Chose the released Waterbirds-95 artifact and its official train/validation/test
-  assignments as the canonical base dataset.
+- Retained released Waterbirds-95 validation and test assignments while adopting the
+  paper-defined Waterbirds-CF training construction.
+- Defined Waterbirds-CF as 184 landbird and 56 waterbird controlled background-swap
+  pairs, preserving the 4,795-record training size and original group proportions.
 - Preserved the deliberately balanced official validation split for group-aware
   worst-group model selection.
-- Defined training-only controlled land/water oracle pairs as a separate auxiliary
-  resource rather than extra supervised classifier data.
-- Added a separately labeled counterfactual-augmentation control.
+- Clarified that both endpoints are supervised Waterbirds-CF training records for every
+  method, while the 240 pair identities are oracle-only information.
+- Added ERM on original Waterbirds as a separately labeled dataset-construction control.
 - Excluded the inherited snow/desert categories from canonical Waterbirds and reserved
   any expanded-background study for a separate protocol.
 - Defined final test worst-group accuracy, per-group results, and training-distribution
   adjusted average reporting.
+- Confirmed that no inherited Waterbirds-CF artifact or construction program is locally
+  available; the legacy preprocessing path only consumes a prebuilt artifact.
+- Adopted a deterministic server-side reconstruction that reuses canonical WILDS
+  Waterbirds, resolves selected foregrounds through CUB and its masks, and generates only
+  the 240 required opposite-background endpoints.
+- Limited retained Places365 data to 184 water and 56 land training backgrounds from the
+  four GroupDRO categories. The complete Places365 archive is an acquisition-format
+  contingency, not a persistent experiment dependency.
+- Estimated the persistent dataset footprint at approximately 1.5--2 GB when only the
+  selected Places backgrounds are retained.
 
 Verification:
 
 - Protocol language, split access, pair-bank access, and legacy-difference notes reviewed
   locally.
-- Cross-checked the dataset rationale against the original GroupDRO documentation and
-  Waterbirds generation script.
+- Cross-checked the base split rationale against GroupDRO and the 184/56
+  counterfactual-pair construction against the GRIT paper.
 - No dataset, training, or evaluation code changed.
+
+### Shared frozen-feature and search protocol
+
+- Chose unnormalized OpenAI CLIP ViT-B/32 features as the primary CMNIST and Waterbirds
+  representation, with L2-normalized features as a separately reported sensitivity.
+- Deferred raw-image training.
+- Chose uncentered pair differences, deterministic full SVD, explicit rank-zero identity
+  semantics, and saved spectrum diagnostics.
+- Defined a shared Adam learning-rate and weight-decay grid for frozen linear probes.
+- Defined three tuning seeds, two additional confirmation seeds for the top three
+  candidates, and ten fresh shared final seeds.
+- Defined mean, standard deviation, 95% t-intervals, and paired-seed comparisons for final
+  reporting.
+
+Verification:
+
+- Cross-checked inherited CLIP preprocessing, optimizer, projection, and sweep behavior
+  against the GRIT paper and official OpenAI CLIP examples.
+- Documentation-only changes; no experiment code or artifacts were modified.
 
 ## Approved decisions
 
@@ -73,28 +104,41 @@ Verification:
   `0.5` color renderings; these are repeated views, not independent samples.
 - ColoredMNIST reports a primary robustness-aware selector and a secondary source-only
   selector, both fixed before test access.
-- Waterbirds uses the released Waterbirds-95 split assignments without regeneration or
-  resplitting.
+- ColoredMNIST uses 256 oracle pairs as primary and reports fixed
+  32/64/128/256/512-pair sensitivities separately.
+- CMNIST and Waterbirds use unnormalized frozen OpenAI CLIP ViT-B/32 features as primary;
+  L2-normalized features are a separate sensitivity.
+- Frozen linear probes use the approved Adam grid and validation-selected checkpoints.
+- Search aggregates three tuning seeds, confirms the top three candidates with two more
+  seeds, and evaluates the frozen winner on ten fresh seeds.
+- Waterbirds uses the paper-aligned 240-pair Waterbirds-CF training construction and the
+  released Waterbirds validation/test splits.
+- Waterbirds-CF is reconstructed deterministically on the experiment server; it does not
+  depend on locating an inherited CF artifact.
+- The reconstruction reuses released Waterbirds and generates only 240 minority
+  endpoints from CUB foregrounds/masks and selected Places365 training backgrounds.
 - Waterbirds selects ordinary configurations and checkpoints using official validation
   worst-group accuracy; test metrics are final-evaluation-only.
-- Waterbirds oracle pairs use training birds only and do not become supervised examples
-  except in a separately labeled counterfactual-augmentation control.
+- All Waterbirds-CF methods receive the same supervised records; oracle GRIT additionally
+  receives the 240 pair identities.
 - Canonical Waterbirds groups are the four binary bird-label/land-water combinations;
   snow and desert are excluded.
+- The initial Waterbirds study excludes group-blind and test-oracle selection, raw-image
+  training, and expanded snow/desert backgrounds.
 
 ## Unresolved decisions
 
 - ColoredMNIST deterministic source-partition algorithm
-- ColoredMNIST representation, projection, pair-budget, and search details
-- Waterbirds artifact registration, exact pair generator, and pair-budget details
-- Waterbirds encoder, feature-normalization, and expanded baseline choices
-- Search spaces, budgets, and seed policy
+- ColoredMNIST conditional/random and nearest-pair definitions
+- Waterbirds source acquisition and reconstruction implementation
+- Waterbirds conditional/random and nearest-pair definitions
+- Method-specific search spaces for GroupDRO and later methods
 - Supported Python/PyTorch versions
 - Configuration/schema implementation
 - Exact algorithm and dataset public interfaces
 
 ## Next proposed checkpoint
 
-Resolve the shared representation, projection, search, seed, and uncertainty contracts
-needed by the first ColoredMNIST and Waterbirds vertical slices, then review whether the
-protocol milestone is sufficiently complete to begin the new package scaffold.
+Specify and implement the Waterbirds-CF source-acquisition, manifest, generator, and
+integrity-check interfaces. In parallel, resolve the remaining estimated-pair definitions
+and specify the minimal public interfaces for the new package scaffold.

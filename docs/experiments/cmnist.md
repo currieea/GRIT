@@ -1,6 +1,7 @@
 # ColoredMNIST experiment protocol
 
-Status: **Draft — construction, split roles, and selection policies agreed in principle**
+Status: **Core construction, representation, projection, and selection protocol approved;
+deterministic partition and estimated-pair details unresolved**
 
 ## Purpose
 
@@ -124,8 +125,34 @@ support:
 - a two-channel legacy-compatible rendering, if raw-pixel parity is needed;
 - a three-channel RGB rendering for CLIP or other image encoders.
 
-The primary raw-pixel architecture and frozen encoder remain unresolved. Rendering and
-representation choices must not change source partitions, labels, or colors.
+Rendering and representation choices must not change source partitions, labels, or
+colors.
+
+## Frozen representation and classifier
+
+The primary representation is frozen OpenAI CLIP ViT-B/32 using the official OpenAI
+weights and deterministic evaluation preprocessing. The cache stores the
+512-dimensional unnormalized `encode_image` output.
+
+Unnormalized features are primary because they match the paper and inherited linear
+probe and preserve the additive Euclidean geometry assumed by linear GRIT. Per-example
+L2 normalization is a prespecified, separately reported sensitivity. In that
+sensitivity, every training, validation, test, and pair-endpoint feature is normalized
+before pair differences or classifier fitting.
+
+The initial classifier is a linear two-class head trained with Adam:
+
+- batch size: 256;
+- maximum epochs: 40;
+- learning-rate candidates: `[1e-4, 3e-4, 1e-3, 3e-3]`; and
+- weight-decay candidates: `[0, 1e-5, 1e-4, 1e-3]`.
+
+Raw-pixel training is deferred. A future raw-pixel protocol must be reported separately
+and must not be aggregated with frozen-feature results.
+
+The feature manifest records encoder package and version, checkpoint identity and hash,
+preprocessing, normalization mode, source manifest hash, output shape, dtype,
+device/precision details, and feature-file hash.
 
 ## Invariant pairs
 
@@ -149,8 +176,10 @@ Rules:
 - Pair provenance records the source ID, endpoint colors, construction parameters, and
   artifact hashes.
 
-The proposed initial budget is 256 unique pairs, matching the Kernel-GRIT development
-setup. The final pair-count search or sensitivity range remains unresolved.
+The primary budget is 256 unique pairs, matching the paper and Kernel-GRIT development
+setup. Prespecified pair-budget sensitivities use 32, 64, 128, 256, and 512 unique
+training sources; 256 remains the primary result rather than a validation-selected pair
+count.
 
 The primary proposal allows a pair source to also appear in ordinary classifier training.
 This is valid because the pair is auxiliary training-side invariance information. A
@@ -211,8 +240,11 @@ or discarded after seeing test results.
 - Fresh final-evaluation seeds use the frozen selected configuration.
 - The official test split is evaluated only after the selection artifact is finalized.
 
-The exact tuning-seed count, final-seed count, aggregation statistic, and confirmation
-procedure remain unresolved.
+Every candidate runs on three tuning seeds. Candidate ranking uses the mean selector
+score across those seeds. The top three configurations receive two additional
+confirmation seeds, and the winner is chosen using its combined five-seed validation
+mean. That configuration is frozen and evaluated using ten fresh final seeds shared
+across methods. Tuning and confirmation seeds do not enter the final reported estimate.
 
 ## Oracle diagnostics
 
@@ -277,6 +309,22 @@ data:
     num_pairs: 256
     classifier_access: false
 
+features:
+  encoder: openai_clip
+  model: ViT-B/32
+  normalize: false
+
+projection:
+  center_differences: false
+  ranks: {start: 0, stop: 24, step: 1}
+
+training:
+  optimizer: adam
+  learning_rates: [0.0001, 0.0003, 0.001, 0.003]
+  weight_decays: [0.0, 0.00001, 0.0001, 0.001]
+  batch_size: 256
+  max_epochs: 40
+
 selection:
   primary: robust
   policies:
@@ -306,32 +354,50 @@ Typed validation must reject at least:
 
 ## Projection
 
-The projection contract remains to be completed. It must define:
+For feature rows `z_red` and `z_green`, construct the uncentered pair-difference matrix
 
-- rows-as-pairs difference orientation
-- descriptive projection-rank parameter
-- rank-zero identity semantics
-- numerical decomposition and tolerance policy
-- infeasible-rank handling
-- centering and feature-normalization policy
-- saved spectrum and numerical diagnostics
+$$
+D_i = z_i^{\text{red}} - z_i^{\text{green}}.
+$$
 
-Projection estimation may use only the configured training-side pair set.
+The primary protocol does not subtract the mean difference. GRIT removes the selected
+right-singular-vector subspace of `D`. Projection rank is the number of removed
+directions; rank zero is the exact identity operation. The primary rank candidates are
+every integer from 0 through 24.
+
+Use deterministic full `torch.linalg.svd` rather than randomized
+`torch.svd_lowrank`. The implementation must:
+
+- reject ranks above `min(number_of_pairs, feature_dimension)`;
+- distinguish requested, numerical, and effective rank;
+- use an explicit dtype and relative singular-value tolerance;
+- produce an orthogonal projector within a tested tolerance; and
+- save singular values, explained-energy diagnostics, tolerance, and effective rank.
+
+Projection estimation may use only the configured training-side pair set. The normalized
+feature sensitivity fits a separate projection after normalizing every endpoint.
 
 ## Parameter search
 
-The search must be configuration-driven and apply the same candidate space to both
-selectors. Still unresolved:
+The search is configuration-driven and applies the same saved candidate results to both
+selectors.
 
-- parameters and ranges for each method
-- search strategy
-- budget per method
-- tuning and final seed counts
-- aggregation statistic and uncertainty method
-- confirmation procedure
+- ERM searches the Cartesian product of the approved learning-rate and weight-decay
+  candidates.
+- GRIT searches that optimizer grid jointly with ranks 0 through 24.
+- Every candidate runs on three tuning seeds.
+- The top three configurations receive two confirmation seeds.
+- The five-seed validation mean selects the frozen configuration.
+- The winner runs on ten fresh final seeds shared across methods.
+- Later methods receive prespecified method-specific ranges rather than generic
+  `param1`, `param2`, or `param3` values.
 
-The search runner must save every resolved candidate and its per-seed validation metrics.
-W&B may mirror the search, but local structured results define selection semantics.
+The search runner saves every resolved candidate and per-seed validation metric. W&B may
+mirror the search, but local structured results define selection semantics.
+
+Final results report mean, standard deviation, and a 95% t-interval across final seeds.
+Because methods use the same final seeds, comparisons also report paired per-seed
+differences with a 95% t-interval.
 
 ## Metrics and reporting
 
@@ -347,7 +413,7 @@ Required validation reporting:
 Required final reporting:
 
 - $p_c=0.9$ OOD accuracy on all 10,000 official MNIST test sources
-- mean, dispersion, and declared uncertainty across final seeds
+- mean, standard deviation, and 95% t-interval across the ten final seeds
 - primary robustness-selected result
 - secondary source-selected result
 - projection rank, pair count, and pair/projection diagnostics
@@ -416,14 +482,10 @@ Primary references:
 
 - Exact deterministic and stratified source-partition algorithm
 - Whether $p_y=0$ is a required sensitivity experiment
-- Raw-pixel model and rendering protocol
-- Frozen encoder, weights, preprocessing, and feature normalization
-- Final oracle-pair budgets and pair-count sensitivity range
 - Conditional/random and nearest-neighbor pair definitions
-- Projection numerics and rank-search space
-- Search budgets, seed counts, aggregation, and confirmation policy
 - Additional baseline methods required for the first complete study
 - Whether a reporting-only paired ID rendering of final test sources is useful
+- Supported Python, PyTorch, CLIP, CUDA, and deterministic-operation versions
 
 ## Approval checklist
 
@@ -432,9 +494,11 @@ Primary references:
 - [x] Shared-source validation renderings agreed
 - [x] Primary robustness and secondary source-only selectors agreed in principle
 - [x] Final OOD test isolated from ordinary selection
+- [x] Unnormalized OpenAI CLIP ViT-B/32 primary representation approved
+- [x] L2-normalized representation sensitivity approved
+- [x] Primary and sensitivity pair budgets approved
+- [x] Uncentered deterministic projection and rank search approved
+- [x] Adam search, tuning/confirmation/final seeds, and aggregation approved
+- [x] Reporting uncertainty method approved
 - [ ] Deterministic partition algorithm approved
-- [ ] Representation and model protocols approved
-- [ ] Pair budgets and estimated-pair definitions approved
-- [ ] Projection contract and rank search approved
-- [ ] Search and seed budget approved
-- [ ] Reporting uncertainty method approved
+- [ ] Estimated-pair definitions approved

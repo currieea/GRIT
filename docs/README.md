@@ -10,8 +10,10 @@ scientific decisions are reviewed rather than inferred from legacy code.
 - [`architecture.md`](architecture.md): target package layout and component boundaries.
 - [`rewrite-progress.md`](rewrite-progress.md): checkpoint log for completed work and
   unresolved decisions.
-- [`experiments/cmnist.md`](experiments/cmnist.md): ColoredMNIST protocol skeleton.
-- [`experiments/waterbirds.md`](experiments/waterbirds.md): Waterbirds protocol skeleton.
+- [`experiments/cmnist.md`](experiments/cmnist.md): approved ColoredMNIST core protocol
+  and remaining construction decisions.
+- [`experiments/waterbirds.md`](experiments/waterbirds.md): approved Waterbirds-CF core
+  protocol, deterministic server-side reconstruction, and source-acquisition plan.
 
 ## Status vocabulary
 
