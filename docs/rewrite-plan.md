@@ -40,11 +40,10 @@ complete vertical slices before removing legacy code.
 Preserve baseline
     -> approve experiment protocols
     -> scaffold the new package
-    -> define shared contracts
-    -> extract pairing and projection
-    -> complete CMNIST vertical slice
+    -> implement the minimal shared-contract spine
+    -> exercise and revise it in the CMNIST vertical slice
     -> complete Waterbirds vertical slice
-    -> add search and aggregation
+    -> add pairing variants and production search/tracking
     -> port remaining methods
     -> compatibility review and cutover
 ```
@@ -103,59 +102,62 @@ Status: **Implemented and verified**
 
 ## Milestone 3: Define shared contracts
 
-Status: **Proposal awaiting user review.** The documentation proposal exists, but the
-contracts and synthetic fixtures in the exit criteria are not implemented. See
-[`contracts.md`](contracts.md).
+Status: **Core scope approved; minimal implementation pending.** Detailed future guidance
+is retained in [`contracts.md`](contracts.md), but only the contract spine below is a
+Milestone 3 deliverable.
 
 ### Work
 
-- Typed experiment configuration and validation.
-- Dataset bundle and split interfaces.
-- Pair records and pair-builder interface.
-- Projection interface.
-- Algorithm interface.
-- Selection policy and checkpoint contract.
-- Structured run result and provenance schema.
-- Optional tracking interface.
+- Add Pydantic v2 and implement strict boundary models only for CMNIST ERM/oracle-GRIT
+  configuration and ordinary/test-oracle results.
+- Implement split roles plus role-scoped training, validation, final-test, and diagnostic
+  views.
+- Implement distinct validation/final/diagnostic metric records and validation-only
+  checkpoint/candidate selectors.
+- Implement deterministic ties, separate candidate/checkpoint freezes, earlier-epoch
+  checkpoint preference, and CMNIST dual-selector finalist-union handling.
+- Implement minimal checkpoint identity and inference restoration with fake state.
+- Implement canonical JSON round trips and a null event sink.
+- Assemble one in-memory lifecycle test with a fake bounded algorithm update inside
+  trainer-owned iteration, covering selection, restoration, and the one-way final-test
+  gate.
 
 ### Exit criteria
 
-- Contracts are covered using synthetic fixtures.
-- Test metrics cannot flow into an ordinary selector through the public interface.
-- Configuration and results round-trip through their serialized forms.
+- The focused Pydantic configuration/results round-trip through canonical JSON and reject
+  unknown or inconsistent fields.
+- Role types prevent final-test or diagnostic metrics from entering an ordinary selector.
+- Validation deterministically selects a fake checkpoint, that exact state is restored,
+  and final evaluation occurs only afterward without a feedback path.
+- No production dataset, feature-cache, pair, projection, W&B, artifact-framework, or
+  training-resume implementation is introduced.
+- New type names and modules are explicitly internal and revisable.
 
-## Milestone 4: Extract pair construction and projection
-
-### Work
-
-- Implement oracle, conditional, and nearest pair builders as independent components.
-- Implement classifier-independent linear nuisance projection.
-- Add determinism, indexing, numerical, shape, and leakage tests.
-- Document intentional corrections to inherited pair behavior.
-
-### Exit criteria
-
-- Pairing and projection run without constructing a trainer.
-- Builders expose source indices and provenance.
-- Pair construction is restricted to protocol-approved data.
-
-## Milestone 5: ColoredMNIST vertical slice
+## Milestone 4: ColoredMNIST vertical slice
 
 ### Work
 
-- Dataset creation/loading and manifest.
+- Resolve the blocking deterministic source-partition decision before dataset work.
+- Implement the smallest dataset/feature boundary required by the approved CMNIST
+  protocol; do not generalize storage first.
+- Implement the training-only oracle pair builder and classifier-independent projection
+  as parts of this slice, including deterministic CPU-float64 SVD.
 - ERM and oracle GRIT.
 - Validation selection and checkpoint restoration.
-- Structured local output.
+- Canonical local results using the Milestone 3 spine.
 - Smoke, reproducibility, and leakage tests.
+- Revise internal types/modules when end-to-end evidence shows a simpler boundary.
 
 ### Exit criteria
 
 - One command runs a small ERM-versus-GRIT experiment end to end.
 - Repeated runs with the same seed are reproducible within documented guarantees.
 - Final test metrics come from a validation-selected configuration and checkpoint.
+- Pairing/projection remain independent of the trainer and use training sources only.
+- No generalized artifact framework, faithful training-resume system, production W&B
+  adapter, raw-image stack, or future-method hook layer was added without observed need.
 
-## Milestone 6: Waterbirds vertical slice
+## Milestone 5: Waterbirds vertical slice
 
 ### Work
 
@@ -170,8 +172,10 @@ contracts and synthetic fixtures in the exit criteria are not implemented. See
 - Split counts, group counts, and artifact hashes are recorded.
 - Training, pair construction, and model selection pass leakage tests.
 - Average and worst-group results are reproducibly reported across declared seeds.
+- Shared names and boundaries are reviewed only after both CMNIST and Waterbirds have
+  exercised them.
 
-## Milestone 7: Pairing variants and experiment search
+## Milestone 6: Pairing variants and experiment search
 
 ### Work
 
@@ -187,7 +191,7 @@ contracts and synthetic fixtures in the exit criteria are not implemented. See
   labeled test-oracle diagnostic.
 - The selected configuration is reproducible from saved artifacts.
 
-## Milestone 8: Port remaining algorithms
+## Milestone 7: Port remaining algorithms
 
 Recommended order:
 
@@ -202,7 +206,7 @@ Each algorithm receives focused objective/update tests and small dataset smoke t
 Adding an algorithm should not require modifications to dataset loading, selection, or
 tracking semantics.
 
-## Milestone 9: Compatibility and cutover
+## Milestone 8: Compatibility and cutover
 
 ### Work
 
@@ -224,7 +228,7 @@ tracking semantics.
 Require user review after:
 
 1. Dataset protocols are drafted.
-2. Shared public interfaces are proposed.
+2. The minimal shared-contract spine is implemented and synthetically verified.
 3. The ColoredMNIST vertical slice passes.
 4. The Waterbirds vertical slice passes.
 5. Before legacy code is removed or archived.
@@ -236,3 +240,6 @@ Require user review after:
 - Running large W&B sweeps before selection is verified
 - Deleting the inherited implementation
 - Designing abstractions solely for hypothetical future methods
+- Treating pre-vertical-slice type names or module boundaries as stable public API
+- Building generalized artifact, resume, tracking, or accelerator frameworks before a
+  vertical slice demonstrates the need

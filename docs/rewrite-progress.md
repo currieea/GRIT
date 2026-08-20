@@ -6,7 +6,7 @@ boundaries and after material decisions; do not use it as a raw command transcri
 ## Current state
 
 - Branch: `rewrite`
-- Active milestone: Shared contracts proposal awaiting user review (Milestone 3)
+- Active milestone: Approved minimal contract spine; implementation pending (Milestone 3)
 - Legacy implementation: Preserved and statically characterized; runtime reproduction deferred
 - New implementation: Package and tooling scaffold only; no algorithms or datasets ported
 
@@ -155,7 +155,7 @@ Verification:
   leakage-resistant evaluation, validation-only selection, checkpoint restoration,
   results, provenance, and optional tracking.
 - Traced the approved CMNIST and Waterbirds split roles, pair permissions, selectors,
-  test restrictions, and multi-seed stages through the proposed public lifecycle.
+  test restrictions, and multi-seed stages through the proposed lifecycle.
 - Documented canonical serialization and tensor-artifact references, four non-executable
   protocol mappings, and named synthetic contract tests for the next implementation goal.
 - Recorded evidence-backed inherited algorithm requirements separately from provisional
@@ -163,8 +163,9 @@ Verification:
 - Integrated a read-only inherited-interface audit and an adversarial leakage/selection
   review, including separate candidate/checkpoint freezes and ordinary/diagnostic schema
   branches.
-- Collected architectural recommendations awaiting user approval and kept all unresolved
-  scientific choices explicit.
+- At that checkpoint, collected architectural recommendations awaiting user approval and
+  kept all unresolved scientific choices explicit. The scope revision below records the
+  subsequent approval and reclassification.
 
 Verification:
 
@@ -181,9 +182,54 @@ Verification:
 - Documentation only; no production contracts, executable configurations, runtime
   dependencies, dataset code, or algorithm code were added.
 
+### Milestone 3 scope revision
+
+- Preserved the detailed contract reasoning while classifying it as approved core,
+  provisional CMNIST guidance, or explicitly deferred extension work.
+- Approved Pydantic v2 boundary schemas, composition, role-scoped data access,
+  validation-only ordinary selection, separate ordinary/test-oracle types, separate
+  candidate/checkpoint freezes, inference restoration, bounded algorithm updates,
+  canonical local JSON, the null sink, CPU-float64 initial SVD, earlier-epoch ties, and
+  CMNIST dual-selector finalist-union handling.
+- Narrowed implementation to a CMNIST-focused Pydantic/role/metric/selector/result spine,
+  fake-state restoration, canonical round trips, a null sink, and one in-memory leakage
+  lifecycle test with a fake bounded update under trainer-owned iteration.
+- Deferred generalized artifact storage, faithful training resume, universal containers,
+  later-method hooks, accelerator/raw-image abstractions, production W&B, production
+  manifests/caches, and pair/projection production code.
+- Reordered the next work so the minimal spine is implemented first and revised directly
+  through CMNIST, then Waterbirds, before internal names or modules become stable.
+
+Verification:
+
+- Local-link check across the four revised documents — passed with no broken targets
+- `uv run --frozen ruff check .` — passed
+- `uv run --frozen basedpyright` — 0 errors, warnings, or notes
+- `uv run --frozen pytest` — 1 passed on Python 3.10.20
+- `git diff --check` — passed
+- Path-restricted diffs confirmed no dependency, package, test, protocol, or legacy
+  implementation change was made.
+
 ## Approved decisions
 
 - The staged rewrite plan and target architectural direction are approved.
+- Milestone 3 uses Pydantic v2 for strict CMNIST-focused configuration/result boundary
+  schemas; the dependency is added only with tested implementation code.
+- Composition replaces inheritance from `ERM`; algorithms own bounded updates while
+  trainers own iteration and lifecycle control.
+- Training, validation, final-test, and diagnostic access use role-scoped views, and
+  ordinary selectors accept validation metric records only.
+- Training-side oracle pairs remain distinct from test-oracle model selection; ordinary
+  and CMNIST test-oracle configurations/results are separate discriminated types.
+- Hyperparameter/candidate selection is frozen separately from each final run's
+  validation-selected checkpoint, which is restored before final-test evaluation.
+- Canonical local JSON is authoritative; the initial implementation supplies only a null
+  tracking sink and defers production W&B.
+- The initial small pair-difference SVD uses deterministic CPU float64 fitting when the
+  CMNIST slice implements it.
+- Earlier epoch completes the semantic checkpoint tie order before stable identity.
+- CMNIST confirms the union of primary/secondary finalists once while retaining separate
+  frozen winners.
 - The new development scaffold uses a `src/` package layout, Python 3.10 minimum, and
   Python 3.10.20 as its current reproducible development interpreter.
 - New command implementations live under `src/grit/cli/` and receive `[project.scripts]`
@@ -227,26 +273,26 @@ Verification:
 - Waterbirds conditional/random and nearest-pair definitions
 - Method-specific search spaces for GroupDRO and later methods
 - Experimental PyTorch, CLIP, CUDA, deterministic-operation, and upper Python versions
-- Approval or revision of the proposed configuration/schema mechanism and public
-  interfaces in [`contracts.md`](contracts.md)
-- Safe numerical artifact container, projection fitting dtype/device policy, and CMNIST
-  checkpoint tie completion proposed in the contract decision register
+- Exact internal type names, fields, and module boundaries pending CMNIST and Waterbirds
+- Safe numerical/checkpoint artifact format, retention policy, and runtime conversion
+  details
 
-## Decisions awaiting approval
+## Provisional and deferred engineering work
 
-- The full Milestone 3 responsibility, capability, serialization, and lifecycle proposal
-  in [`contracts.md`](contracts.md)
-- Pydantic v2 rather than a handwritten standard-library boundary-schema decoder
-- Discriminated ordinary/test-oracle roots plus distinct frozen candidate and per-run
-  checkpoint decisions
-- Bounded algorithm-owned updates/optimizer stepping within trainer-owned iteration
-- Versioned checkpoint envelopes and canonical local JSON with referenced numerical
-  artifacts
-- Deterministic CPU-float64 projection fitting and the proposed CMNIST checkpoint tie rule
+- Provisional type/field/module shapes are documented in
+  [`contracts.md`](contracts.md) and must be revised from CMNIST and Waterbirds evidence.
+- Generalized content-addressed storage, full optimizer/trainer/RNG resume, universal
+  checkpoint/numerical containers, and final artifact-format selection are deferred.
+- Fish/SWAD/MatchDG/LISA/GroupDRO-specific hooks and raw-image, distributed,
+  mixed-precision, compilation, or multi-device abstractions are deferred.
+- Production W&B, dataset manifests, feature caches, pair builders, and projection
+  mathematics begin only when a real vertical slice requires them.
 
 ## Next proposed checkpoint
 
-Review, approve, or revise the Milestone 3 proposal. After approval, implement its strict
-boundary schemas, capability types, and synthetic contract tests in the documented order.
-Remain in Milestone 3; do not begin pair mathematics, dataset construction, algorithms, or
-the Milestone 4 extraction work.
+Implement only the approved Milestone 3 contract spine: CMNIST-focused strict Pydantic
+boundaries, role-scoped views and metric types, validation-only selectors, minimal fake-
+state restoration, ordinary/test-oracle results, canonical JSON, a null sink, and the
+single in-memory leakage lifecycle with a fake bounded update under trainer-owned
+iteration. After that spine is verified, exercise and revise it in the CMNIST vertical
+slice; do not prebuild deferred frameworks.

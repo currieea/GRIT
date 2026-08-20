@@ -1,31 +1,139 @@
-# Shared contract proposal
+# Shared contracts and design guidance
 
-Status: **Milestone 3 proposal awaiting user review.** The names and boundaries in this
-document are a concrete implementation proposal, not an implemented or approved public
-API. No production contract code or executable configuration is introduced by this
-checkpoint.
+Status: **Core direction approved; minimal Milestone 3 implementation pending.** Detailed
+type names, field sets, and module boundaries remain internal and revisable until both the
+CMNIST and Waterbirds vertical slices have exercised them. No production contract code or
+executable configuration is introduced by this documentation checkpoint.
 
 This proposal turns the approved experiment protocols into shared interfaces for the
 rewrite. It preserves useful mathematical behavior without preserving the inherited
 architecture in which `ERM` owns dataset construction, models, optimization, evaluation,
 selection, and reporting (`../solver/erm.py`, especially lines 25-60 and 90-158). The
 CMNIST and Waterbirds protocol documents remain authoritative for scientific choices.
-The decision register at the end identifies every recommendation that still needs
-approval.
+The classification below is binding for implementation scope. Later sections retain the
+original detailed reasoning, but a detailed sketch is not automatically an exit criterion
+or a promise of a stable public API.
 
-## 1. Design principles and ownership
+## How to read this document
 
-The public experiment lifecycle should be assembled from small components by a runner.
+Each design statement belongs to one of three classes:
+
+1. **Approved core contract:** a scientific or lifecycle invariant that the initial
+   Milestone 3 contract spine must enforce now.
+2. **Provisional guidance:** a useful design hypothesis to implement only as far as the
+   CMNIST ERM/oracle-GRIT slice needs it, then revise from evidence. Waterbirds must also
+   exercise a name or boundary before it is treated as stable.
+3. **Deferred extension:** explicitly outside the initial Milestone 3 implementation. It
+   may remain documented to prevent rediscovery, but it must not create code, abstractions,
+   dependencies, or exit criteria yet.
+
+Scientific protocol statements remain governed by
+[`experiments/cmnist.md`](experiments/cmnist.md) and
+[`experiments/waterbirds.md`](experiments/waterbirds.md). Classification changes below do
+not weaken their split, pair, selection, or reporting safeguards.
+
+### Approved core contracts
+
+The following direction is approved and must shape the smallest implementation:
+
+- Use Pydantic v2 for strict configuration and result boundary schemas. Adding the
+  dependency belongs to the implementation checkpoint, not this documentation-only one.
+- Compose datasets, algorithms, training, evaluation, selection, and reporting rather
+  than inheriting them from `ERM`.
+- Give training, validation, final-test, and diagnostic consumers role-scoped views.
+- Ordinary selectors accept validation metric records only; final-test and diagnostic
+  records are different types and cannot be ordinary selector inputs.
+- Keep training-side oracle pair information distinct from test-oracle model selection.
+- Model ordinary experiments and CMNIST test-oracle diagnostics as distinct discriminated
+  configuration and result types.
+- Freeze a validation-selected hyperparameter/candidate decision separately from each
+  final run's validation-selected checkpoint.
+- Restore the selected checkpoint before opening final-test evaluation.
+- Let an algorithm own a bounded update while the trainer owns iteration and lifecycle
+  control. Milestone 3 does not need a universal hook system to enforce this ownership.
+- Make canonical local JSON the authoritative serialized boundary. W&B remains an
+  optional mirror and is not part of experiment semantics.
+- Fit the initial small pair-difference SVD deterministically on CPU in float64 when the
+  CMNIST slice implements projection.
+- Use earlier epoch as the last semantic checkpoint tie-break before stable identity.
+- Confirm the union of CMNIST primary- and secondary-selector finalists once while
+  retaining a separate frozen winner for each selector.
+
+### Initial Milestone 3 implementation spine
+
+Milestone 3 implementation is intentionally narrower than the complete design inventory.
+It consists only of:
+
+- strict Pydantic boundary models for configuration and results needed by CMNIST ERM and
+  oracle GRIT;
+- split-role and role-scoped view types;
+- distinct validation, final-test, and diagnostic metric record types;
+- validation-only checkpoint and candidate selectors, including deterministic ordering;
+- minimal checkpoint identity and inference-restoration contracts exercised with fake
+  state, without promising training resume;
+- ordinary versus CMNIST test-oracle result models;
+- canonical JSON serialization and round trips;
+- a null event sink; and
+- one in-memory synthetic lifecycle using a fake bounded algorithm update inside
+  trainer-owned iteration and proving that validation selects a checkpoint, the selected
+  checkpoint is restored, and final-test metrics have no path back to training or ordinary
+  selection.
+
+This spine should be the smallest coherent implementation. A concrete name from later in
+this document should be introduced only when the spine requires it.
+
+### Provisional guidance to validate through CMNIST
+
+The following ideas are useful starting points but remain revisable:
+
+- the exact `ExperimentSpec`, dataset bundle, record, batch, capability, selection, and
+  result type names and their complete field lists;
+- the exact module layout and registry organization;
+- candidate/run identity layering beyond the minimum needed for deterministic selection;
+- representation-provider, model-factory, evaluator, runner, and algorithm protocol
+  signatures;
+- lightweight pair/projection interfaces and diagnostics needed by the CMNIST slice;
+- path override mechanics, failure envelopes, histories, timing records, and extended
+  provenance fields; and
+- any local artifact reference boundary used by that slice.
+
+These designs should be changed when the CMNIST slice exposes a simpler or safer shape.
+They remain internal after CMNIST and become stable only after Waterbirds exercises them.
+
+### Deferred extensions
+
+The initial implementation must not expand to cover:
+
+- a generalized content-addressed artifact-storage framework;
+- full optimizer, scheduler, trainer, or RNG resumability;
+- a universal numerical or checkpoint container;
+- Fish-, SWAD-, MatchDG-, LISA-, or GroupDRO-specific hooks;
+- raw-image, distributed, mixed-precision, compilation, or multi-device abstractions;
+- production W&B integration;
+- production dataset manifests or feature caches;
+- production pair construction or projection mathematics; or
+- final artifact-format selection beyond a small replaceable interface boundary.
+
+Production pair/projection work begins only as part of a real vertical slice. Detailed
+requirements below remain valuable acceptance criteria for that later work, not Milestone 3
+exit criteria.
+
+## 1. Approved ownership rules and provisional responsibility map
+
+**Classification:** composition and information-access prohibitions are approved core.
+The component names and the full matrix are provisional guidance; artifact/provenance and
+tracking machinery beyond local JSON and a null sink is deferred.
+
+The experiment lifecycle should be assembled from small components by a runner.
 Algorithms implement update behavior; they do not inherit a dataset, trainer, evaluator,
 selector, or tracker. Data access is granted through narrow capability objects instead of
 passing a dictionary of all loaders or metrics. A component may receive only the
 capabilities needed in its current lifecycle phase.
 
-The initial vertical slices use frozen feature vectors. A representation provider turns
-source examples into a common `InputBatch`, so a later raw-image provider can preserve the
-dataset, algorithm, evaluation, selection, and result contracts. This is an extension
-point, not a promise that raw-image optimization, distributed training, or mixed precision
-already has a settled design.
+The initial vertical slices use frozen feature vectors. Their internal input boundary
+should avoid making later raw-image work impossible, but no raw-image provider or generic
+representation framework is designed now. Raw-image optimization, distributed training,
+and mixed precision are deferred until a dedicated protocol and vertical need exist.
 
 | Concern | Owner | Reads | Returns or writes | Must never decide or access |
 | --- | --- | --- | --- | --- |
@@ -52,7 +160,12 @@ remove, not interfaces to copy.
 
 ## 2. Typed experiment configuration
 
-### Proposed hierarchy
+**Classification:** strict Pydantic v2 boundary validation, unknown-field rejection,
+ordinary/CMNIST-test-oracle discrimination, and canonical JSON round trips are approved
+core. The complete hierarchy and field inventory are provisional; Waterbirds-only fields,
+production manifests, and generalized artifact handling are not initial Milestone 3 work.
+
+### Provisional hierarchy
 
 The root authored type is a strict discriminated union. Search expansion resolves either
 branch into immutable resolved values. Names below are descriptive proposed type names:
@@ -174,7 +287,7 @@ artifact creation and multi-seed aggregation well-defined.
 
 ### Validation, defaults, and schema mechanism
 
-The smallest plausible choices are:
+The alternatives considered were:
 
 1. Frozen standard-library dataclasses plus a handwritten strict decoder and validator.
    This avoids a dependency but requires custom discriminated-union, unknown-key, error,
@@ -186,12 +299,13 @@ The smallest plausible choices are:
    discriminated unions, strict unknown-field rejection, schema generation, and stable
    dump/load APIs at the cost of one runtime dependency.
 
-The recommendation awaiting approval is Pydantic v2 for boundary schemas. The dependency
-is not added by this proposal. If dependency minimization wins, the dataclass alternative
-must first implement equivalent strictness and contract tests; permissive dictionary
-access is not acceptable.
+Pydantic v2 is now the approved boundary-schema mechanism. The dependency is deliberately
+not added by this documentation-only revision; it should be added with the first tested
+boundary models. The dataclass option remains recorded as an alternative considered, not
+an open Milestone 3 choice. Permissive dictionary access is not acceptable.
 
-Validation rules are part of the public contract:
+Validation rules are approved boundary behavior even though their concrete model names and
+field layout remain internal:
 
 - Reject unknown fields at every nesting level and reject implicit lossy coercions.
 - Require an exactly supported `schema_version`; migration is an explicit pure function,
@@ -220,6 +334,12 @@ explicit algorithm identifier. YAML may be an authoring format, but it is not th
 canonical identity format.
 
 ## 3. Dataset and split contracts
+
+**Classification:** split roles, role-scoped views, and the absence of final-test data from
+training/ordinary selection are approved core. The `DatasetBundle`, record, batch,
+manifest, and capability names and full field sets are provisional. Production manifests,
+feature caches, protected-identity infrastructure, and artifact stores are deferred until a
+vertical slice needs them.
 
 The conceptual dataset records are:
 
@@ -351,6 +471,12 @@ back to an arbitrary split or download.
 
 ## 4. Leakage-resistant lifecycle and access boundaries
 
+**Classification:** the one-way data flow, separate candidate/checkpoint freezes,
+checkpoint restoration, and structural exclusion of final-test metrics are approved core.
+The exact phase-token and service names are provisional. Milestone 3 implements this
+boundary once with in-memory views and fake checkpoints, not a production orchestration
+framework.
+
 Metric names such as `val_accuracy` and programmer conventions such as “do not read this
 dictionary key” are insufficient. The inherited evaluator creates one log dictionary for
 non-training splits and `ERM.report()` reads validation and test values from it
@@ -376,12 +502,13 @@ CANDIDATE_FROZEN -> FINAL_RUN_TRAINED -> CHECKPOINT_FROZEN
 - Candidate and hyperparameter search consume frozen validation summaries. They cannot
   construct evaluators or open dataset views.
 - Tuning plus confirmation produce `FrozenCandidateSelection`, naming the scientific
-  candidate. Validation within each fresh final-seed run produces `FrozenCheckpointSelection`,
-  naming that run's selected epoch and checkpoint. A checkpoint restorer verifies the
-  checkpoint and configuration/manifests and produces `RestoredCheckpoint`.
+  candidate. Validation within each fresh final-seed run produces
+  `FrozenCheckpointSelection`, naming that run's selected epoch and checkpoint. A
+  checkpoint restorer verifies the checkpoint and configuration/manifests and produces
+  `RestoredCheckpoint`.
 - The final evaluator requires a matching `FrozenCandidateSelection`,
-  `FrozenCheckpointSelection`, and `RestoredCheckpoint`. Only then can the runner exchange its
-  opaque `FinalTestHandle` for a final-test evaluation view. Final metrics are returned
+  `FrozenCheckpointSelection`, and `RestoredCheckpoint`. Only then can the runner exchange
+  its opaque `FinalTestHandle` for a final-test evaluation view. Final metrics are returned
   directly to result assembly, never back into the selector or search coordinator.
 - Test-oracle evaluation is a separate diagnostic run kind with separate configuration,
   test-bearing diagnostic capability, selector, result type, and output namespace. It is
@@ -389,7 +516,8 @@ CANDIDATE_FROZEN -> FINAL_RUN_TRAINED -> CHECKPOINT_FROZEN
   Its selector may use the configured test diagnostic specifically because the result is
   an oracle envelope; it cannot populate ordinary selected-candidate or final-test fields.
 
-The following capability trace is normative for the proposal:
+The exclusions in the following capability trace are normative. Its concrete capability
+and artifact names remain provisional:
 
 | Stage | Input capability | Output | Who may consume output | Enforced exclusion |
 | --- | --- | --- | --- | --- |
@@ -411,6 +539,12 @@ test records are not filtered out after construction; they are absent from the c
 Likewise, checkpoint restoration occurs before the final-test capability can be opened.
 
 ## 5. Pair contracts
+
+**Classification:** the scientific pair permissions and oracle/test-oracle distinction are
+approved protocol constraints. The following record fields and builder signatures are
+provisional design guidance. Production pair builders, manifests, diagnostics, artifact
+storage, and pair mathematics are deferred to the CMNIST and later vertical slices and are
+not Milestone 3 exit criteria.
 
 ### Records, sets, and configuration
 
@@ -534,6 +668,12 @@ even though the fitted nuisance subspace should be invariant to a global sign ch
 
 ## 6. Linear nuisance-projection contracts
 
+**Classification:** classifier-independent projection, uncentered differences, rank-zero
+identity, deterministic full SVD, and initial CPU-float64 fitting are approved scientific/
+numerical constraints. The APIs and diagnostics below are provisional. Production fitting,
+transformation, persistence, and artifact-format selection are deferred until the CMNIST
+vertical slice needs them.
+
 The projection component is a fitted input transform independent of classifiers,
 algorithms, trainers, and evaluators. The runner fits it before model training and inserts
 the same fitted transform in every train, validation, final-test, and allowed diagnostic
@@ -578,9 +718,9 @@ Rank zero is an exact identity behavior: fitting may still emit diagnostics, but
 must return values equal to the input without a numerical projection multiply. Input and
 output shapes match, including leading batch dimensions. The feature dimension must match
 the fitted artifact. Inputs must satisfy the serialized dtype/device conversion policy;
-implicit device transfer or unrecorded precision narrowing is forbidden. The proposal
-recommends deterministic CPU float64 fitting followed by an explicit runtime conversion,
-but that numerical policy awaits approval.
+implicit device transfer or unrecorded precision narrowing is forbidden. The initial
+implementation uses deterministic CPU float64 fitting followed by an explicit recorded
+runtime conversion; the CMNIST slice must validate that choice before broader reuse.
 
 `ProjectionDiagnostics` contains requested, numerical, and effective ranks; the complete
 singular-value spectrum; absolute and relative thresholds; discarded/retained energy;
@@ -595,20 +735,30 @@ removed right-singular-vector basis with shape `[D, effective_rank]` is the cano
 numerical payload; the square projector is derived and is not independently authoritative.
 The complete singular-value spectrum is required, either inline when demonstrably small or
 through its own artifact reference—it is never omitted as “optional.” Numerical payloads
-use a non-pickle artifact such as versioned NPZ. Loading verifies hash, shape, dtype,
-feature manifest, and pair-set identity before producing a fitted transform. The exact
-artifact container is an awaiting-approval engineering decision.
+could eventually use a non-pickle artifact such as versioned NPZ. Loading should verify
+hash, shape, dtype, feature manifest, and pair-set identity before producing a fitted
+transform. No container is selected in Milestone 3; this paragraph is deferred guidance
+behind a small replaceable serialization interface.
 
 ## 7. Algorithm, model, and training contracts
 
-### Minimum compositional interface
+**Classification:** algorithm-owned bounded updates and trainer-owned iteration/lifecycle
+are approved core. The interface sketch is provisional and should be reduced to what the
+CMNIST ERM/oracle-GRIT slice proves necessary. Later-method hooks and full training resume
+are deferred and must not influence the initial interface.
 
-The runner constructs a model through `ModelFactory`, constructs optimizer service(s) from
+### Provisional compositional interface inventory
+
+The runner may construct a model through a small factory and optimizer service(s) from
 explicit configuration, and injects them into an algorithm factory. Once constructed, the
 algorithm owns training-time model mutation, optimizer stepping, and its algorithm-specific
 state. The trainer owns iteration and lifecycle control. This division supports ERM and
 GRIT immediately without assuming every method has one scalar loss and exactly one
 optimizer step.
+
+Milestone 3 needs only enough of this boundary for a fake bounded update in the synthetic
+lifecycle. It does not implement the complete protocol below. The CMNIST slice should
+choose the smallest actual ERM/GRIT interface and may rename or remove these methods.
 
 ```text
 Algorithm
@@ -630,7 +780,7 @@ sampling plus required metadata; it is validated against the training capability
 iteration starts. ERM and GRIT use the same ordinary classification update, with GRIT's
 already-fitted transform in the input pipeline.
 
-`on_validation` is optional and receives only `ValidationFeedback`, never evaluator or
+If later required, `on_validation` would receive only `ValidationFeedback`, never evaluator or
 loader access. It permits step-level behavior such as a future SWAD implementation while
 maintaining the data boundary. `predict` cannot mutate training state. The evaluator owns
 the transition into evaluation mode and restores the prior mode even on failure. Exact
@@ -647,11 +797,17 @@ Model ownership is explicit:
 - Algorithms needing intermediate representations request a declared model capability;
   they do not reach into dataset-specific subclasses or assume a `.network` attribute.
 
-`AlgorithmCheckpointState` is a typed envelope with separately named model state,
+The earlier proposal used `AlgorithmCheckpointState` as a typed envelope with separately
+named model state,
 optimizer-state mapping, and opaque method-state payload; it is not one flattened state
 dictionary. The algorithm supplies/restores it because the algorithm owns optimizer
 stepping and may replace parameters, while the checkpoint coordinator supplies artifact
 storage, identity validation, and trainer/RNG state around it.
+
+That full envelope is deferred. Initial Milestone 3 checkpoint work records only stable
+checkpoint identity and proves inference-state restoration with a fake model. Optimizer,
+scheduler, trainer, algorithm, and RNG resumability must wait for an observed vertical-
+slice need.
 
 The trainer owns epoch/update loops, batch-provider coordination, validation cadence,
 counter advancement, cancellation/failure handling, checkpoint requests, and training
@@ -659,7 +815,7 @@ history. It does not calculate algorithm-specific penalties or assume one optimi
 The runner owns component construction, capability issuance, multi-run search stages,
 selection, checkpoint restoration, final evaluation, provenance, and result assembly.
 
-### Evidence and provisional future needs
+### Evidence retained for deferred future needs
 
 The following requirements were verified directly from inherited code:
 
@@ -681,11 +837,19 @@ It is not verified that inherited Fish optimizer-state handling, IRM half-batch 
 semantics, or SWAD validation behavior is scientifically correct. Exact resumability state,
 scheduler/AMP/distributed behavior, raw-image model APIs, and MatchDG/LISA interfaces are
 provisional. They should not expand the ERM/GRIT minimum implementation until their own
-protocols are approved.
+protocols are approved. These observations explain why the initial boundary must remain
+revisable; they do not require Fish-, SWAD-, MatchDG-, LISA-, GroupDRO-, IRM-, or REx-
+specific hooks in Milestone 3.
 
 ## 8. Selection and checkpoint contracts
 
-### Records and deterministic decisions
+**Classification:** validation-only selector inputs, deterministic ordering, separate
+candidate/checkpoint decisions, earlier-epoch tie-breaking, restoration before final test,
+and the CMNIST union-of-finalists rule are approved core. Exact record names and audit field
+sets are provisional. Persistent resume envelopes and universal checkpoint storage are
+deferred.
+
+### Provisional names for approved decisions
 
 ```text
 ValidationMetricRecord
@@ -791,7 +955,7 @@ the epoch/checkpoint within that already-frozen candidate and final seed, but is
 by every candidate or hyperparameter selector. Stage-specific table constructors enforce
 that distinction.
 
-A checkpoint envelope contains:
+A future resumable checkpoint envelope may contain:
 
 - checkpoint/schema identity, run/candidate/config identities, epoch/update counters, and
   creation reason;
@@ -800,20 +964,20 @@ A checkpoint envelope contains:
 - dataset, feature, pair, and projection manifest identities; code/environment provenance;
 - content hashes and `ArtifactRef` values for each tensor-heavy payload.
 
-Restoration validates all identities and produces a receipt naming loaded components and
-any intentionally unsupported resume fields. A selection-eligible checkpoint must support
-faithful inference restoration; a checkpoint advertised as resumable must additionally
-round-trip every declared mutable state and RNG source.
+Initial restoration validates checkpoint identity and proves faithful inference-state
+restoration. The remaining envelope fields and resume guarantees above are deferred. If a
+later checkpoint is advertised as resumable, it must then round-trip every declared mutable
+state and RNG source.
 
 ### Protocol mappings
 
 For CMNIST, the primary selector maximizes the minimum accuracy across `val_e01`,
 `val_e02`, and `val_e05`; ties prefer higher mean accuracy, then lower projection rank,
 then stable configuration order. The secondary source selector uses the minimum of
-`val_e01` and `val_e02`, with the same higher-mean, lower-rank, stable-order ties. An
-earlier-epoch tie rule for otherwise identical checkpoint records is recommended to make
-epoch selection total, but awaits approval because the protocol currently specifies the
-candidate tie sequence, not this checkpoint detail.
+`val_e01` and `val_e02`, with the same higher-mean, lower-rank, stable-order ties. Earlier
+epoch is the final semantic checkpoint tie-break for otherwise identical checkpoint
+records before stable checkpoint identity. This makes epoch selection total without
+changing the approved candidate tie sequence.
 
 Both CMNIST selector branches consume the same three-seed validation records, write their
 own ordered top-three artifact, and freeze their own five-seed winner. Confirmation runs
@@ -840,7 +1004,15 @@ The Waterbirds initial study rejects test-oracle selection configuration entirel
 
 ## 9. Results, provenance, and tracking
 
-Canonical local output is authoritative. Results form another strict discriminated union:
+**Classification:** separate ordinary/test-oracle Pydantic result types, canonical local
+JSON, round trips, and a null event sink are approved core. The complete provenance field
+inventory is provisional. Content-addressed storage, universal tensor containers,
+production histories, atomic artifact directories, and W&B integration are deferred.
+
+Canonical local JSON is authoritative. Results form a strict discriminated union; the
+initial implementation includes only fields needed by the synthetic spine and CMNIST
+ERM/oracle-GRIT configuration, selection, restoration, metrics, and status. The longer
+inventory below is provisional:
 
 ```text
 RunResult = OrdinaryRunResult | CmnistTestOracleDiagnosticResult
@@ -897,12 +1069,12 @@ phase; the status/phase validator enforces this. ERM requires `pair_manifest` an
 selector input. The test-oracle variant has no ordinary selection or final-test field, so
 oracle data cannot populate one accidentally.
 
-Local output uses an atomic run directory: a temporary/incomplete marker while running,
-content-addressed artifacts, an artifact manifest, then one canonical JSON result committed
-last. Histories may use versioned JSON Lines or a typed columnar format; checkpoints,
-feature matrices, projection arrays, and predictions are referenced through `ArtifactRef`
-rather than embedded in JSON or YAML. Pickled arbitrary Python objects are not a portable
-contract.
+Future local output may use an atomic run directory, an incomplete marker, referenced
+artifacts, and a manifest before committing canonical JSON last. Histories may eventually
+use JSON Lines or a typed columnar format. These storage mechanics and a generalized
+content-addressed `ArtifactRef` framework are deferred. Initial large or opaque values sit
+behind a small replaceable reference boundary; arbitrary pickled Python objects are not
+declared a portable contract.
 
 Every boundary object must round-trip `typed object -> canonical serialization -> typed
 object` without losing enum values, ordering with semantic meaning, identities, numeric
@@ -910,14 +1082,17 @@ types promised by the schema, or optional-versus-absent distinctions. Round-trip
 recompute content hashes. Readers reject unsupported major schema versions; minor additive
 migration, if later adopted, must be explicit and tested.
 
-Tracking is an optional `EventSink` receiving immutable lifecycle, metric, artifact, and
-completed-result events. `NullEventSink` is the default; `WandbMirrorSink` mirrors the same
-information. A sink failure follows configured fail-open/fail-closed operational policy
-and is recorded locally. W&B may not inject a sweep candidate, rename split roles, return
-metrics to selectors, choose a checkpoint, or be the only location of an artifact required
-to interpret a run.
+Milestone 3 implements only `NullEventSink` (or an equivalent internal name) so experiment
+semantics do not depend on tracking. A future `WandbMirrorSink` may receive immutable
+lifecycle, metric, artifact, and completed-result events. Production W&B integration,
+failure policy, and artifact mirroring are deferred. W&B may never inject a sweep
+candidate, rename split roles, return metrics to selectors, choose a checkpoint, or become
+the only authoritative record.
 
 ## 10. Non-executable protocol examples
+
+**Classification:** the split access and selection behavior shown here is approved
+scientific contract. Concrete configuration/type spelling is illustrative and revisable.
 
 These sketches show resolved relationships, not YAML syntax or executable configuration.
 
@@ -992,8 +1167,33 @@ No Waterbirds test-oracle selector exists in the initial study.
 
 ## 11. Synthetic contract-test plan
 
-The next implementation goal should build tiny in-memory fakes and run these tests without
-datasets, external encoders, GPUs, or W&B access:
+### Required initial Milestone 3 tests
+
+Only the following small test spine is part of the initial Milestone 3 exit criteria:
+
+| Proposed test | Behavior proved |
+| --- | --- |
+| `test_cmnist_boundary_config_is_strict_and_round_trips_canonical_json` | The minimum ERM/oracle-GRIT Pydantic config rejects unknown fields and round-trips canonical JSON. |
+| `test_split_roles_issue_noninterchangeable_views` | Training, validation, final-test, and diagnostic views cannot be substituted or widened. |
+| `test_validation_selector_rejects_final_and_diagnostic_metrics` | The ordinary selector accepts only validation metric records by construction. |
+| `test_checkpoint_ties_prefer_earlier_epoch_then_stable_identity` | The approved total checkpoint order is deterministic. |
+| `test_candidate_and_checkpoint_freezes_are_distinct` | Final-run validation may select an epoch but cannot change frozen hyperparameters. |
+| `test_cmnist_selector_finalist_union_retains_separate_winners` | Primary/secondary finalist union is confirmed once while decisions remain separate. |
+| `test_fake_checkpoint_restoration_recovers_selected_inference_state` | Minimal checkpoint identity restores selected fake state rather than last state. |
+| `test_ordinary_and_test_oracle_results_are_discriminated_round_trips` | Ordinary and CMNIST test-oracle result types cannot be confused and serialize canonically. |
+| `test_null_event_sink_has_no_semantic_effect` | Tracking absence cannot change selection or results. |
+| `test_in_memory_lifecycle_blocks_final_metric_feedback` | Validation selects a fake checkpoint, restoration occurs before final evaluation, and final metrics cannot flow back to training or either ordinary selector. |
+
+These tests use in-memory fixtures and fake state only. They do not require datasets,
+PyTorch, feature caches, pair builders, projection mathematics, filesystem artifact
+stores, W&B, or faithful training resume.
+
+### Provisional and deferred validation inventory
+
+The larger inventory below preserves requirements for CMNIST, Waterbirds, and later
+production components. It is not an initial Milestone 3 checklist. Entries that overlap
+the core spine may be reused, but artifact, projection, pair, Waterbirds, tracking, and
+resumability tests become required only with the component they validate.
 
 | Proposed test | Behavior proved |
 | --- | --- |
@@ -1047,6 +1247,10 @@ of these contract tests.
 
 ## 12. Protocol trace and self-review
 
+**Classification:** the information-flow and selection restrictions in this trace are
+approved safeguards. CMNIST rows guide the first vertical slice. Waterbirds rows are
+retained acceptance criteria for that later slice, not Milestone 3 implementation scope.
+
 This trace is the checklist for reviewing the proposal against the approved protocols:
 
 | Protocol item | Contract path | Selection or access result |
@@ -1067,50 +1271,63 @@ The proposal therefore traces every approved source split, validation objective,
 permission, test restriction, and seed stage without granting a consumer the full bundle or
 generic metric dictionary. It leaves the named unresolved scientific choices unimplemented.
 
-## 13. Decision register
+## 13. Decision and implementation register
 
-### Recommended architectural decisions awaiting approval
+### Approved architectural core
 
-1. Use Pydantic v2 for strict boundary schemas and immutable small internal records where
-   useful; do not add it until approved.
-2. Make role-scoped capability views and monotonic lifecycle tokens the leakage boundary,
-   with ordinary selectors accepting a validation-only table.
-3. Use discriminated ordinary versus CMNIST test-oracle configuration/result roots, and
-   distinct frozen-candidate versus per-final-run frozen-checkpoint artifacts.
-4. Let algorithms own bounded update behavior, injected model mutation, optimizer stepping,
-   and opaque algorithm state while the trainer owns iteration and validation cadence.
-5. Use one versioned checkpoint envelope for separately identified model, optimizer,
-   algorithm, trainer, and configured RNG state, with explicit restoration receipts.
-6. Make canonical local JSON plus content-addressed artifact references authoritative;
-   treat W&B only as an optional event mirror.
-7. Store numerical array artifacts in a safe, versioned non-pickle format; NPZ is the
-   initial recommendation, subject to scale testing.
-8. Fit the linear projection deterministically on CPU in float64, then perform an explicit,
-   recorded conversion for runtime transformation.
-9. Add earlier epoch as the final semantic checkpoint tie-break for CMNIST before stable
-   checkpoint identity; the currently approved CMNIST candidate tie sequence remains
-   unchanged.
-10. Confirm the union of the primary and secondary CMNIST top-three candidate sets once,
-    while retaining separate finalist and frozen-winner artifacts for each selector.
+The approved decisions are the core-contract list at the start of this document. In
+particular, Pydantic v2, role-scoped views, validation-only ordinary selection, distinct
+ordinary/test-oracle types, separate candidate/checkpoint freezes, selected-checkpoint
+restoration, bounded algorithm updates, canonical local JSON, a null sink, CPU-float64
+initial SVD, earlier-epoch ties, and CMNIST finalist-union handling are no longer awaiting
+architectural approval.
+
+Approval fixes behavior, not spelling. Type names, field layouts, module boundaries, and
+private call signatures remain internal and revisable until both CMNIST and Waterbirds have
+exercised them. Compatibility layers are not owed for pre-release internal refactors.
+
+### Provisional guidance to test through CMNIST
+
+- Start with the smallest Pydantic models that can express CMNIST ERM and oracle GRIT;
+  avoid a universal experiment schema until a second dataset demonstrates shared fields.
+- Represent role restrictions with distinct types and constructors, but let the synthetic
+  lifecycle determine whether explicit phase-token classes add value.
+- Keep candidate and checkpoint decision records auditable, but add only identifiers and
+  contributing validation records needed by the approved selectors.
+- Let a fake algorithm demonstrate bounded-update ownership. Design the real ERM/GRIT
+  algorithm protocol inside the CMNIST slice rather than preinstalling future hooks.
+- Use a replaceable checkpoint-state adapter sufficient for inference restoration; measure
+  actual PyTorch checkpoint needs before selecting a durable container.
+- Keep projection separate and use CPU float64 when implemented, but select its persisted
+  array boundary only after measuring real CMNIST shapes and workflow.
+- Record local JSON sufficient to reproduce selection. Expand provenance and failure
+  reporting from observed vertical-slice needs rather than an exhaustive framework.
+
+### Explicitly deferred work
+
+The deferred-extension list at the start of this document is binding. In particular,
+Milestone 3 does not implement content-addressed storage, training resume, a universal
+checkpoint/numerical container, future-method hooks, raw-image or accelerator
+abstractions, W&B, production manifests/caches, or production pair/projection code. The
+detailed pair, projection, result, provenance, and future-algorithm sections remain design
+inventory only until a vertical slice demands them.
 
 ### Alternatives considered
 
-- Frozen dataclasses plus a handwritten strict decoder remain viable if they demonstrate
-  equivalent nested validation, discriminated unions, schema migration, and canonical
-  round trips. Permissive dictionaries and dynamic `eval(...)` registries are rejected.
-- A trainer-owned universal `loss -> backward -> step` loop is simpler but cannot represent
-  verified Fish/SWAD behavior. A completely algorithm-owned loop is flexible but would
-  surrender shared leakage, checkpoint, and provenance controls. The bounded-update
-  interface is the proposed middle ground.
-- Passing a complete dataset bundle and filtering by names is simpler but recreates the
-  inherited leakage surface. Role-capability views are recommended despite added types.
-- One configuration/result envelope with optional oracle fields is smaller, but permits
-  invalid mixed states and weakens the audit boundary. A discriminated union is preferred.
-- Embedding small arrays in JSON or serializing arbitrary Python objects is convenient but
-  weakens portability, safety, and identity validation. Referenced typed artifacts are
-  preferred.
-- GPU SVD may be faster, but deterministic CPU fitting is the proposed starting point for
-  the small-rank frozen-feature experiments. The vertical slice should measure its cost.
+- Frozen dataclasses plus a handwritten strict decoder were considered, but Pydantic v2 is
+  approved for boundary schemas. Permissive dictionaries and dynamic `eval(...)`
+  registries remain rejected.
+- A trainer-owned universal `loss -> backward -> step` loop is too restrictive, while a
+  completely algorithm-owned loop would surrender shared leakage and lifecycle controls.
+  The approved middle ground is a bounded algorithm update inside trainer-owned iteration;
+  its signature remains provisional.
+- Passing a complete dataset bundle and filtering by names would recreate the inherited
+  leakage surface. Role-scoped views are approved even if their internal representation
+  changes.
+- One configuration/result envelope with optional oracle fields permits invalid mixed
+  states. Separate discriminated ordinary and diagnostic types are approved.
+- A broad artifact framework would centralize storage early, but real CMNIST and
+  Waterbirds artifacts should first reveal the smallest useful boundary.
 
 ### Scientific decisions deliberately unresolved
 
@@ -1127,37 +1344,34 @@ generic metric dictionary. It leaves the named unresolved scientific choices uni
 
 These must become explicit protocol decisions before their configurations can resolve.
 
-### Implementation order after approval
+### Revised implementation order
 
-1. Implement strict config/result boundary models, canonical serialization, validation
-   errors, and the corresponding synthetic round-trip/rejection tests.
-2. Implement artifact/manifests and in-memory dataset/split capability types with leakage
-   tests.
-3. Implement validation metric, selection, checkpoint identity/restoration, and lifecycle
-   tokens with synthetic models only.
-4. Implement the minimal ERM/GRIT algorithm/trainer protocols using in-memory batches and
-   checkpointable fake state.
-5. Implement pair/projection interfaces and artifact validation separately from their
-   scientific builders or production mathematics.
-6. Implement local result writing and null/optional tracking sinks, then review the entire
-   Milestone 3 implementation. Only a later approved goal may begin Milestone 4; the
-   CMNIST vertical slice remains later still.
-
-This order remains Milestone 3 implementation work. It does not authorize Milestone 4 or
-production dataset/algorithm code merely because this proposal is approved.
+1. Implement the strict CMNIST-focused Pydantic config/result boundaries, role/metric
+   types, canonical JSON, and rejection/round-trip tests.
+2. Implement validation-only deterministic checkpoint/candidate selectors, separate
+   freezes, minimal fake-state checkpoint restoration, and the null sink.
+3. Assemble the single in-memory lifecycle test and prove the final-test one-way gate.
+4. Review the spine for accidental framework growth and close Milestone 3 only when that
+   focused test suite passes.
+5. Exercise and revise the internal contracts in the CMNIST ERM/oracle-GRIT vertical
+   slice, adding production data, pair, projection, model, and training code only as that
+   slice demands.
+6. Exercise and revise the same boundaries in Waterbirds before treating type names or
+   module boundaries as stable shared interfaces.
 
 ### Risks to test in the CMNIST vertical slice
 
-- Whether the representation boundary is genuinely sufficient for both cached frozen
-  features and future raw-image batches without premature distributed/AMP abstractions.
-- Numerical cost and reproducibility of full CPU float64 SVD and the chosen array format at
-  actual CLIP dimensions and pair budgets.
+- Whether the provisional representation boundary is useful for cached frozen features
+  without designing raw-image or distributed training abstractions.
+- Numerical cost and reproducibility of full CPU-float64 SVD at actual CLIP dimensions and
+  pair budgets.
 - Feature/projection device and dtype conversion consistency across training and every
   evaluation role.
-- Checkpoint size, write cadence, and exact inference restoration under real PyTorch state.
-- The usefulness of step-level validation hooks without exposing evaluators or encouraging
-  validation overfitting.
-- Whether candidate/config identities remain stable under real path overrides, cache
-  reuse, and multi-process execution.
-- Which future-method extension points are truly shared; do not generalize provisional
-  Fish, SWAD, MatchDG, or LISA behavior until their protocols and vertical tests require it.
+- The minimum real PyTorch checkpoint state needed for exact inference restoration.
+- Whether candidate/config identities remain understandable under real path overrides and
+  cache reuse without a generalized artifact framework.
+- Whether the candidate/checkpoint split and dual-selector finalist union remain simple in
+  an end-to-end search.
+
+Later-method extension points are not CMNIST risks to solve. They remain deferred until
+their own protocols and vertical evidence exist.

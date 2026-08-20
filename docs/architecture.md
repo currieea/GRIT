@@ -1,6 +1,6 @@
 # Target architecture for the GRIT rewrite
 
-Status: **Approved direction; Milestone 3 interface proposal awaiting user review**
+Status: **Approved core direction; minimal Milestone 3 implementation pending**
 
 ## Architectural intent
 
@@ -13,11 +13,34 @@ The architecture should remain practical for PyTorch and WILDS-style datasets. I
 adopt the clean boundaries of Kernel-GRIT without assuming that this broader repository
 has only one training loop or only frozen representations.
 
-[`contracts.md`](contracts.md) is the concrete Milestone 3 proposal for the conceptual
-types below. Its names, capability boundaries, serialization rules, and recommendations
-are not approved or implemented yet.
+[`contracts.md`](contracts.md) now distinguishes approved core behavior from provisional
+CMNIST guidance and deferred extensions. Its scientific/leakage invariants are binding;
+concrete type names, complete field sets, and module boundaries remain internal and
+revisable until both CMNIST and Waterbirds have exercised them.
 
-## Proposed layout
+## Approved core boundary
+
+The initial contract spine is deliberately small:
+
+- strict Pydantic v2 configuration/result boundaries for CMNIST ERM and oracle GRIT;
+- role-scoped training, validation, final-test, and diagnostic views;
+- validation-only ordinary checkpoint/candidate selectors with deterministic ties;
+- separate candidate and per-run checkpoint freezes plus restoration before final test;
+- distinct ordinary and CMNIST test-oracle configuration/result types;
+- bounded algorithm updates inside trainer-owned iteration;
+- canonical local JSON and a null event sink; and
+- one in-memory lifecycle test proving final metrics cannot flow backward.
+
+CPU-float64 SVD fitting, earlier-epoch checkpoint ties, and union confirmation of CMNIST's
+two selector finalist sets are approved directions. Only the tie/selection behavior belongs
+in the contract spine; production SVD code waits for the CMNIST vertical slice.
+
+## Provisional component map
+
+The map below is design inventory, not a request to scaffold it. Milestone 3 should add
+only the few internal modules required by the tested spine, with names chosen for current
+clarity rather than promised stability. Dataset/feature/pair/projection implementations,
+W&B, and later algorithms appear here only as deferred placement guidance.
 
 ```text
 pyproject.toml
@@ -105,6 +128,8 @@ package or speculative entry points are not scaffold requirements.
 
 ### Dataset bundle
 
+Status: **Provisional through vertical slices; production manifests/caches deferred.**
+
 A dataset adapter is responsible for constructing named splits, metadata, groups, and
 artifact provenance. It must not decide the model-selection policy or instantiate an
 algorithm.
@@ -124,6 +149,9 @@ as distinct example/view identities.
 
 ### Pair builders
 
+Status: **Scientific access rules approved; production interfaces and builders deferred to
+the CMNIST/later slices.**
+
 Pair builders select aligned source examples and return explicit indices, metadata, and
 provenance. They do not calculate classifier loss or own a training loop.
 
@@ -136,6 +164,9 @@ Oracle, conditional, and nearest produce the same conceptual pair-set contract. 
 oracle relation is a separate capability that estimated builders cannot receive.
 
 ### Projection
+
+Status: **Mathematical separation and CPU-float64 initial fitting approved; production API,
+mathematics, persistence, and artifact format deferred to CMNIST.**
 
 Projection estimates nuisance directions from a `PairSet` and transforms feature rows.
 It is classifier-independent and independently testable.
@@ -151,18 +182,24 @@ algorithm, or trainer.
 
 ### Algorithms
 
+Status: **Ownership split approved; exact protocol provisional; future-method hooks
+deferred.**
+
 Algorithms own method-specific optimization state and updates. They receive prepared
 models, batches, and context; they do not discover datasets or decide which split selects
 the final checkpoint.
 
-The common algorithm interface must allow both ordinary single-batch updates and methods
-with multiple optimizer steps, parameter replacement, checkpointable non-model state, and
-step-level validation feedback. Validation feedback is role-limited data, not evaluator or
-loader access. Avoid forcing every method through an abstraction that only fits ERM.
+The initial interface needs only a bounded fake update for the synthetic lifecycle. CMNIST
+will define the smallest real ERM/GRIT protocol. Verified future needs such as multiple
+optimizer steps, parameter replacement, non-model state, and step-level validation remain
+documented in `contracts.md`, but must not add hooks before the corresponding method is in
+scope.
 
 ### Experiment runner
 
-The runner owns the lifecycle:
+Status: **Lifecycle ordering approved; production orchestration deferred to CMNIST.**
+
+The eventual runner owns the lifecycle:
 
 ```text
 resolve config
@@ -179,12 +216,15 @@ resolve config
   -> write result and provenance
 ```
 
-The runner must not implement algorithm-specific mathematics. Its distinct candidate and
-per-run checkpoint tokens ensure final-seed validation can choose an epoch but cannot
-change frozen hyperparameters. Final-test access becomes legal only after both decisions
-are frozen and the matching checkpoint is restored.
+Milestone 3 exercises this ordering with in-memory views and fake checkpoints rather than a
+production runner. The eventual runner must not implement algorithm-specific mathematics.
+Its distinct candidate and per-run checkpoint tokens ensure final-seed validation can
+choose an epoch but cannot change frozen hyperparameters. Final-test access becomes legal
+only after both decisions are frozen and the matching checkpoint is restored.
 
 ### Selection policy
+
+Status: **Approved core; exact record/type names provisional.**
 
 Selection is an explicit configuration and result object. Ordinary selection receives
 only a validation-record type; final-test records are structurally excluded rather than
@@ -194,9 +234,11 @@ the ordinary result.
 
 ### Tracking
 
-Local structured output is canonical. W&B mirrors configurations, histories, and
-artifacts but does not define selection semantics. A run must remain possible without
-W&B.
+Status: **Null sink approved for Milestone 3; production W&B integration deferred.**
+
+Canonical local JSON is authoritative. Milestone 3 supplies only a null sink. A future W&B
+adapter may mirror configurations, histories, and artifacts but never defines selection
+semantics. A run must remain possible without W&B.
 
 ### Command-line interfaces
 
@@ -214,6 +256,7 @@ tests remain under `tests/`.
 
 ## Configuration principles
 
+- Boundary schemas use Pydantic v2 with strict unknown-field rejection.
 - Experiment settings live in data files rather than executable sweep modules.
 - Configurations are validated into typed objects.
 - Dataset, algorithm, pair builder, projection, selector, and tracker are selected through
@@ -225,7 +268,9 @@ tests remain under `tests/`.
 
 ## Result and provenance principles
 
-Every completed run should record at least:
+Milestone 3 results record only the fields needed to round-trip the synthetic lifecycle and
+CMNIST ERM/oracle-GRIT boundary. The following fuller inventory is provisional guidance for
+vertical slices rather than an initial schema checklist:
 
 - Schema version and status
 - Resolved configuration
@@ -251,15 +296,15 @@ entry points.
 
 ## Unresolved architectural decisions
 
-- Approval or revision of the concrete types and capability boundaries proposed in
-  [`contracts.md`](contracts.md)
-- Configuration library: proposed Pydantic v2 versus a strict standard-library decoder
+- Exact internal type names, field sets, and module boundaries
+- Which provisional boundaries survive both CMNIST and Waterbirds unchanged
 - Exact safe numerical artifact format and checkpoint retention policy
-- CPU-float64 projection fitting policy and runtime conversion rules
-- CMNIST checkpoint tie-breaking after the already-approved candidate tie sequence
+- Minimal artifact-reference interface needed by the CMNIST slice
 - Upper supported Python version and the compatible PyTorch/CLIP/CUDA matrix
 
 Scientific construction and estimated-pair choices remain in their protocol documents.
-After proposal review, implement and test only the smallest shared contracts needed before
-closing Milestone 3. Milestone 4 and the later CMNIST slice require their own approved
-goals; leave provisional later-method and raw-image details to vertical evidence.
+Implement and test the smallest contract spine before closing Milestone 3, then exercise
+and revise it directly in the CMNIST vertical slice. Waterbirds is the second proving
+ground; only after both slices should internal names or module boundaries be treated as
+stable shared interfaces. Generalized artifacts, full resume, production W&B, later-method
+hooks, and raw-image/accelerator abstractions remain explicitly deferred.
