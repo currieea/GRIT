@@ -1,7 +1,7 @@
 # ColoredMNIST experiment protocol
 
-Status: **Core construction, representation, projection, and selection protocol approved;
-deterministic partition and estimated-pair details unresolved**
+Status: **Core construction, deterministic partition, representation, projection, and
+selection protocol approved; estimated-pair details unresolved**
 
 ## Purpose
 
@@ -54,8 +54,9 @@ analysis, but is not the primary result.
 
 Label noise is sampled once per underlying source image and shared across every rendering
 of that source. Each environment samples color from its Bernoulli mechanism using a
-deterministic stream keyed by the construction seed and stable environment name. Merely
-reordering environment entries must not change the generated dataset.
+deterministic draw keyed by the construction seed, stable source ID, and stable environment
+name. Merely reordering source rows or environment entries must not change the generated
+dataset.
 
 ## Source partitions and environments
 
@@ -76,10 +77,25 @@ The two training partitions and validation partition are mutually disjoint. The 
 MNIST test split is disjoint by construction and remains inaccessible until ordinary
 selection is frozen.
 
-The exact deterministic partitioning algorithm is not yet approved. The preferred design
-is a seeded partition stratified by original digit so each partition has stable digit
-coverage. The chosen algorithm and resulting source indices must be stored in the dataset
-manifest.
+The approved construction method is `cmnist-stratified-hash-v1`:
+
+1. Stable source identity is the official MNIST split plus its official source index.
+2. Group all 60,000 official-training sources by original digit. Allocate exactly 10,000
+   validation sources proportionally by digit using largest-remainder apportionment.
+   Equal remainders are awarded in ascending digit order.
+3. Remove those validation sources. Apportion exactly 25,000 of the remaining 50,000 to
+   `train_e01_sources` with the same rule; `train_e02_sources` receives the rest.
+4. Before membership assignment within each digit, order sources by SHA-256 of the
+   null-separated UTF-8 fields `cmnist-stratified-hash-v1`, construction seed, official
+   split, and official source index. The source index is the deterministic collision
+   fallback.
+5. The official 10,000-source test split becomes `test_sources` unchanged and never enters
+   the official-training partition operation.
+
+The canonical partition manifest records the method ID, construction seed, ordered
+membership, per-digit counts, and SHA-256 membership digest for every partition. The
+algorithm is invariant to input ordering. Changing the construction seed changes
+membership reproducibly without changing any target count.
 
 ### Rendered environments
 
@@ -175,6 +191,7 @@ Rules:
   additional supervised classifier-training examples.
 - Pair provenance records the source ID, endpoint colors, construction parameters, and
   artifact hashes.
+- Endpoint orientation is fixed as red minus green.
 
 The primary budget is 256 unique pairs, matching the paper and Kernel-GRIT development
 setup. Prespecified pair-budget sensitivities use 32, 64, 128, 256, and 512 unique
@@ -480,7 +497,6 @@ Primary references:
 
 ## Remaining decisions
 
-- Exact deterministic and stratified source-partition algorithm
 - Whether $p_y=0$ is a required sensitivity experiment
 - Conditional/random and nearest-neighbor pair definitions
 - Additional baseline methods required for the first complete study
@@ -500,5 +516,5 @@ Primary references:
 - [x] Uncentered deterministic projection and rank search approved
 - [x] Adam search, tuning/confirmation/final seeds, and aggregation approved
 - [x] Reporting uncertainty method approved
-- [ ] Deterministic partition algorithm approved
+- [x] Deterministic partition algorithm approved (`cmnist-stratified-hash-v1`)
 - [ ] Estimated-pair definitions approved

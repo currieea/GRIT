@@ -6,7 +6,10 @@ from typing import Annotated, Literal, TypeAlias
 
 from pydantic import (
     Field,
+    FiniteFloat,
     PositiveInt,
+    StrictBool,
+    StrictFloat,
     StrictInt,
     StrictStr,
     TypeAdapter,
@@ -17,13 +20,30 @@ from grit.schemas import CmnistSelector, StrictBoundaryModel, canonical_digest_v
 
 NonEmptyStr: TypeAlias = Annotated[StrictStr, Field(min_length=1)]
 NonNegativeInt: TypeAlias = Annotated[StrictInt, Field(ge=0)]
+Probability: TypeAlias = Annotated[FiniteFloat, Field(ge=0.0, le=1.0)]
+
+OPENAI_CLIP_REVISION = "d05afc436d78f1c48dc0dbf8e5980a9d471f35f6"
+OPENAI_CLIP_WEIGHTS_IDENTITY = (
+    "sha256:40d365715913c9da98579312b702a82c18be219cc2a73407c4526f58eba950af"
+)
+OPENAI_CLIP_PREPROCESSING_ID = f"openai-clip-vit-b32-preprocess@{OPENAI_CLIP_REVISION}"
+
+
+class CmnistSourceCounts(StrictBoundaryModel):
+    train_e01: PositiveInt
+    train_e02: PositiveInt
+    validation: PositiveInt
+    test: PositiveInt
 
 
 class CmnistDatasetConfig(StrictBoundaryModel):
-    """Dataset identity without choosing the unresolved partition algorithm."""
+    """Dataset identity bound to the approved deterministic partition algorithm."""
 
     dataset_id: Literal["cmnist"]
-    construction_method_id: NonEmptyStr
+    construction_method_id: Literal["cmnist-stratified-hash-v1"]
+    construction_seed: StrictInt
+    label_flip_prob: Probability
+    source_counts: CmnistSourceCounts
     training_split_names: tuple[Literal["train_e01", "train_e02"], ...]
     validation_split_names: tuple[Literal["val_e01", "val_e02", "val_e05"], ...]
     final_test_split_name: Literal["test_ood"]
@@ -43,7 +63,11 @@ class FrozenFeatureConfig(StrictBoundaryModel):
     """The only representation admitted by the initial contract boundary."""
 
     kind: Literal["frozen_features"]
-    encoder_id: NonEmptyStr
+    encoder_id: Literal["openai-clip-vit-b32", "synthetic-fake-512"]
+    encoder_revision: NonEmptyStr
+    weights_identity: NonEmptyStr
+    preprocessing_identity: NonEmptyStr
+    feature_dimension: Literal[512]
     normalization: Literal["none", "l2"]
 
 
@@ -58,6 +82,8 @@ class OraclePairsConfig(StrictBoundaryModel):
     construction_id: NonEmptyStr
     source_partition_ids: tuple[NonEmptyStr, ...]
     pair_count: PositiveInt
+    pair_seed: StrictInt
+    orientation: Literal["red_minus_green"]
 
     @model_validator(mode="after")
     def _validate_sources(self) -> OraclePairsConfig:
@@ -88,6 +114,9 @@ class LinearProjectionConfig(StrictBoundaryModel):
     kind: Literal["linear_pair_difference"]
     requested_rank: Annotated[StrictInt, Field(ge=0, le=24)]
     center_differences: Literal[False]
+    relative_singular_value_tolerance: Annotated[
+        StrictFloat, Field(gt=0.0)
+    ]
 
 
 ProjectionConfig: TypeAlias = Annotated[
@@ -108,6 +137,19 @@ AlgorithmConfig: TypeAlias = Annotated[
     ErmAlgorithmConfig | GritAlgorithmConfig,
     Field(discriminator="kind"),
 ]
+
+
+class LinearProbeTrainingConfig(StrictBoundaryModel):
+    optimizer: Literal["adam"]
+    batch_size: PositiveInt
+    learning_rate: Annotated[StrictFloat, Field(gt=0.0)]
+    weight_decay: Annotated[StrictFloat, Field(ge=0.0)]
+    max_epochs: PositiveInt
+
+
+class CpuRuntimeConfig(StrictBoundaryModel):
+    device: Literal["cpu"]
+    deterministic_algorithms: Literal[True]
 
 
 class SeedSets(StrictBoundaryModel):
@@ -156,11 +198,14 @@ class _CommonCmnistExperimentConfig(StrictBoundaryModel):
     schema_version: Literal["grit.experiment/v1"]
     experiment_name: NonEmptyStr
     protocol_id: Literal["cmnist/v1"]
+    reportable: StrictBool
     dataset: CmnistDatasetConfig
     representation: FrozenFeatureConfig
     pairs: PairsConfig
     projection: ProjectionConfig
     algorithm: AlgorithmConfig
+    training: LinearProbeTrainingConfig
+    runtime: CpuRuntimeConfig
     seed_sets: SeedSets
 
     def scientific_config_digest(self) -> str:
@@ -191,6 +236,44 @@ class _CommonCmnistExperimentConfig(StrictBoundaryModel):
             if not isinstance(self.projection, LinearProjectionConfig):
                 raise ValueError(
                     "initial GRIT requires projection.kind='linear_pair_difference'"
+                )
+        if self.reportable:
+            counts = self.dataset.source_counts
+            if (counts.train_e01, counts.train_e02, counts.validation, counts.test) != (
+                25_000,
+                25_000,
+                10_000,
+                10_000,
+            ):
+                raise ValueError("reportable CMNIST requires production source counts")
+            if float(self.dataset.label_flip_prob) != 0.25:
+                raise ValueError("reportable CMNIST requires label_flip_prob=0.25")
+            if self.representation.encoder_id != "openai-clip-vit-b32":
+                raise ValueError("reportable CMNIST requires official OpenAI CLIP")
+            representation_identity = (
+                self.representation.encoder_revision,
+                self.representation.weights_identity,
+                self.representation.preprocessing_identity,
+            )
+            if representation_identity != (
+                OPENAI_CLIP_REVISION,
+                OPENAI_CLIP_WEIGHTS_IDENTITY,
+                OPENAI_CLIP_PREPROCESSING_ID,
+            ):
+                raise ValueError(
+                    "reportable CMNIST requires the pinned official CLIP identity"
+                )
+            training = self.training
+            if (
+                training.batch_size != 256
+                or training.max_epochs != 40
+                or float(training.learning_rate)
+                not in {0.0001, 0.0003, 0.001, 0.003}
+                or float(training.weight_decay)
+                not in {0.0, 0.00001, 0.0001, 0.001}
+            ):
+                raise ValueError(
+                    "reportable CMNIST requires approved linear-probe settings"
                 )
         return self
 

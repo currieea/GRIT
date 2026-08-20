@@ -6,11 +6,11 @@ boundaries and after material decisions; do not use it as a raw command transcri
 ## Current state
 
 - Branch: `rewrite`
-- Active milestone: Minimal contract spine implemented and verified; awaiting user review
-  (Milestone 3)
+- Active milestone: Milestone 4 implemented and verified; awaiting user review
 - Legacy implementation: Preserved and statically characterized; runtime reproduction deferred
-- New implementation: Internal CMNIST-focused contract spine; no production algorithms,
-  datasets, pairs, projections, trainers, or external tracking ported
+- New implementation: Approved CMNIST-focused contract spine plus a complete hermetic
+  CMNIST ERM/oracle-GRIT vertical slice; Waterbirds and reportable experiments remain
+  deferred pending review
 
 ## Completed checkpoints
 
@@ -308,6 +308,9 @@ Verification:
   values.
 - The inherited implementation remains available during vertical-slice development.
 - ColoredMNIST uses all official MNIST test sources only for final `0.9` OOD evaluation.
+- ColoredMNIST partitions official training sources with
+  `cmnist-stratified-hash-v1`: digit-stratified largest-remainder allocation plus
+  source-identity SHA-256 ordering.
 - ColoredMNIST validation reuses 10,000 held-out source images across `0.1`, `0.2`, and
   `0.5` color renderings; these are repeated views, not independent samples.
 - ColoredMNIST reports a primary robustness-aware selector and a secondary source-only
@@ -336,7 +339,6 @@ Verification:
 
 ## Unresolved decisions
 
-- ColoredMNIST deterministic source-partition algorithm
 - ColoredMNIST conditional/random and nearest-pair definitions
 - Optional reporting-only paired ID rendering of ColoredMNIST final-test sources
 - Waterbirds source acquisition and reconstruction implementation
@@ -355,12 +357,43 @@ Verification:
   checkpoint/numerical containers, and final artifact-format selection are deferred.
 - Fish/SWAD/MatchDG/LISA/GroupDRO-specific hooks and raw-image, distributed,
   mixed-precision, compilation, or multi-device abstractions are deferred.
-- Production W&B, dataset manifests, feature caches, pair builders, and projection
-  mathematics begin only when a real vertical slice requires them.
+- Production W&B remains deferred. The CMNIST slice implements only its required narrow
+  dataset, feature-cache, pair, projection, and selected-checkpoint boundaries; it does not
+  establish generalized storage or resume frameworks.
+
+### Milestone 4 ColoredMNIST vertical slice
+
+- Approved and implemented `cmnist-stratified-hash-v1`, with exact production source
+  counts, deterministic environment rendering, and explicit repeated validation views.
+- Added a training-source-only 256-pair clean oracle, red-minus-green orientation, and a
+  deterministic CPU-float64 full-SVD projection with rank-zero identity behavior.
+- Added the pinned official OpenAI CLIP ViT-B/32 cache boundary and a deterministic fake
+  encoder used only by the non-reportable hermetic smoke path.
+- Added composed linear ERM/GRIT training, validation-only checkpoint selection, narrow
+  inference-checkpoint persistence/restoration, and the one-way final-test gate.
+- Connected the three-seed tuning, primary/secondary top-three finalist artifacts, ordered
+  confirmation union, two confirmation seeds, separate five-seed selector winners, and ten
+  final seeds. Confirmation consumes only fresh confirmation records and reuses the exact
+  tuning decisions stored in the applicable finalist artifact.
+- Added `grit-cmnist-prepare` as the explicit download/cache boundary and
+  `grit-cmnist-run` as the strict hermetic smoke runner. Canonical local JSON remains
+  authoritative; no W&B or generalized artifact framework was added.
+
+Verification:
+
+- `uv lock --check` — passed (41 packages resolved).
+- `uv run --frozen ruff check .` — passed.
+- `uv run --frozen basedpyright` — 0 errors, warnings, or notes.
+- `UV_CACHE_DIR=/tmp/grit-uv-cache uv run --offline --frozen pytest` — 50 passed on
+  Python 3.10.20.
+- `UV_CACHE_DIR=/tmp/grit-uv-cache uv run --offline --frozen grit-cmnist-run
+  configs/cmnist/smoke.yaml` — passed and produced 40 ordinary final-result records from
+  the non-reportable fake-feature lifecycle.
+- `git diff --check` — passed before the checkpoint commit.
+- No real MNIST or CLIP artifact was downloaded, and no reportable scientific sweep was
+  executed.
 
 ## Next proposed checkpoint
 
-Obtain user approval for the verified Milestone 3 spine. Only then begin Milestone 4 by
-resolving the still-blocking deterministic CMNIST source-partition decision and exercising
-these internal contracts in the smallest ERM/oracle-GRIT vertical slice. Do not prebuild
-deferred frameworks.
+Review the implemented Milestone 4 CMNIST ERM/oracle-GRIT vertical slice. Begin Waterbirds
+only after approval; do not prebuild deferred frameworks.

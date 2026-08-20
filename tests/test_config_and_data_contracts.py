@@ -33,7 +33,9 @@ from tests.contract_fixtures import (
     feature_config,
     ordinary_erm_config,
     ordinary_grit_config,
+    runtime_config,
     seed_sets,
+    training_config,
 )
 
 
@@ -89,6 +91,23 @@ def test_scientific_candidate_identity_excludes_selector_branch_only() -> None:
     assert primary.scientific_config_digest() == secondary.scientific_config_digest()
 
 
+def test_reportable_config_requires_pinned_official_clip_and_training() -> None:
+    payload = ordinary_erm_config().model_dump(mode="python")
+    payload["reportable"] = True
+    reportable = OrdinaryExperimentConfig.model_validate(payload)
+    assert reportable.reportable is True
+
+    wrong_revision = reportable.model_dump(mode="python")
+    wrong_revision["representation"]["encoder_revision"] = "unverified-revision"
+    with pytest.raises(ValidationError, match="pinned official CLIP identity"):
+        OrdinaryExperimentConfig.model_validate(wrong_revision)
+
+    wrong_training = reportable.model_dump(mode="python")
+    wrong_training["training"]["batch_size"] = 32
+    with pytest.raises(ValidationError, match="approved linear-probe settings"):
+        OrdinaryExperimentConfig.model_validate(wrong_training)
+
+
 def test_unsupported_schema_and_lossy_values_are_rejected() -> None:
     unsupported = (
         ordinary_erm_config()
@@ -119,6 +138,7 @@ def test_erm_with_projection_is_rejected() -> None:
             run_kind="ordinary",
             experiment_name="invalid-erm-projection",
             protocol_id="cmnist/v1",
+            reportable=False,
             dataset=dataset_config(),
             representation=feature_config(),
             pairs=DisabledPairsConfig(kind="disabled"),
@@ -126,8 +146,11 @@ def test_erm_with_projection_is_rejected() -> None:
                 kind="linear_pair_difference",
                 requested_rank=1,
                 center_differences=False,
+                relative_singular_value_tolerance=1e-12,
             ),
             algorithm=ErmAlgorithmConfig(kind="erm"),
+            training=training_config(),
+            runtime=runtime_config(),
             seed_sets=seed_sets(),
             selection=OrdinarySelectionConfig(selector=CmnistSelector.PRIMARY_ROBUST),
         )
@@ -137,6 +160,7 @@ def test_erm_with_projection_is_rejected() -> None:
             kind="linear_pair_difference",
             requested_rank=25,
             center_differences=False,
+            relative_singular_value_tolerance=1e-12,
         )
 
 
@@ -147,6 +171,8 @@ def test_oracle_pairs_accept_only_approved_training_sources() -> None:
             construction_id="invalid-leaking-pairs",
             source_partition_ids=("validation_sources", "test_sources"),
             pair_count=256,
+            pair_seed=0,
+            orientation="red_minus_green",
         )
     with pytest.raises(ValidationError, match="pair_count=256"):
         OraclePairsConfig(
@@ -154,6 +180,8 @@ def test_oracle_pairs_accept_only_approved_training_sources() -> None:
             construction_id="invalid-pair-count",
             source_partition_ids=("train_e01_sources", "train_e02_sources"),
             pair_count=255,
+            pair_seed=0,
+            orientation="red_minus_green",
         )
 
 

@@ -1,6 +1,7 @@
 # Target architecture for the GRIT rewrite
 
-Status: **Minimal Milestone 3 spine implemented and verified; awaiting user review**
+Status: **Milestone 3 spine approved; Milestone 4 CMNIST vertical slice implemented and
+verified, awaiting user review**
 
 ## Architectural intent
 
@@ -135,7 +136,8 @@ package or speculative entry points are not scaffold requirements.
 
 ### Dataset bundle
 
-Status: **Provisional through vertical slices; production manifests/caches deferred.**
+Status: **CMNIST-specific construction and manifests implemented; shared shape remains
+provisional through Waterbirds.**
 
 A dataset adapter is responsible for constructing named splits, metadata, groups, and
 artifact provenance. It must not decide the model-selection policy or instantiate an
@@ -149,15 +151,17 @@ source artifacts + typed dataset config
   -> role-scoped training, pair-source, validation, final-test, and diagnostic capabilities
 ```
 
-The full bundle is internal to dataset construction and the runner's capability broker.
+Milestone 4 implements this concretely for injected MNIST-like pools and the explicit
+torchvision adapter. `cmnist-stratified-hash-v1` produces fixed source partitions and a
+canonical manifest; deterministic rendered tables issue existing role-scoped views. The
+full bundle is internal to dataset construction and the runner's capability broker.
 Trainers, pair builders, evaluators, and selectors do not receive a dictionary containing
 every split. Repeated views of one source partition carry stable source identities as well
 as distinct example/view identities.
 
 ### Pair builders
 
-Status: **Scientific access rules approved; production interfaces and builders deferred to
-the CMNIST/later slices.**
+Status: **CMNIST clean-oracle builder implemented; estimated builders deferred.**
 
 Pair builders select aligned source examples and return explicit indices, metadata, and
 provenance. They do not calculate classifier loss or own a training loop.
@@ -169,11 +173,13 @@ training-only PairSourceView + OraclePairRelationView + OraclePairBuilderConfig 
 
 Oracle, conditional, and nearest produce the same conceptual pair-set contract. The
 oracle relation is a separate capability that estimated builders cannot receive.
+Milestone 4 implements only the CMNIST training-source capability and 256-source clean
+red-minus-green oracle builder with a canonical pair manifest.
 
 ### Projection
 
-Status: **Mathematical separation and CPU-float64 initial fitting approved; production API,
-mathematics, persistence, and artifact format deferred to CMNIST.**
+Status: **CMNIST CPU-float64 linear projection implemented; broader reuse and final artifact
+format remain provisional.**
 
 Projection estimates nuisance directions from a `PairSet` and transforms feature rows.
 It is classifier-independent and independently testable.
@@ -189,22 +195,24 @@ algorithm, or trainer.
 
 ### Algorithms
 
-Status: **Ownership split approved; exact protocol provisional; future-method hooks
-deferred.**
+Status: **Ownership split and concrete CMNIST ERM/GRIT linear-probe update implemented;
+future-method hooks deferred.**
 
 Algorithms own method-specific optimization state and updates. They receive prepared
 models, batches, and context; they do not discover datasets or decide which split selects
 the final checkpoint.
 
-The initial interface needs only a bounded fake update for the synthetic lifecycle. CMNIST
-will define the smallest real ERM/GRIT protocol. Verified future needs such as multiple
-optimizer steps, parameter replacement, non-model state, and step-level validation remain
-documented in `contracts.md`, but must not add hooks before the corresponding method is in
-scope.
+CMNIST validates a concrete two-class linear algorithm that owns its model, Adam optimizer,
+optional fitted input projection, bounded batch update, prediction, and inference state.
+The trainer owns epoch/batch iteration, validation cadence, and checkpoint capture.
+Verified future needs such as multiple optimizer steps, parameter replacement, non-model
+state, and step-level validation remain documented in `contracts.md`, but add no hooks
+before the corresponding method is in scope.
 
 ### Experiment runner
 
-Status: **Lifecycle ordering approved; production orchestration deferred to CMNIST.**
+Status: **Concrete local CMNIST orchestration implemented; generalized search scheduling
+and production sweeps deferred.**
 
 The eventual runner owns the lifecycle:
 
@@ -223,8 +231,10 @@ resolve config
   -> write result and provenance
 ```
 
-Milestone 3 exercises this ordering with in-memory views and fake checkpoints rather than a
-production runner. The eventual runner must not implement algorithm-specific mathematics.
+Milestone 3 exercised this ordering with in-memory views and fake checkpoints. Milestone 4
+now exercises it with real linear-probe updates, durable finalist/winner JSON, a narrow
+selected-linear-checkpoint format, and canonical final results. The runner does not
+implement algorithm-specific mathematics.
 Its distinct candidate and per-run checkpoint tokens ensure final-seed validation can
 choose an epoch but cannot change frozen hyperparameters. Final-test access becomes legal
 only after both decisions are frozen and the matching checkpoint is restored.
@@ -255,6 +265,11 @@ become a second orchestration or algorithm layer. Once a real command is impleme
 user-facing command is exposed through a `[project.scripts]` entry point in
 `pyproject.toml`.
 
+Milestone 4 implements `grit-cmnist-prepare` and `grit-cmnist-run` under
+`src/grit/cli/`. The first is the explicit real MNIST/official-CLIP preparation boundary;
+the second consumes the strict, non-reportable hermetic smoke YAML. Neither command
+contains a second training or selection implementation.
+
 The existing top-level `scripts/` directory remains inherited preprocessing and
 compatibility evidence. Its files are not templates for rewrite commands and are not
 brought wholesale under strict lint or type checking. All new Python implementation,
@@ -275,9 +290,10 @@ tests remain under `tests/`.
 
 ## Result and provenance principles
 
-Milestone 3 results record only the fields needed to round-trip the synthetic lifecycle and
-CMNIST ERM/oracle-GRIT boundary. The following fuller inventory is provisional guidance for
-vertical slices rather than an initial schema checklist:
+Milestone 4 reuses the ordinary result boundary for each final seed and adds concrete
+dataset, feature, pair, projection-diagnostic, and selected-checkpoint references. The
+following fuller inventory remains provisional guidance rather than a requirement to build
+a generalized provenance framework:
 
 - Schema version and status
 - Resolved configuration
@@ -306,7 +322,6 @@ entry points.
 - Exact internal type names, field sets, and module boundaries
 - Which provisional boundaries survive both CMNIST and Waterbirds unchanged
 - Exact safe numerical artifact format and checkpoint retention policy
-- Minimal artifact-reference interface needed by the CMNIST slice
 - Upper supported Python version and the compatible PyTorch/CLIP/CUDA matrix
 
 Scientific construction and estimated-pair choices remain in their protocol documents.

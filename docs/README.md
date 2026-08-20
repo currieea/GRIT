@@ -2,10 +2,10 @@
 
 This directory contains the design and experimental contracts for the GRIT rewrite. Core
 scientific protocols were established before implementation so decisions are reviewed
-rather than inferred from legacy code. The approved minimal Milestone 3 contract spine is
-implemented and verified, and now awaits user review. It remains internal and revisable as
-the CMNIST and Waterbirds vertical slices exercise it alongside the preserved inherited
-implementation.
+rather than inferred from legacy code. The minimal Milestone 3 contract spine is approved,
+implemented, and verified. The implemented Milestone 4 CMNIST vertical slice now exercises
+it alongside the preserved inherited implementation and is awaiting user review; internal
+names remain revisable until Waterbirds provides the second vertical-slice test.
 
 ## Documents
 
@@ -17,8 +17,8 @@ implementation.
   unresolved decisions.
 - [`legacy-baseline.md`](legacy-baseline.md): exact inherited revision, representative
   commands, static behavior characterization, and deferred runtime checks.
-- [`experiments/cmnist.md`](experiments/cmnist.md): approved ColoredMNIST core protocol
-  and remaining construction decisions.
+- [`experiments/cmnist.md`](experiments/cmnist.md): approved ColoredMNIST core protocol,
+  deterministic partition algorithm, and remaining estimated-pair decisions.
 - [`experiments/waterbirds.md`](experiments/waterbirds.md): approved Waterbirds-CF core
   protocol, deterministic server-side reconstruction, and source-acquisition plan.
 

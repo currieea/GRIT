@@ -22,9 +22,34 @@ uv run pytest
 ```
 
 The tracked `.python-version` selects Python 3.10.20 as the current reproducible rewrite
-development interpreter. `pyproject.toml` retains a Python 3.10 minimum; the eventual
-upper Python bound and compatible PyTorch/CLIP/CUDA matrix remain unresolved. The
-rewrite scaffold intentionally does not install those experiment dependencies yet.
+development interpreter. `pyproject.toml` retains a Python 3.10 minimum. The CMNIST slice
+locks CPU PyTorch/torchvision plus official OpenAI CLIP at revision
+`d05afc436d78f1c48dc0dbf8e5980a9d471f35f6`; the eventual upper Python bound and supported
+CUDA matrix remain unresolved.
+
+Run the explicitly non-reportable, offline CMNIST ERM/oracle-GRIT smoke profile with:
+
+```bash
+uv run --frozen grit-cmnist-run configs/cmnist/smoke.yaml
+```
+
+The command uses deterministic synthetic MNIST-like sources and a fake 512-dimensional
+encoder, then exercises construction, training-only oracle pairs, projection, real Adam
+training, validation selection, checkpoint restoration, final-test gating, and canonical
+local results. Generated output is written under the ignored `artifacts/` directory.
+
+Prepare real official MNIST and unnormalized OpenAI CLIP ViT-B/32 features explicitly:
+
+```bash
+uv run --frozen grit-cmnist-prepare \
+  --data-root /path/to/mnist \
+  --clip-weights-root /path/to/clip-weights \
+  --output-root /path/to/cmnist-cache \
+  --allow-download
+```
+
+Omit `--allow-download` to require that both source data and weights already exist.
+Preparation does not run the full scientific hyperparameter sweep.
 
 ## Inherited setup
 

@@ -102,9 +102,9 @@ Status: **Implemented and verified**
 
 ## Milestone 3: Define shared contracts
 
-Status: **Minimal spine implemented and verified; awaiting user review.** Detailed future
-guidance is retained in [`contracts.md`](contracts.md), but only the contract spine below
-is a Milestone 3 deliverable. Milestone 4 has not started.
+Status: **Approved, implemented, and verified.** Detailed future guidance is retained in
+[`contracts.md`](contracts.md), but only the contract spine below was a Milestone 3
+deliverable.
 
 ### Work
 
@@ -134,6 +134,8 @@ is a Milestone 3 deliverable. Milestone 4 has not started.
 - New type names and modules are explicitly internal and revisable.
 
 ## Milestone 4: ColoredMNIST vertical slice
+
+Status: **Implemented and verified; awaiting user review**
 
 ### Work
 

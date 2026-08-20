@@ -4,13 +4,16 @@ from __future__ import annotations
 
 from grit.config import (
     CmnistDatasetConfig,
+    CmnistSourceCounts,
     CmnistTestOracleExperimentConfig,
     CmnistTestOracleSelectionConfig,
+    CpuRuntimeConfig,
     DisabledPairsConfig,
     DisabledProjectionConfig,
     ErmAlgorithmConfig,
     FrozenFeatureConfig,
     GritAlgorithmConfig,
+    LinearProbeTrainingConfig,
     LinearProjectionConfig,
     OraclePairsConfig,
     OrdinaryExperimentConfig,
@@ -32,7 +35,15 @@ def seed_sets() -> SeedSets:
 def dataset_config() -> CmnistDatasetConfig:
     return CmnistDatasetConfig(
         dataset_id="cmnist",
-        construction_method_id="required-partition-method-id",
+        construction_method_id="cmnist-stratified-hash-v1",
+        construction_seed=0,
+        label_flip_prob=0.25,
+        source_counts=CmnistSourceCounts(
+            train_e01=25_000,
+            train_e02=25_000,
+            validation=10_000,
+            test=10_000,
+        ),
         training_split_names=("train_e01", "train_e02"),
         validation_split_names=("val_e01", "val_e02", "val_e05"),
         final_test_split_name="test_ood",
@@ -43,8 +54,31 @@ def feature_config() -> FrozenFeatureConfig:
     return FrozenFeatureConfig(
         kind="frozen_features",
         encoder_id="openai-clip-vit-b32",
+        encoder_revision="d05afc436d78f1c48dc0dbf8e5980a9d471f35f6",
+        weights_identity=(
+            "sha256:40d365715913c9da98579312b702a82c18be219cc2a73407c4526f58eba950af"
+        ),
+        preprocessing_identity=(
+            "openai-clip-vit-b32-preprocess@"
+            "d05afc436d78f1c48dc0dbf8e5980a9d471f35f6"
+        ),
+        feature_dimension=512,
         normalization="none",
     )
+
+
+def training_config() -> LinearProbeTrainingConfig:
+    return LinearProbeTrainingConfig(
+        optimizer="adam",
+        batch_size=256,
+        learning_rate=0.001,
+        weight_decay=0.0,
+        max_epochs=40,
+    )
+
+
+def runtime_config() -> CpuRuntimeConfig:
+    return CpuRuntimeConfig(device="cpu", deterministic_algorithms=True)
 
 
 def ordinary_erm_config(
@@ -55,11 +89,14 @@ def ordinary_erm_config(
         run_kind="ordinary",
         experiment_name="synthetic-cmnist-erm",
         protocol_id="cmnist/v1",
+        reportable=False,
         dataset=dataset_config(),
         representation=feature_config(),
         pairs=DisabledPairsConfig(kind="disabled"),
         projection=DisabledProjectionConfig(kind="disabled"),
         algorithm=ErmAlgorithmConfig(kind="erm"),
+        training=training_config(),
+        runtime=runtime_config(),
         seed_sets=seed_sets(),
         selection=OrdinarySelectionConfig(selector=selector),
     )
@@ -73,6 +110,7 @@ def ordinary_grit_config(
         run_kind="ordinary",
         experiment_name="synthetic-cmnist-oracle-grit",
         protocol_id="cmnist/v1",
+        reportable=False,
         dataset=dataset_config(),
         representation=feature_config(),
         pairs=OraclePairsConfig(
@@ -80,13 +118,18 @@ def ordinary_grit_config(
             construction_id="synthetic-oracle-pairs-v1",
             source_partition_ids=("train_e01_sources", "train_e02_sources"),
             pair_count=256,
+            pair_seed=0,
+            orientation="red_minus_green",
         ),
         projection=LinearProjectionConfig(
             kind="linear_pair_difference",
             requested_rank=2,
             center_differences=False,
+            relative_singular_value_tolerance=1e-12,
         ),
         algorithm=GritAlgorithmConfig(kind="grit"),
+        training=training_config(),
+        runtime=runtime_config(),
         seed_sets=seed_sets(),
         selection=OrdinarySelectionConfig(selector=selector),
     )
@@ -98,11 +141,14 @@ def diagnostic_config() -> CmnistTestOracleExperimentConfig:
         run_kind="cmnist_test_oracle_diagnostic",
         experiment_name="synthetic-cmnist-test-oracle",
         protocol_id="cmnist/v1",
+        reportable=False,
         dataset=dataset_config(),
         representation=feature_config(),
         pairs=DisabledPairsConfig(kind="disabled"),
         projection=DisabledProjectionConfig(kind="disabled"),
         algorithm=ErmAlgorithmConfig(kind="erm"),
+        training=training_config(),
+        runtime=runtime_config(),
         seed_sets=seed_sets(),
         diagnostic_selection=CmnistTestOracleSelectionConfig(
             selector="test_ood_accuracy",
@@ -117,6 +163,7 @@ def diagnostic_grit_config() -> CmnistTestOracleExperimentConfig:
         run_kind="cmnist_test_oracle_diagnostic",
         experiment_name="synthetic-cmnist-grit-test-oracle",
         protocol_id="cmnist/v1",
+        reportable=False,
         dataset=dataset_config(),
         representation=feature_config(),
         pairs=OraclePairsConfig(
@@ -124,13 +171,18 @@ def diagnostic_grit_config() -> CmnistTestOracleExperimentConfig:
             construction_id="synthetic-oracle-pairs-v1",
             source_partition_ids=("train_e01_sources", "train_e02_sources"),
             pair_count=256,
+            pair_seed=0,
+            orientation="red_minus_green",
         ),
         projection=LinearProjectionConfig(
             kind="linear_pair_difference",
             requested_rank=2,
             center_differences=False,
+            relative_singular_value_tolerance=1e-12,
         ),
         algorithm=GritAlgorithmConfig(kind="grit"),
+        training=training_config(),
+        runtime=runtime_config(),
         seed_sets=seed_sets(),
         diagnostic_selection=CmnistTestOracleSelectionConfig(
             selector="test_ood_accuracy",

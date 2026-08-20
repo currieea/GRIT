@@ -9,18 +9,41 @@ description = "Rigorous invariant feature projection experiments"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "clip @ git+https://github.com/openai/CLIP.git@d05afc436d78f1c48dc0dbf8e5980a9d471f35f6",
+    "numpy>=1.26,<3",
+    "pillow>=10,<13",
     "pydantic>=2.11,<3",
+    "pyyaml>=6,<7",
+    "torch>=2.2,<3",
+    "torchvision>=0.17,<1",
 ]
+
+[project.scripts]
+grit-cmnist-prepare = "grit.cli.cmnist_prepare:main"
+grit-cmnist-run = "grit.cli.cmnist_run:main"
 
 [dependency-groups]
 dev = [
   "basedpyright>=1.31,<2",
   "pytest>=8.3,<9",
   "ruff>=0.12,<1",
+  "types-pyyaml>=6,<7",
 ]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/grit"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+torchvision = { index = "pytorch-cpu" }
 
 [tool.pytest.ini_options]
 addopts = "-ra"

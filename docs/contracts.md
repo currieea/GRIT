@@ -1,9 +1,10 @@
 # Shared contracts and design guidance
 
-Status: **Minimal Milestone 3 spine implemented and verified; awaiting user review.**
+Status: **Minimal Milestone 3 spine approved, implemented, and verified.**
 Detailed type names, field sets, and module boundaries remain internal and revisable until
-both the CMNIST and Waterbirds vertical slices have exercised them. The implementation is
-an in-memory contract boundary, not production experiment infrastructure.
+both the CMNIST and Waterbirds vertical slices have exercised them. The implementation has
+now been exercised by the implemented and verified CMNIST vertical slice; Milestone 4 is
+awaiting user review.
 
 This proposal turns the approved experiment protocols into shared interfaces for the
 rewrite. It preserves useful mathematical behavior without preserving the inherited
@@ -88,8 +89,11 @@ The implemented internal spine is the eight focused modules under `../src/grit/`
 oracle-pair configuration to the approved training source partitions, keeps full
 resolved-config identity separate from selector-independent scientific-candidate identity,
 and revalidates selection/checkpoint/seed evidence when authoritative result JSON is
-parsed. The focused synthetic tests live under `../tests/`; no dataset, feature, pair,
-projection, PyTorch trainer, or external tracking implementation was added.
+parsed. The focused Milestone 3 tests live under `../tests/`; that checkpoint added no
+dataset, feature, pair, projection, PyTorch trainer, or external tracking implementation.
+The implemented CMNIST slice adds only its concrete versions of those first four
+components and a real linear-probe trainer/runner, while tracking and generalized
+infrastructure remain deferred.
 
 ### Provisional guidance to validate through CMNIST
 
@@ -126,6 +130,12 @@ The initial implementation must not expand to cover:
 Production pair/projection work begins only as part of a real vertical slice. Detailed
 requirements below remain valuable acceptance criteria for that later work, not Milestone 3
 exit criteria.
+
+Milestone 4 is that real slice. It implements CMNIST-specific canonical construction,
+feature, and pair manifests; deterministic `.npy` feature tables; the CPU-float64 linear
+projection; real frozen-feature ERM/GRIT updates; and a narrow selected-linear-checkpoint
+adapter. These concrete boundaries do not approve a generalized artifact store, resume
+system, W&B integration, raw-image path, or later-method hooks.
 
 ## 1. Approved ownership rules and provisional responsibility map
 
@@ -352,9 +362,9 @@ records, seed sets, and finalist artifacts through strict validation before usin
 
 **Classification:** split roles, role-scoped views, and the absence of final-test data from
 training/ordinary selection are approved core. The `DatasetBundle`, record, batch,
-manifest, and capability names and full field sets are provisional. Production manifests,
-feature caches, protected-identity infrastructure, and artifact stores are deferred until a
-vertical slice needs them.
+manifest, and capability names and full field sets are provisional. CMNIST now has concrete
+source/dataset/feature manifests and fixed role-scoped tables; protected-identity
+infrastructure and generalized artifact storage remain deferred.
 
 The conceptual dataset records are:
 
@@ -478,11 +488,11 @@ registered protocol, split role, dataset-manifest identity, and lifecycle phase.
 are defenses against accidental misuse inside one process, not a claim of security against
 arbitrary hostile Python code.
 
-The CMNIST deterministic source-partition algorithm and the Waterbirds acquisition or
-reconstruction implementation are deliberately unresolved. Their configurations require
-registered `construction_method_id` values and manifests. Until a choice is approved and
-implemented, resolution fails with an actionable unsupported-method error; it cannot fall
-back to an arbitrary split or download.
+CMNIST uses the approved `cmnist-stratified-hash-v1` source-partition algorithm documented
+in [`experiments/cmnist.md`](experiments/cmnist.md). The Waterbirds acquisition or
+reconstruction implementation remains unresolved. Configurations require registered
+`construction_method_id` values and manifests; resolution cannot fall back to an arbitrary
+split or download.
 
 ## 4. Leakage-resistant lifecycle and access boundaries
 
@@ -557,9 +567,9 @@ Likewise, checkpoint restoration occurs before the final-test capability can be 
 
 **Classification:** the scientific pair permissions and oracle/test-oracle distinction are
 approved protocol constraints. The following record fields and builder signatures are
-provisional design guidance. Production pair builders, manifests, diagnostics, artifact
-storage, and pair mathematics are deferred to the CMNIST and later vertical slices and are
-not Milestone 3 exit criteria.
+provisional design guidance. Milestone 4 implements the CMNIST clean-oracle subset with a
+training-source capability and canonical manifest; estimated builders, other datasets, and
+generalized pair artifact storage remain deferred.
 
 ### Records, sets, and configuration
 
@@ -685,9 +695,9 @@ even though the fitted nuisance subspace should be invariant to a global sign ch
 
 **Classification:** classifier-independent projection, uncentered differences, rank-zero
 identity, deterministic full SVD, and initial CPU-float64 fitting are approved scientific/
-numerical constraints. The APIs and diagnostics below are provisional. Production fitting,
-transformation, persistence, and artifact-format selection are deferred until the CMNIST
-vertical slice needs them.
+numerical constraints. Milestone 4 implements fitting/transformation and canonical
+diagnostics for CMNIST. The API remains internal, and final basis persistence/artifact
+format selection remains provisional.
 
 The projection component is a fitted input transform independent of classifiers,
 algorithms, trainers, and evaluators. The runner fits it before model training and inserts
@@ -771,9 +781,11 @@ state. The trainer owns iteration and lifecycle control. This division supports 
 GRIT immediately without assuming every method has one scalar loss and exactly one
 optimizer step.
 
-Milestone 3 needs only enough of this boundary for a fake bounded update in the synthetic
-lifecycle. It does not implement the complete protocol below. The CMNIST slice should
-choose the smallest actual ERM/GRIT interface and may rename or remove these methods.
+Milestone 3 needed only a fake bounded update. The CMNIST slice has now chosen the smallest
+actual boundary: one concrete linear-probe algorithm owns its two-class model, Adam,
+optional fitted projection, update, prediction, and inference state; one trainer owns
+epoch/batch iteration, validation after every epoch, and checkpoint capture. The broader
+protocol below remains provisional and may still be renamed or reduced.
 
 ```text
 Algorithm
@@ -1285,9 +1297,10 @@ resumability tests become required only with the component they validate.
 | `test_waterbirds_adjusted_average_uses_training_manifest_weights` | All four evaluation groups are required and adjusted average uses training-manifest rather than evaluation-sample proportions. |
 | `test_waterbirds_ordinary_config_rejects_test_oracle_selection` | The initial Waterbirds protocol cannot enable diagnostic test-oracle selection. |
 
-Additional protocol fixtures should encode the expected CMNIST source/view counts and
-Waterbirds-CF group counts, while keeping actual source-partition and acquisition logic out
-of these contract tests.
+Milestone 4 adds separate concrete CMNIST tests for exact source/view counts, partition
+apportionment and ordering invariance, construction, oracle pairs, projection numerics,
+feature-cache validation, rank-zero equivalence, and the gated end-to-end lifecycle.
+Waterbirds-CF acquisition and group fixtures remain future work.
 
 ## 12. Protocol trace and self-review
 
@@ -1338,12 +1351,12 @@ exercised them. Compatibility layers are not owed for pre-release internal refac
   lifecycle determine whether explicit phase-token classes add value.
 - Keep candidate and checkpoint decision records auditable, but add only identifiers and
   contributing validation records needed by the approved selectors.
-- Let a fake algorithm demonstrate bounded-update ownership. Design the real ERM/GRIT
-  algorithm protocol inside the CMNIST slice rather than preinstalling future hooks.
-- Use a replaceable checkpoint-state adapter sufficient for inference restoration; measure
-  actual PyTorch checkpoint needs before selecting a durable container.
-- Keep projection separate and use CPU float64 when implemented, but select its persisted
-  array boundary only after measuring real CMNIST shapes and workflow.
+- The CMNIST slice now demonstrates bounded-update ownership with the concrete linear
+  probe. Do not preinstall future-method hooks from this evidence.
+- The CMNIST-specific selected-inference checkpoint uses two verified `.npy` arrays behind
+  the existing restoration protocol. Do not generalize it into resume storage.
+- Keep projection separate and CPU float64; basis persistence remains unresolved because
+  the local slice fits once before its runs and only needs canonical diagnostics.
 - Record local JSON sufficient to reproduce selection. Expand provenance and failure
   reporting from observed vertical-slice needs rather than an exhaustive framework.
 
@@ -1375,7 +1388,6 @@ inventory only until a vertical slice demands them.
 
 ### Scientific decisions deliberately unresolved
 
-- CMNIST's deterministic official-training source-partition algorithm.
 - The scientific definitions of conditional/random and nearest-pair construction.
 - Whether to add the optional reporting-only paired ID rendering of CMNIST final-test
   sources.
@@ -1397,9 +1409,9 @@ These must become explicit protocol decisions before their configurations can re
 3. **Implemented:** the in-memory lifecycle and one-way final-test gate.
 4. **Verified:** the spine was reviewed for leakage and accidental framework growth; the
    focused suite passes without production experiment components.
-5. **After user approval:** exercise and revise the internal contracts in the CMNIST
-   ERM/oracle-GRIT vertical slice, adding production data, pair, projection, model, and
-   training code only as that slice demands.
+5. **Implemented and verified:** the CMNIST ERM/oracle-GRIT vertical slice exercised and
+   revised the internal contracts, adding data, pair, projection, model, and training code
+   only where that slice demanded it.
 6. Exercise and revise the same boundaries in Waterbirds before treating type names or
    module boundaries as stable shared interfaces.
 

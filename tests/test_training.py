@@ -1,0 +1,157 @@
+"""Real linear-probe update, checkpoint, and rank-zero-equivalence tests."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import torch
+
+from grit.checkpoints import restore_checkpoint
+from grit.config import LinearProbeTrainingConfig
+from grit.features import FeatureTable, TableRole
+from grit.projection import fit_linear_projection
+from grit.schemas import CmnistSelector, SeedStage
+from grit.selection import (
+    FrozenCheckpointSelection,
+    select_checkpoint,
+)
+from grit.training import (
+    LinearProbeState,
+    PersistedLinearCheckpointStore,
+    persist_selected_linear_checkpoint,
+    train_linear_probe,
+)
+
+
+def _table(name: str, role: TableRole, rows: int, offset: int) -> FeatureTable:
+    generator = torch.Generator(device="cpu").manual_seed(100 + offset)
+    features = torch.randn((rows, 512), generator=generator)
+    targets = (features[:, 0] + 0.25 * features[:, 1] > 0).to(torch.int64)
+    return FeatureTable(
+        name=name,
+        role=role,
+        source_ids=tuple(f"source:{name}:{index}" for index in range(rows)),
+        features=features,
+        digits=targets * 5,
+        clean_labels=targets,
+        targets=targets,
+        colors=targets.clone(),
+    )
+
+
+def _training_config() -> LinearProbeTrainingConfig:
+    return LinearProbeTrainingConfig(
+        optimizer="adam",
+        batch_size=8,
+        learning_rate=0.01,
+        weight_decay=0.0,
+        max_epochs=3,
+    )
+
+
+def _tables() -> tuple[
+    tuple[FeatureTable, FeatureTable],
+    tuple[FeatureTable, FeatureTable, FeatureTable],
+]:
+    return (
+        (
+            _table("train_e01", "training", 16, 1),
+            _table("train_e02", "training", 16, 2),
+        ),
+        (
+            _table("val_e01", "validation", 8, 3),
+            _table("val_e02", "validation", 8, 4),
+            _table("val_e05", "validation", 8, 5),
+        ),
+    )
+
+
+def test_real_trainer_selects_persists_and_restores_checkpoint(tmp_path: Path) -> None:
+    training, validation = _tables()
+    run = train_linear_probe(
+        training,
+        validation,
+        _training_config(),
+        run_id="run:erm:301",
+        candidate_id="candidate:erm",
+        method_id="erm",
+        scientific_config_digest="sha256:erm",
+        seed_stage=SeedStage.FINAL,
+        seed=301,
+        projection=None,
+        projection_rank=None,
+    )
+    assert len(run.validation_metrics) == 3 * 3
+    decision = select_checkpoint(
+        run.validation_metrics,
+        CmnistSelector.PRIMARY_ROBUST,
+    )
+    frozen = FrozenCheckpointSelection(
+        frozen_checkpoint_id="frozen:checkpoint",
+        candidate_selection_id="frozen:candidate",
+        selector=CmnistSelector.PRIMARY_ROBUST,
+        method_id="erm",
+        checkpoint=decision.checkpoint,
+        decision=decision,
+    )
+    selected = run.store.load(decision.checkpoint.checkpoint_id)
+    checkpoint_root = tmp_path / "selected"
+    manifest = persist_selected_linear_checkpoint(selected, checkpoint_root)
+    assert manifest.checkpoint == decision.checkpoint
+
+    zero_state = LinearProbeState(
+        weight=torch.zeros((2, 512)),
+        bias=torch.zeros(2),
+    )
+    run.algorithm.restore_inference_state(zero_state)
+    receipt = restore_checkpoint(
+        frozen,
+        PersistedLinearCheckpointStore(checkpoint_root),
+        run.algorithm.restore_inference_state,
+    )
+    assert receipt.checkpoint == decision.checkpoint
+    assert torch.equal(
+        run.algorithm.capture_inference_state().weight,
+        selected.state.weight,
+    )
+
+
+def test_rank_zero_grit_and_erm_are_exactly_equivalent() -> None:
+    training, validation = _tables()
+    pair_left = torch.randn((8, 512), generator=torch.Generator().manual_seed(9))
+    pair_right = torch.randn((8, 512), generator=torch.Generator().manual_seed(10))
+    identity = fit_linear_projection(pair_left, pair_right, requested_rank=0)
+    erm = train_linear_probe(
+        training,
+        validation,
+        _training_config(),
+        run_id="run:erm",
+        candidate_id="candidate:erm",
+        method_id="erm",
+        scientific_config_digest="sha256:shared",
+        seed_stage=SeedStage.TUNING,
+        seed=101,
+        projection=None,
+        projection_rank=None,
+    )
+    grit = train_linear_probe(
+        training,
+        validation,
+        _training_config(),
+        run_id="run:grit",
+        candidate_id="candidate:grit",
+        method_id="grit",
+        scientific_config_digest="sha256:shared",
+        seed_stage=SeedStage.TUNING,
+        seed=101,
+        projection=identity,
+        projection_rank=0,
+    )
+    erm_state = erm.algorithm.capture_inference_state()
+    grit_state = grit.algorithm.capture_inference_state()
+    assert torch.equal(erm_state.weight, grit_state.weight)
+    assert torch.equal(erm_state.bias, grit_state.bias)
+    assert erm.epoch_losses == grit.epoch_losses
+    assert tuple(metric.value for metric in erm.validation_metrics) == tuple(
+        metric.value for metric in grit.validation_metrics
+    )
