@@ -2,9 +2,9 @@
 
 Status: **Minimal Milestone 3 spine approved, implemented, and verified.**
 Detailed type names, field sets, and module boundaries remain internal and revisable until
-both the CMNIST and Waterbirds vertical slices have exercised them. The reviewed CMNIST
-vertical slice has exercised the implementation; Waterbirds is now the active second
-proving ground.
+both the CMNIST and Waterbirds vertical slices have exercised them. CMNIST is reviewed;
+the implemented, hermetically verified Waterbirds slice now supplies the second proving
+ground and awaits user review before any internal names are treated as stable.
 
 This proposal turns the approved experiment protocols into shared interfaces for the
 rewrite. It preserves useful mathematical behavior without preserving the inherited

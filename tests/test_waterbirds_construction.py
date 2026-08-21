@@ -29,7 +29,9 @@ from grit.waterbirds_pairs import (
     WaterbirdsOraclePairManifest,
     build_waterbirds_oracle_pairs,
 )
-from tests.waterbirds_fixtures import make_waterbirds_fixture
+from grit.waterbirds_smoke_assets import (
+    make_waterbirds_smoke_assets as make_waterbirds_fixture,
+)
 
 
 def test_fixture_construction_replaces_minority_and_preserves_counts(
@@ -155,6 +157,23 @@ def test_manifest_round_trip_revalidates_relationship_identity(tmp_path: Path) -
     first_relationship["land_record_id"] = "waterbirds:released:missing"
     with pytest.raises(ValidationError, match="outside training"):
         WaterbirdsDatasetManifest.model_validate_json(json.dumps(payload))
+
+    spoofed = json.loads(construction.manifest.canonical_json())
+    relation = spoofed["relationships"][0]
+    endpoint_ids = {relation["land_record_id"], relation["water_record_id"]}
+    relation["pair_id"] = "sha256:caller-controlled"
+    for record in spoofed["records"]:
+        if record["record_id"] in endpoint_ids:
+            record["pair_id"] = "sha256:caller-controlled"
+    with pytest.raises(ValidationError, match="pair ID"):
+        WaterbirdsDatasetManifest.model_validate_json(json.dumps(spoofed))
+
+    production_claim = json.loads(construction.manifest.canonical_json())
+    production_claim["profile_kind"] = "production"
+    production_claim["non_reportable"] = False
+    production_claim["base_artifact_name"] = BASE_ARTIFACT_NAME
+    with pytest.raises(ValidationError, match="canonical inventory"):
+        WaterbirdsDatasetManifest.model_validate_json(json.dumps(production_claim))
 
 
 def test_production_profile_rejects_fixture_inventory(tmp_path: Path) -> None:

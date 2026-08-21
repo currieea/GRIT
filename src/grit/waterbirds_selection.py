@@ -21,7 +21,10 @@ from grit.config import SeedSets
 from grit.schemas import SeedStage, StrictBoundaryModel, canonical_digest_value
 from grit.selection import CheckpointIdentity
 from grit.waterbirds import GroupId, WaterbirdsGroupCounts
-from grit.waterbirds_features import WaterbirdsEvaluationFeatureTable
+from grit.waterbirds_features import (
+    WaterbirdsEvaluationFeatureTable,
+    WaterbirdsFinalTestView,
+)
 
 NonEmptyStr: TypeAlias = Annotated[StrictStr, Field(min_length=1)]
 NonNegativeInt: TypeAlias = Annotated[StrictInt, Field(ge=0)]
@@ -328,6 +331,44 @@ def compute_waterbirds_validation_metric(
         metric_kind="validation",
         split_name="validation",
         seed_stage=seed_stage,
+    )
+
+
+def compute_waterbirds_final_metric(
+    view: WaterbirdsFinalTestView,
+    predictions: torch.Tensor,
+    *,
+    training_group_counts: WaterbirdsGroupCounts,
+    record_id: str,
+) -> WaterbirdsFinalTestMetricRecord:
+    if (
+        type(view) is not WaterbirdsFinalTestView
+        or view.table.split_role != "final_test"
+    ):
+        raise TypeError("final metrics require a gate-authorized Waterbirds final view")
+    values = _group_values(view.table, predictions)
+    aggregate = _aggregate_fields(values, training_group_counts)
+    return WaterbirdsFinalTestMetricRecord(
+        record_id=record_id,
+        run_id=view.run_id,
+        candidate_id=view.candidate_id,
+        method_id=view.method_id,
+        scientific_config_digest=view.scientific_config_digest,
+        dataset_manifest_digest=view.table.dataset_manifest_digest,
+        feature_cache_manifest_digest=view.feature_cache_manifest_digest,
+        checkpoint_id=view.checkpoint_id,
+        epoch=view.epoch,
+        seed=view.seed,
+        projection_rank=view.projection_rank,
+        groups=values,
+        training_group_counts=training_group_counts,
+        training_weights_digest=_training_weights_digest(training_group_counts),
+        worst_group_accuracy=aggregate[0],
+        adjusted_average_accuracy=aggregate[1],
+        raw_average_accuracy=aggregate[2],
+        metric_kind="final_test",
+        split_name="test",
+        seed_stage=SeedStage.FINAL,
     )
 
 

@@ -1,7 +1,7 @@
 # Target architecture for the GRIT rewrite
 
 Status: **Milestone 4 CMNIST reviewed and complete; Milestone 5 Waterbirds vertical slice
-active**
+implemented and hermetically verified, awaiting user review**
 
 ## Architectural intent
 
@@ -233,24 +233,25 @@ exact cache manifest, not only to dataset or source IDs.
 
 ### Algorithms
 
-Status: **Ownership split and concrete CMNIST ERM/GRIT linear-probe update implemented;
-future-method hooks deferred.**
+Status: **Ownership split and concrete CMNIST/Waterbirds ERM/GRIT linear-probe updates
+implemented; future-method hooks deferred.**
 
 Algorithms own method-specific optimization state and updates. They receive prepared
 models, batches, and context; they do not discover datasets or decide which split selects
 the final checkpoint.
 
-CMNIST validates a concrete two-class linear algorithm that owns its model, Adam optimizer,
-optional fitted input projection, bounded batch update, prediction, and inference state.
-The trainer owns epoch/batch iteration, validation cadence, and checkpoint capture.
+CMNIST and Waterbirds validate a concrete two-class linear algorithm that owns its model,
+Adam optimizer, optional fitted input projection, bounded batch update, prediction, and
+inference state. Dataset-specific trainers own epoch/batch iteration, validation cadence,
+metric creation, and checkpoint capture.
 Verified future needs such as multiple optimizer steps, parameter replacement, non-model
 state, and step-level validation remain documented in `contracts.md`, but add no hooks
 before the corresponding method is in scope.
 
 ### Experiment runner
 
-Status: **Concrete local CMNIST orchestration implemented; generalized search scheduling
-and production sweeps deferred.**
+Status: **Concrete local CMNIST and Waterbirds smoke orchestration implemented;
+generalized search scheduling and production sweeps deferred.**
 
 The eventual runner owns the lifecycle:
 
@@ -276,6 +277,11 @@ implement algorithm-specific mathematics.
 Its distinct candidate and per-run checkpoint tokens ensure final-seed validation can
 choose an epoch but cannot change frozen hyperparameters. Final-test access becomes legal
 only after both decisions are frozen and the matching checkpoint is restored.
+
+Milestone 5 repeats that lifecycle with Waterbirds-CF four-group metrics and its single
+approved selector. Its offline smoke runner executes exactly three declared candidates,
+the 3+2 seed confirmation protocol, and ten final seeds for ERM and oracle GRIT. This is
+lifecycle verification, not the deferred reportable grid scheduler or a scientific result.
 
 ### Selection policy
 
@@ -316,6 +322,11 @@ Milestone 4 implements `grit-cmnist-prepare` and `grit-cmnist-run` under
 `src/grit/cli/`. The first is the explicit real MNIST/official-CLIP preparation boundary;
 the second consumes the strict, non-reportable hermetic smoke YAML. Neither command
 contains a second training or selection implementation.
+
+Milestone 5 similarly implements `grit-waterbirds-prepare` and `grit-waterbirds-run`.
+Preparation accepts explicit server paths and never downloads Waterbirds, CUB, masks, or
+Places; only a separately requested pinned CLIP-weight download is possible. The run
+command consumes the strict offline smoke profile and cannot produce a reportable result.
 
 The existing top-level `scripts/` directory remains inherited preprocessing and
 compatibility evidence. Its files are not templates for rewrite commands and are not

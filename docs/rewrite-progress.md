@@ -6,10 +6,10 @@ boundaries and after material decisions; do not use it as a raw command transcri
 ## Current state
 
 - Branch: `rewrite`
-- Active milestone: Waterbirds ERM/oracle-GRIT vertical slice (Milestone 5)
+- Active milestone: Waterbirds ERM/oracle-GRIT vertical slice review (Milestone 5)
 - Legacy implementation: Preserved and statically characterized; runtime reproduction deferred
-- New implementation: Reviewed CMNIST ERM/oracle-GRIT vertical slice plus the active
-  server-ready, hermetically verified Waterbirds-CF vertical-slice work
+- New implementation: Reviewed CMNIST plus implemented, server-ready, hermetically
+  verified Waterbirds-CF ERM/oracle-GRIT vertical slice awaiting user review
 
 ## Completed checkpoints
 
@@ -422,10 +422,7 @@ Verification:
 - No real dataset/feature download, reportable sweep, Waterbirds work, W&B integration,
   or legacy implementation change was performed.
 
-## Next proposed checkpoint
-
-Complete and review the active Milestone 5 Waterbirds-CF ERM/oracle-GRIT vertical slice;
-do not prebuild Milestone 6 search/tracking infrastructure.
+## Milestone 5 implementation checkpoints
 
 ### Milestone 5 checkpoint: deterministic Waterbirds-CF construction
 
@@ -508,3 +505,50 @@ do not prebuild Milestone 6 search/tracking infrastructure.
 - Hermetic tests cover training-proportion weighting, missing groups, all tie stages,
   missing/extra/wrong-stage seeds, finalist membership, retained tuning decisions,
   method separation, final checkpoint freezing, and final-metric rejection.
+
+### Milestone 5 checkpoint: training, final gate, results, and commands
+
+- Reused the compositional linear-probe algorithm for Waterbirds ERM and oracle GRIT.
+  Algorithms own bounded Adam updates; the Waterbirds trainer owns shuffled batch/epoch
+  iteration, four-group validation, and in-memory epoch checkpoints.
+- Added the narrow selected-inference-checkpoint persistence path and a Waterbirds-specific
+  restoration receipt. No optimizer, RNG, scheduler, or resume state is promised.
+- Bound an opaque final-test handle to the intended run, frozen candidate, final validation
+  decision, restored checkpoint, seed, projection rank, and exact feature-cache manifest.
+  Only the opened view can produce the structurally distinct final-test metric.
+- Added strict resolved candidate and canonical run-result schemas. Results revalidate the
+  entire candidate/checkpoint/restoration/validation/final identity chain and reference
+  dataset, feature, pair, projection, and selected-checkpoint artifacts rather than
+  embedding tensors.
+- Added `grit-waterbirds-prepare`, which consumes explicit local server assets and never
+  acquires Waterbirds/CUB/masks/Places, plus `grit-waterbirds-run`, which consumes only the
+  strict non-reportable offline smoke profile. The null event sink remains the default;
+  W&B is absent.
+- The smoke lifecycle constructs fixture assets, caches fake features, fits the real
+  CPU-float64 projection, runs exact 3+2 validation selection independently for ERM and
+  GRIT, restores one checkpoint for each of ten final seeds, then writes canonical local
+  group results. Its summary retains per-seed worst-group, adjusted-average, and raw-average
+  values with mean, sample standard deviation, 95% t-intervals, and paired GRIT-minus-ERM
+  worst-group differences. It is expressly non-reportable and contains no test-oracle
+  branch.
+
+Verification:
+
+- `uv lock --check` — passed (41 packages resolved).
+- `uv run --frozen ruff check .` — passed.
+- `uv run --frozen basedpyright` — 0 errors, warnings, or notes.
+- `UV_CACHE_DIR=/tmp/grit-uv-cache uv run --offline --frozen pytest` — 84 passed on
+  Python 3.10.20.
+- `uv run --project ... --offline --frozen grit-waterbirds-run
+  configs/waterbirds/smoke.yaml` — passed from `/tmp`, producing 20 canonical,
+  non-reportable final-run results across the ten declared seeds for each method.
+- Relative-link validation checked all nine Markdown files under `docs/` and `configs/`
+  with no missing local target; `git diff --check` passed.
+- No Waterbirds, CUB, Places, CLIP, or other real asset was downloaded. No reportable
+  sweep, test-oracle diagnostic, W&B operation, or legacy implementation change ran.
+
+## Next proposed checkpoint
+
+Review and approve Milestone 5, then decide the first bounded Milestone 6 pairing/search
+task. Do not start estimated pairs, GroupDRO, production W&B, or the reportable scientific
+sweep before that review.

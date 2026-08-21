@@ -3,9 +3,9 @@
 This directory contains the design and experimental contracts for the GRIT rewrite. Core
 scientific protocols were established before implementation so decisions are reviewed
 rather than inferred from legacy code. The minimal Milestone 3 contract spine is approved,
-implemented, and verified. The implemented Milestone 4 CMNIST vertical slice now exercises
-it alongside the preserved inherited implementation and is awaiting user review; internal
-names remain revisable until Waterbirds provides the second vertical-slice test.
+implemented, and verified. Milestone 4 CMNIST is reviewed. The implemented and hermetically
+verified Milestone 5 Waterbirds vertical slice now provides the second dataset test and is
+awaiting user review; shared names remain revisable until that review is accepted.
 
 ## Documents
 

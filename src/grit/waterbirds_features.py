@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Literal, Protocol, TypeAlias, cast
+from typing import TYPE_CHECKING, Annotated, Literal, Protocol, TypeAlias, cast
 
 import numpy as np
 import torch
@@ -26,6 +26,13 @@ from grit.waterbirds_pairs import (
     WaterbirdsOraclePairManifest,
     WaterbirdsOraclePairSet,
 )
+
+if TYPE_CHECKING:
+    from grit.waterbirds_selection import (
+        FrozenWaterbirdsCandidate,
+        FrozenWaterbirdsCheckpoint,
+    )
+    from grit.waterbirds_training import WaterbirdsRestorationReceipt
 
 FEATURE_DIMENSION = 512
 NonEmptyStr: TypeAlias = Annotated[StrictStr, Field(min_length=1)]
@@ -165,6 +172,117 @@ class WaterbirdsEvaluationFeatureTable:
 
 
 @dataclass(frozen=True, slots=True)
+class WaterbirdsFinalTestView:
+    """Final features materialized only by the post-restoration gate."""
+
+    authorization_id: str
+    run_id: str
+    candidate_id: str
+    method_id: Literal["erm", "grit"]
+    scientific_config_digest: str
+    checkpoint_id: str
+    epoch: int
+    seed: int
+    projection_rank: int | None
+    feature_cache_manifest_digest: str
+    table: WaterbirdsEvaluationFeatureTable
+
+
+class WaterbirdsFinalTestHandle:
+    """Opaque final table bound to one cache and intended final run."""
+
+    __slots__ = (
+        "__candidate_id",
+        "__feature_cache_manifest_digest",
+        "__method_id",
+        "__projection_rank",
+        "__run_id",
+        "__scientific_config_digest",
+        "__seed",
+        "__table",
+    )
+
+    def __init__(
+        self,
+        *,
+        run_id: str,
+        candidate_id: str,
+        method_id: Literal["erm", "grit"],
+        scientific_config_digest: str,
+        seed: int,
+        projection_rank: int | None,
+        feature_cache_manifest_digest: str,
+        table: WaterbirdsEvaluationFeatureTable,
+    ) -> None:
+        self.__run_id = run_id
+        self.__candidate_id = candidate_id
+        self.__method_id: Literal["erm", "grit"] = method_id
+        self.__scientific_config_digest = scientific_config_digest
+        self.__seed = seed
+        self.__projection_rank = projection_rank
+        self.__feature_cache_manifest_digest = feature_cache_manifest_digest
+        self.__table = table
+
+    def open(
+        self,
+        candidate: FrozenWaterbirdsCandidate,
+        checkpoint: FrozenWaterbirdsCheckpoint,
+        restoration: WaterbirdsRestorationReceipt,
+    ) -> WaterbirdsFinalTestView:
+        """Open only after candidate/checkpoint selection and matching restoration."""
+
+        if checkpoint.candidate_selection_id != candidate.frozen_selection_id:
+            raise ValueError("final checkpoint does not belong to Waterbirds candidate")
+        if checkpoint.method_id != candidate.method_id:
+            raise ValueError(
+                "final checkpoint method does not match Waterbirds candidate"
+            )
+        identity = checkpoint.checkpoint
+        expected = (
+            self.__run_id,
+            self.__candidate_id,
+            self.__scientific_config_digest,
+            self.__method_id,
+            self.__seed,
+            self.__projection_rank,
+        )
+        observed = (
+            identity.run_id,
+            identity.candidate_id,
+            identity.scientific_config_digest,
+            checkpoint.method_id,
+            checkpoint.decision.seed,
+            checkpoint.decision.projection_rank,
+        )
+        if observed != expected:
+            raise ValueError(
+                "final handle identity does not match Waterbirds selection"
+            )
+        if restoration.candidate_selection_id != candidate.frozen_selection_id:
+            raise ValueError("Waterbirds restoration belongs to another candidate")
+        if restoration.checkpoint != identity:
+            raise ValueError("Waterbirds restoration does not match final checkpoint")
+        if (
+            self.__table.feature_cache_manifest_digest
+            != self.__feature_cache_manifest_digest
+        ):
+            raise ValueError("Waterbirds final handle feature cache is inconsistent")
+        return WaterbirdsFinalTestView(
+            authorization_id=f"final:{self.__run_id}:{restoration.receipt_id}",
+            run_id=self.__run_id,
+            candidate_id=self.__candidate_id,
+            method_id=self.__method_id,
+            scientific_config_digest=self.__scientific_config_digest,
+            checkpoint_id=identity.checkpoint_id,
+            epoch=identity.epoch,
+            seed=self.__seed,
+            projection_rank=self.__projection_rank,
+            feature_cache_manifest_digest=self.__feature_cache_manifest_digest,
+            table=self.__table,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class WaterbirdsFeatureCache:
     manifest: WaterbirdsFeatureCacheManifest
     features: torch.Tensor
@@ -189,6 +307,46 @@ class WaterbirdsFeatureCache:
 
     def validation_table(self) -> WaterbirdsEvaluationFeatureTable:
         return self._evaluation_table("validation")
+
+    def issue_final_handle(
+        self,
+        *,
+        run_id: str,
+        candidate_id: str,
+        method_id: Literal["erm", "grit"],
+        scientific_config_digest: str,
+        seed: int,
+        projection_rank: int | None,
+    ) -> WaterbirdsFinalTestHandle:
+        return WaterbirdsFinalTestHandle(
+            run_id=run_id,
+            candidate_id=candidate_id,
+            method_id=method_id,
+            scientific_config_digest=scientific_config_digest,
+            seed=seed,
+            projection_rank=projection_rank,
+            feature_cache_manifest_digest=self.manifest.canonical_digest(),
+            table=self._evaluation_table("final_test"),
+        )
+
+    def verify_final_view(
+        self,
+        view: WaterbirdsFinalTestView,
+    ) -> WaterbirdsEvaluationFeatureTable:
+        if view.feature_cache_manifest_digest != self.manifest.canonical_digest():
+            raise WaterbirdsFeatureCacheError(
+                "authorized final view belongs to another Waterbirds feature cache"
+            )
+        expected = self._evaluation_table("final_test")
+        if (
+            view.table.record_ids != expected.record_ids
+            or view.table.feature_cache_manifest_digest
+            != expected.feature_cache_manifest_digest
+        ):
+            raise WaterbirdsFeatureCacheError(
+                "authorized final view does not match cached final records"
+            )
+        return view.table
 
     def _evaluation_table(
         self,

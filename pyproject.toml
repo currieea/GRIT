@@ -21,6 +21,8 @@ dependencies = [
 [project.scripts]
 grit-cmnist-prepare = "grit.cli.cmnist_prepare:main"
 grit-cmnist-run = "grit.cli.cmnist_run:main"
+grit-waterbirds-prepare = "grit.cli.waterbirds_prepare:main"
+grit-waterbirds-run = "grit.cli.waterbirds_run:main"
 
 [dependency-groups]
 dev = [

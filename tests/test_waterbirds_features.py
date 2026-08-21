@@ -20,9 +20,11 @@ from grit.waterbirds import (
 from grit.waterbirds_features import (
     DeterministicFakeWaterbirdsEncoder,
     Normalization,
+    WaterbirdsEvaluationFeatureTable,
     WaterbirdsFeatureCache,
     WaterbirdsFeatureCacheError,
     WaterbirdsFeatureCacheManifest,
+    WaterbirdsFinalTestView,
     fit_waterbirds_oracle_projection,
     load_waterbirds_feature_cache,
     prepare_waterbirds_feature_cache,
@@ -32,7 +34,9 @@ from grit.waterbirds_pairs import (
     WaterbirdsOraclePairSet,
     build_waterbirds_oracle_pairs,
 )
-from tests.waterbirds_fixtures import make_waterbirds_fixture
+from grit.waterbirds_smoke_assets import (
+    make_waterbirds_smoke_assets as make_waterbirds_fixture,
+)
 
 
 def _prepared(
@@ -227,3 +231,56 @@ def test_feature_manifest_round_trip_rejects_record_reordering(tmp_path: Path) -
     payload["records"][0]["row_index"] = 1
     with pytest.raises(ValidationError, match="contiguous"):
         WaterbirdsFeatureCacheManifest.model_validate_json(json.dumps(payload))
+
+
+def test_final_view_is_bound_to_exact_waterbirds_feature_cache(
+    tmp_path: Path,
+) -> None:
+    fixture = make_waterbirds_fixture(tmp_path / "assets")
+    construction = construct_waterbirds_cf(
+        fixture.assets, fixture.profile, tmp_path / "construction"
+    )
+    caches: list[WaterbirdsFeatureCache] = []
+    for seed in (1, 2):
+        root = tmp_path / f"cache-{seed}"
+        prepare_waterbirds_feature_cache(
+            construction,
+            DeterministicFakeWaterbirdsEncoder(seed=seed),
+            root,
+            normalization="none",
+        )
+        caches.append(load_waterbirds_feature_cache(root))
+    first, second = caches
+    final_rows = tuple(
+        record for record in first.manifest.records if record.split_role == "final_test"
+    )
+    indices = torch.tensor(
+        [record.row_index for record in final_rows], dtype=torch.int64
+    )
+    table = WaterbirdsEvaluationFeatureTable(
+        dataset_manifest_digest=first.manifest.dataset_manifest_digest,
+        feature_cache_manifest_digest=first.manifest.canonical_digest(),
+        split_role="final_test",
+        record_ids=tuple(record.record_id for record in final_rows),
+        features=first.features[indices],
+        labels=torch.tensor([record.bird_label for record in final_rows]),
+        backgrounds=torch.tensor([record.background for record in final_rows]),
+        group_ids=tuple(record.group_id for record in final_rows),
+    )
+    view = WaterbirdsFinalTestView(
+        authorization_id="final:fixture",
+        run_id="run:fixture",
+        candidate_id="candidate:fixture",
+        method_id="erm",
+        scientific_config_digest="config:fixture",
+        checkpoint_id="checkpoint:fixture",
+        epoch=1,
+        seed=301,
+        projection_rank=None,
+        feature_cache_manifest_digest=first.manifest.canonical_digest(),
+        table=table,
+    )
+
+    assert first.verify_final_view(view) == table
+    with pytest.raises(WaterbirdsFeatureCacheError, match="another"):
+        second.verify_final_view(view)

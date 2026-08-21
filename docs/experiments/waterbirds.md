@@ -1,7 +1,8 @@
 # Waterbirds experiment protocol
 
-Status: **Core scientific and reconstruction protocol approved; source acquisition,
-implementation, and estimated-pair details remain**
+Status: **Core protocol and ERM/oracle-GRIT vertical slice implemented and hermetically
+verified; server source acquisition, reportable execution, and estimated-pair details
+remain**
 
 ## Purpose
 
@@ -612,5 +613,7 @@ are not valid ordinary selections and numerical parity is not an exit requiremen
 - [x] Minimal retained Places subset and storage plan approved
 - [ ] Source datasets acquired and hashes verified on the experiment server
 - [x] Waterbirds-CF generator and integrity checks implemented and hermetically tested
+- [x] ERM/oracle-GRIT feature, projection, four-group selection, restoration, and final
+      lifecycle implemented and hermetically tested
 - [ ] Conditional and nearest-pair details approved
 - [ ] Later-method search spaces approved

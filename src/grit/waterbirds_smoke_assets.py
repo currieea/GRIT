@@ -1,4 +1,4 @@
-"""Hermetic Waterbirds assets small enough for contract and smoke tests."""
+"""Explicitly non-reportable Waterbirds-like assets for offline smoke execution."""
 
 from __future__ import annotations
 
@@ -19,12 +19,18 @@ from grit.waterbirds import (
 
 
 @dataclass(frozen=True, slots=True)
-class WaterbirdsFixture:
+class WaterbirdsSmokeAssets:
     assets: ParsedWaterbirdsAssets
     profile: FixtureWaterbirdsProfile
 
 
-def make_waterbirds_fixture(root: Path) -> WaterbirdsFixture:
+def make_waterbirds_smoke_assets(
+    root: Path,
+    *,
+    construction_seed: int = 17,
+) -> WaterbirdsSmokeAssets:
+    """Create a 10/4/4 fixture that cannot satisfy the production profile."""
+
     released_root = root / "waterbird_fixture"
     cub_root = root / "CUB_200_2011"
     masks_root = root / "segmentations"
@@ -32,8 +38,6 @@ def make_waterbirds_fixture(root: Path) -> WaterbirdsFixture:
     released_root.mkdir(parents=True)
     (cub_root / "images").mkdir(parents=True)
     masks_root.mkdir(parents=True)
-
-    # Training groups are 4/2/1/3; validation and test each contain all four groups.
     identities = (
         *((index, 0, 0, 0) for index in range(1, 5)),
         *((index, 0, 1, 0) for index in range(5, 7)),
@@ -80,7 +84,6 @@ def make_waterbirds_fixture(root: Path) -> WaterbirdsFixture:
                 "place_filename": f"released/place_{image_id:04d}.jpg",
             }
         )
-
     (cub_root / "images.txt").write_text(
         "\n".join(image_lines) + "\n", encoding="utf-8"
     )
@@ -107,7 +110,6 @@ def make_waterbirds_fixture(root: Path) -> WaterbirdsFixture:
         writer = csv.DictWriter(stream, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(metadata_rows)
-
     categories = (
         "bamboo_forest",
         "forest/broadleaf",
@@ -123,12 +125,11 @@ def make_waterbirds_fixture(root: Path) -> WaterbirdsFixture:
                 dtype=np.uint8,
             )
             _save_rgb(directory / f"background_{image_index}.jpg", pixels)
-
     profile = FixtureWaterbirdsProfile(
         kind="fixture",
         non_reportable=True,
         base_artifact_name="waterbird_fixture",
-        construction_seed=17,
+        construction_seed=construction_seed,
         train_group_counts=WaterbirdsGroupCounts(
             landbird_land=4,
             landbird_water=2,
@@ -147,7 +148,7 @@ def make_waterbirds_fixture(root: Path) -> WaterbirdsFixture:
         places_root=places_root,
         artifact_name=profile.base_artifact_name,
     )
-    return WaterbirdsFixture(assets=assets, profile=profile)
+    return WaterbirdsSmokeAssets(assets=assets, profile=profile)
 
 
 def _save_rgb(path: Path, pixels: NDArray[np.uint8]) -> None:

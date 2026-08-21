@@ -161,7 +161,8 @@ Status: **Reviewed, implemented, and verified**
 
 ## Milestone 5: Waterbirds vertical slice
 
-Status: **Active**
+Status: **Implemented and hermetically verified; awaiting user review and server-asset
+execution**
 
 ### Work
 

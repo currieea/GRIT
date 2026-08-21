@@ -466,6 +466,29 @@ class WaterbirdsDatasetManifest(StrictBoundaryModel):
 
     @model_validator(mode="after")
     def _validate_manifest(self) -> WaterbirdsDatasetManifest:
+        if self.profile_kind == "production":
+            expected_production = WaterbirdsConstructionCounts(
+                supervised_training=4_795,
+                unpaired_majority=4_315,
+                retained_majority_endpoints=240,
+                generated_minority_endpoints=240,
+                oracle_relationships=240,
+                landbird_relationships=184,
+                waterbird_relationships=56,
+                validation=1_199,
+                test=5_794,
+                training_groups=PRODUCTION_TRAIN_GROUP_COUNTS,
+            )
+            if (
+                self.non_reportable
+                or self.base_artifact_name != BASE_ARTIFACT_NAME
+                or self.counts != expected_production
+            ):
+                raise ValueError(
+                    "production Waterbirds manifest requires the canonical inventory"
+                )
+        elif not self.non_reportable:
+            raise ValueError("fixture Waterbirds manifests must be non-reportable")
         record_ids = tuple(record.record_id for record in self.records)
         if len(record_ids) != len(set(record_ids)):
             raise ValueError("Waterbirds-CF record IDs must be unique")
@@ -478,6 +501,15 @@ class WaterbirdsDatasetManifest(StrictBoundaryModel):
         test = tuple(
             record for record in self.records if record.split_role == "final_test"
         )
+        training_sources = {record.source_cub_image_id for record in training}
+        validation_sources = {record.source_cub_image_id for record in validation}
+        test_sources = {record.source_cub_image_id for record in test}
+        if (
+            training_sources & validation_sources
+            or training_sources & test_sources
+            or validation_sources & test_sources
+        ):
+            raise ValueError("Waterbirds split source identities must be disjoint")
         if (len(training), len(validation), len(test)) != (
             self.counts.supervised_training,
             self.counts.validation,
@@ -508,6 +540,8 @@ class WaterbirdsDatasetManifest(StrictBoundaryModel):
         training_by_id = {record.record_id: record for record in training}
         majority_ids: set[str] = set()
         generated_ids: set[str] = set()
+        source_positions: set[int] = set()
+        background_positions: set[int] = set()
         label_counts = {0: 0, 1: 0}
         for relationship in self.relationships:
             land = training_by_id.get(relationship.land_record_id)
@@ -520,6 +554,18 @@ class WaterbirdsDatasetManifest(StrictBoundaryModel):
                 raise AssertionError("relationship endpoint narrowing failed")
             if land.background != 0 or water.background != 1:
                 raise ValueError("oracle relationships must be land minus water")
+            expected_pair_id = canonical_digest_value(
+                {
+                    "method": self.construction_method_id,
+                    "source_bundle_digest": self.source_bundle_digest,
+                    "construction_seed": self.construction_seed,
+                    "majority_record_id": relationship.majority_record_id,
+                    "generated_record_id": relationship.generated_record_id,
+                    "orientation": "land_minus_water",
+                }
+            )
+            if relationship.pair_id != expected_pair_id:
+                raise ValueError("oracle relationship pair ID is inconsistent")
             if (
                 land.record_id != relationship.land_record_id
                 or water.record_id != relationship.water_record_id
@@ -555,6 +601,7 @@ class WaterbirdsDatasetManifest(StrictBoundaryModel):
                 != relationship.foreground_pixels_digest
                 or land.geometry != relationship.geometry
                 or water.geometry != relationship.geometry
+                or land.bounding_box_xywh != water.bounding_box_xywh
             ):
                 raise ValueError(
                     "oracle relationship foreground geometry is inconsistent"
@@ -572,13 +619,44 @@ class WaterbirdsDatasetManifest(StrictBoundaryModel):
                 raise ValueError("oracle majority endpoint has the wrong component")
             if generated.component != "generated_minority":
                 raise ValueError("oracle generated endpoint has the wrong component")
+            expected_generated_id = "waterbirds:generated:" + canonical_digest_value(
+                {
+                    "method": self.construction_method_id,
+                    "source_bundle_digest": self.source_bundle_digest,
+                    "construction_seed": self.construction_seed,
+                    "source_cub_image_id": relationship.source_cub_image_id,
+                    "background_asset_id": generated.background_asset_id,
+                    "target_background": int(generated.background),
+                    "selection_position": generated.selection_position,
+                }
+            ).removeprefix("sha256:")
+            if generated.record_id != expected_generated_id:
+                raise ValueError("generated Waterbirds record ID is inconsistent")
+            if (
+                generated.selection_position != relationship.source_selection_position
+                or relationship.source_selection_position
+                != relationship.background_selection_position
+            ):
+                raise ValueError(
+                    "oracle relationship selection position is inconsistent"
+                )
             majority_ids.add(majority.record_id)
             generated_ids.add(generated.record_id)
+            source_positions.add(relationship.source_selection_position)
+            background_positions.add(relationship.background_selection_position)
             label_counts[int(relationship.bird_label)] += 1
         if len(majority_ids) != len(self.relationships) or len(generated_ids) != len(
             self.relationships
         ):
             raise ValueError("oracle relationship endpoints must be unique")
+        expected_positions = set(range(len(self.relationships)))
+        if (
+            source_positions != expected_positions
+            or background_positions != expected_positions
+        ):
+            raise ValueError(
+                "oracle relationship positions must be contiguous and unique"
+            )
         if label_counts != {
             0: self.counts.landbird_relationships,
             1: self.counts.waterbird_relationships,
@@ -597,6 +675,14 @@ class WaterbirdsDatasetManifest(StrictBoundaryModel):
                 raise ValueError(
                     "Waterbirds-CF split membership digest is inconsistent"
                 )
+        if self.released_validation_bytes_digest != canonical_digest_value(
+            tuple((record.record_id, record.image_sha256) for record in validation)
+        ):
+            raise ValueError("Waterbirds validation byte digest is inconsistent")
+        if self.released_test_bytes_digest != canonical_digest_value(
+            tuple((record.record_id, record.image_sha256) for record in test)
+        ):
+            raise ValueError("Waterbirds test byte digest is inconsistent")
         return self
 
 
