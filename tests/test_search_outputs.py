@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from grit.results import CodeProvenance
 from grit.schemas import CmnistSelector
 from grit.search import SearchLineage, build_search_plan
 from grit.search_outputs import (
@@ -145,7 +146,14 @@ def test_cmnist_production_summary_pairs_methods_by_seed() -> None:
         )
 
 
-def test_experiment_index_round_trip_and_digest_tampering(tmp_path: Path) -> None:
+def test_experiment_index_round_trip_and_digest_tampering(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "grit.search._code_provenance",
+        lambda: CodeProvenance(git_revision="1" * 40, git_dirty=False),
+    )
     plan = build_search_plan(resolved_search_fixture())
     plan_path = tmp_path / "search-plan.json"
     resolved_path = tmp_path / "resolved-config.json"

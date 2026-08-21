@@ -69,10 +69,16 @@ uv run --frozen grit-search run /path/to/production-search.yaml
 checks every referenced feature artifact digest, and writes the complete 416-candidate
 plan without loading feature arrays, training, creating checkpoints, or issuing final-test
 access. `run` executes or continues the exact 3-seed tuning, top-three confirmation, and
-10-seed final lifecycle. `status` only validates and reports canonical run state.
-All three operations take the same authored production YAML. If its output root is inside
-the source repository, that root must be Git-ignored so planning cannot change the recorded
-code dirty-state.
+10-seed final lifecycle. Both `plan` and `run` require a real Git commit and a clean
+worktree before they write or train. `status` is deliberately different: it requires the
+existing authored/resolved/plan triplet, verifies it against the supplied YAML, and reads
+canonical run and selection state without replanning or writing, so it remains usable from
+a dirty development tree.
+
+All three operations take the same authored production YAML. The output root must be a
+dedicated nonexistent, empty, or exactly compatible prior-search directory, disjoint from
+the repository root and prepared inputs. If it is inside the source repository, it must be
+Git-ignored so generated output cannot change the recorded code dirty-state.
 
 Local JSON is authoritative. A production-capable command is not evidence that the real
 scientific grid was executed: this repository has run only hermetic smoke workflows and

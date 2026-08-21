@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal, cast
 
@@ -30,10 +31,17 @@ from grit.features import (
     FeatureTableManifest,
 )
 from grit.production_search import (
+    compute_cmnist_finalists,
+    compute_cmnist_winners,
     materialize_cmnist_candidate_config,
+    persist_canonical_artifact,
     plan_production_search,
+    production_search_status,
+    run_production_search,
 )
 from grit.production_waterbirds_search import (
+    compute_waterbirds_finalists,
+    compute_waterbirds_winners,
     materialize_waterbirds_candidate_config,
 )
 from grit.projection import fit_linear_projection
@@ -46,6 +54,7 @@ from grit.search import (
     CmnistProductionSearchConfig,
     ResolvedProductionSearchConfig,
     SearchArtifactPaths,
+    SearchCandidate,
     SearchLineage,
     SearchPlan,
     SearchRuntimeConfig,
@@ -55,12 +64,15 @@ from grit.search import (
     WaterbirdsProductionSearchConfig,
     build_search_plan,
     load_production_search_config,
+    resolve_production_search_config,
 )
 from grit.search_scheduler import (
     CmnistCompletedStageRun,
     CompletedStageRun,
     LocalRunScheduler,
     SearchRunTask,
+    SearchStatus,
+    WaterbirdsCompletedStageRun,
     make_search_task,
 )
 from grit.selection import (
@@ -68,9 +80,41 @@ from grit.selection import (
     make_tuning_finalists,
     select_checkpoint,
 )
+from grit.waterbirds import (
+    WATERBIRDS_GROUP_ORDER,
+    WaterbirdsAdjustedWeightSpec,
+    WaterbirdsGroupCounts,
+)
+from grit.waterbirds_selection import (
+    WaterbirdsGroupAccuracy,
+    WaterbirdsValidationMetricRecord,
+    select_waterbirds_checkpoint,
+)
 from tests.production_artifact_fixtures import (
     write_manifest_only_waterbirds_production,
 )
+
+_CLEAN_CODE_PROVENANCE = CodeProvenance(
+    git_revision="1" * 40,
+    git_dirty=False,
+)
+
+
+def _yaml_compatible_json(payload: object) -> str:
+    return (
+        json.dumps(payload)
+        .replace("1e-05", "0.00001")
+        .replace("1e-12", "0.000000000001")
+    )
+
+
+@pytest.fixture(autouse=True)
+def _explicit_clean_search_provenance(  # pyright: ignore[reportUnusedFunction]
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "grit.search._code_provenance", lambda: _CLEAN_CODE_PROVENANCE
+    )
 
 
 def _seeds() -> SearchSeedConfig:
@@ -194,6 +238,71 @@ def resolved_search_fixture(
         ),
         input_artifacts=inputs,
     )
+
+
+def _write_stored_plan_fixture(
+    root: Path,
+    dataset: Literal["cmnist", "waterbirds_cf"] = "cmnist",
+    *,
+    adjusted_weight_spec_digest: str | None = None,
+) -> tuple[Path, SearchPlan]:
+    output_root = root / "output"
+    config_payload = _config(dataset).model_dump(mode="json")
+    config_payload["output_root"] = output_root.as_posix()
+    config_type = (
+        CmnistProductionSearchConfig
+        if dataset == "cmnist"
+        else WaterbirdsProductionSearchConfig
+    )
+    config = config_type.model_validate_json(json.dumps(config_payload))
+    config_path = root / "production.yaml"
+    authored_payload = _yaml_compatible_json(config.model_dump(mode="json")) + "\n"
+    config_path.write_text(authored_payload, encoding="utf-8")
+
+    resolved_payload = resolved_search_fixture(dataset).model_dump(mode="json")
+    resolved_payload["authored_config_digest"] = config.canonical_digest()
+    resolved_payload["authored_config_path"] = config_path.resolve().as_posix()
+    resolved_payload["output_root"] = output_root.resolve().as_posix()
+    resolved_payload["config"] = config.model_dump(mode="json")
+    if adjusted_weight_spec_digest is not None:
+        resolved_payload["lineage"]["adjusted_weight_spec_digest"] = (
+            adjusted_weight_spec_digest
+        )
+    resolved = ResolvedProductionSearchConfig.model_validate_json(
+        json.dumps(resolved_payload)
+    )
+    plan = build_search_plan(resolved)
+    output_root.mkdir(parents=True)
+    (output_root / "authored-config.yaml").write_text(
+        authored_payload, encoding="utf-8"
+    )
+    (output_root / "resolved-config.json").write_text(
+        resolved.canonical_json() + "\n", encoding="utf-8"
+    )
+    (output_root / "search-plan.json").write_text(
+        plan.canonical_json() + "\n", encoding="utf-8"
+    )
+    return config_path, plan
+
+
+def _filesystem_snapshot(root: Path) -> tuple[tuple[object, ...], ...]:
+    entries: list[tuple[object, ...]] = []
+    for path in sorted((root, *root.rglob("*"))):
+        stat = path.stat()
+        relative = "." if path == root else path.relative_to(root).as_posix()
+        entries.append(
+            (
+                relative,
+                "directory" if path.is_dir() else "file",
+                stat.st_mode,
+                stat.st_size,
+                stat.st_mtime_ns,
+                hashlib.sha256(path.read_bytes()).hexdigest()
+                if path.is_file()
+                else None,
+            )
+        )
+    return tuple(entries)
 
 
 def _digit_counts(indices: tuple[int, ...]) -> tuple[DigitCount, ...]:
@@ -438,6 +547,27 @@ def _write_manifest_only_cmnist_production(
     pair_path.write_text(pairs.canonical_json(), encoding="utf-8")
     feature_path.write_text(feature.canonical_json(), encoding="utf-8")
     return dataset_path, feature_path, pair_path
+
+
+def _write_cmnist_production_config(
+    root: Path,
+    *,
+    output_root: Path,
+) -> tuple[Path, tuple[Path, Path, Path]]:
+    artifact_paths = _write_manifest_only_cmnist_production(root / "prepared")
+    payload = _config().model_dump(mode="json")
+    payload["artifacts"] = {
+        "dataset_manifest": artifact_paths[0].as_posix(),
+        "feature_cache_manifest": artifact_paths[1].as_posix(),
+        "oracle_pair_manifest": artifact_paths[2].as_posix(),
+    }
+    payload["output_root"] = output_root.as_posix()
+    config_path = root / "production.yaml"
+    config_path.write_text(
+        _yaml_compatible_json(payload),
+        encoding="utf-8",
+    )
+    return config_path, artifact_paths
 
 
 @pytest.mark.parametrize("dataset", ["cmnist", "waterbirds_cf"])
@@ -803,6 +933,167 @@ def test_waterbirds_plan_only_accepts_verified_production_manifests(
         plan_production_search(mixed_path)
 
 
+@pytest.mark.parametrize(
+    ("operation", "provenance"),
+    (
+        ("plan", CodeProvenance(git_revision="unavailable", git_dirty=True)),
+        ("plan", CodeProvenance(git_revision="2" * 40, git_dirty=True)),
+        ("run", CodeProvenance(git_revision="3" * 40, git_dirty=True)),
+    ),
+)
+def test_reportable_plan_and_run_reject_unusable_code_provenance_before_writes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: Literal["plan", "run"],
+    provenance: CodeProvenance,
+) -> None:
+    output_root = tmp_path / "output"
+    config_path, _ = _write_cmnist_production_config(
+        tmp_path, output_root=output_root
+    )
+    monkeypatch.setattr("grit.search._code_provenance", lambda: provenance)
+
+    def forbidden_training(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("dirty production execution reached training")
+
+    monkeypatch.setattr(
+        "grit.production_search._run_cmnist_search", forbidden_training
+    )
+    with pytest.raises(ValueError, match="clean, exact Git commit"):
+        if operation == "plan":
+            plan_production_search(config_path)
+        else:
+            run_production_search(config_path)
+    assert not output_root.exists()
+
+
+def test_ignored_repository_output_remains_an_allowed_isolated_root(
+    tmp_path: Path,
+) -> None:
+    ignored_output = Path.cwd() / "outputs" / f"production-safety-{tmp_path.name}"
+    config_path, _ = _write_cmnist_production_config(
+        tmp_path,
+        output_root=ignored_output,
+    )
+    config = load_production_search_config(config_path)
+    resolved = resolve_production_search_config(config, config_path=config_path)
+    assert Path(resolved.output_root) == ignored_output
+    assert not Path(resolved.output_root).exists()
+
+
+@pytest.mark.parametrize("unsafe_kind", ("filesystem", "repository"))
+def test_plan_rejects_broad_output_roots(
+    tmp_path: Path,
+    unsafe_kind: Literal["filesystem", "repository"],
+) -> None:
+    output_root = Path("/") if unsafe_kind == "filesystem" else Path.cwd()
+    config_path, _ = _write_cmnist_production_config(
+        tmp_path, output_root=output_root
+    )
+    with pytest.raises(ValueError, match="filesystem root|repository root"):
+        plan_production_search(config_path)
+
+
+@pytest.mark.parametrize("placement", ("prepared", "nested", "contains"))
+def test_plan_rejects_output_that_overlaps_prepared_artifacts(
+    tmp_path: Path,
+    placement: Literal["prepared", "nested", "contains"],
+) -> None:
+    container = tmp_path / "container"
+    prepared = container / "prepared"
+    if placement == "prepared":
+        output_root = prepared
+    elif placement == "nested":
+        output_root = prepared / "output"
+    else:
+        output_root = container
+    artifact_paths = _write_manifest_only_cmnist_production(prepared)
+    payload = _config().model_dump(mode="json")
+    payload["artifacts"] = {
+        "dataset_manifest": artifact_paths[0].as_posix(),
+        "feature_cache_manifest": artifact_paths[1].as_posix(),
+        "oracle_pair_manifest": artifact_paths[2].as_posix(),
+    }
+    payload["output_root"] = output_root.as_posix()
+    config_path = tmp_path / "overlap.yaml"
+    config_path.write_text(_yaml_compatible_json(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="prepared-artifact|contain prepared"):
+        plan_production_search(config_path)
+
+
+def test_first_plan_refuses_nonempty_unrelated_output_directory(
+    tmp_path: Path,
+) -> None:
+    output_root = tmp_path / "output"
+    output_root.mkdir()
+    marker = output_root / "unrelated.txt"
+    marker.write_text("preserve me", encoding="utf-8")
+    config_path, _ = _write_cmnist_production_config(
+        tmp_path, output_root=output_root
+    )
+    with pytest.raises(ValueError, match="empty or contain a complete compatible plan"):
+        plan_production_search(config_path)
+    assert marker.read_text(encoding="utf-8") == "preserve me"
+    assert not (output_root / "search-plan.json").exists()
+
+
+def test_first_plan_accepts_an_empty_dedicated_output_directory(
+    tmp_path: Path,
+) -> None:
+    output_root = tmp_path / "output"
+    output_root.mkdir()
+    config_path, _ = _write_cmnist_production_config(
+        tmp_path, output_root=output_root
+    )
+    plan = plan_production_search(config_path)
+    assert Path(plan.resolved_config.output_root) == output_root
+    assert (output_root / "search-plan.json").is_file()
+
+
+def test_status_requires_existing_matching_triplet_and_never_creates_it(
+    tmp_path: Path,
+) -> None:
+    output_root = tmp_path / "missing-output"
+    config_payload = _config().model_dump(mode="json")
+    config_payload["output_root"] = output_root.as_posix()
+    config_path = tmp_path / "production.yaml"
+    config_path.write_text(
+        _yaml_compatible_json(config_payload), encoding="utf-8"
+    )
+    with pytest.raises(ValueError, match="run `grit-search plan` first"):
+        production_search_status(config_path)
+    assert not output_root.exists()
+
+
+def test_status_is_read_only_and_uses_saved_clean_provenance_from_dirty_tree(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path, plan = _write_stored_plan_fixture(tmp_path)
+    output_root = Path(plan.resolved_config.output_root)
+    before = _filesystem_snapshot(output_root)
+
+    def forbidden(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("status crossed a planning, writing, or runtime boundary")
+
+    monkeypatch.setattr("grit.production_search.plan_production_search", forbidden)
+    monkeypatch.setattr("grit.production_search.write_search_plan", forbidden)
+    monkeypatch.setattr("grit.production_search._load_cmnist_cache", forbidden)
+    monkeypatch.setattr("grit.search._code_provenance", forbidden)
+    status = production_search_status(config_path)
+    after = _filesystem_snapshot(output_root)
+    assert status.phase == "tuning"
+    assert status.tuning_complete == 0
+    assert before == after
+
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8") + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="does not match the supplied YAML"):
+        production_search_status(config_path)
+
+
 def _cmnist_executor(
     plan: SearchPlan,
     calls: list[str],
@@ -863,6 +1154,331 @@ def _cmnist_executor(
     return execute
 
 
+def _cmnist_stage_runs(
+    plan: SearchPlan,
+    candidates: Sequence[SearchCandidate],
+    stage: Literal[SeedStage.TUNING, SeedStage.CONFIRMATION],
+) -> tuple[CmnistCompletedStageRun, ...]:
+    seeds = (
+        plan.seeds.stages.tuning
+        if stage is SeedStage.TUNING
+        else plan.seeds.stages.confirmation
+    )
+    execute = _cmnist_executor(plan, [])
+    return tuple(
+        cast(
+            CmnistCompletedStageRun,
+            execute(make_search_task(plan, candidate, stage, seed), Path(".")),
+        )
+        for candidate in candidates
+        for seed in seeds
+    )
+
+
+def _waterbirds_weight_spec() -> WaterbirdsAdjustedWeightSpec:
+    return WaterbirdsAdjustedWeightSpec(
+        schema_version="grit.waterbirds-adjusted-weights/v1",
+        group_order=WATERBIRDS_GROUP_ORDER,
+        training_group_counts=WaterbirdsGroupCounts(
+            landbird_land=3_498,
+            landbird_water=184,
+            waterbird_land=56,
+            waterbird_water=1_057,
+        ),
+        dataset_manifest_digest="sha256:dataset",
+    )
+
+
+def _waterbirds_stage_run(
+    task: SearchRunTask,
+    weights: WaterbirdsAdjustedWeightSpec,
+) -> WaterbirdsCompletedStageRun:
+    correct = 7
+    groups = tuple(
+        WaterbirdsGroupAccuracy(
+            group_id=group_id,
+            count=10,
+            correct=correct,
+            accuracy=correct / 10,
+        )
+        for group_id in WATERBIRDS_GROUP_ORDER
+    )
+    typed_groups = (groups[0], groups[1], groups[2], groups[3])
+    checkpoint_id = f"checkpoint:{task.task_id}:0"
+    metric = WaterbirdsValidationMetricRecord(
+        record_id=f"metric:{checkpoint_id}",
+        run_id=f"run:{task.task_id}",
+        candidate_id=task.candidate.candidate_id,
+        method_id=task.candidate.method_id,
+        scientific_config_digest=task.candidate.scientific_config_digest,
+        dataset_manifest_digest=task.lineage.dataset_manifest_digest,
+        feature_cache_manifest_digest=task.lineage.feature_cache_manifest_digest,
+        normalization=task.lineage.normalization,
+        adjusted_weight_spec_digest=weights.canonical_digest(),
+        checkpoint_id=checkpoint_id,
+        epoch=0,
+        seed=task.seed,
+        projection_rank=task.candidate.requested_rank,
+        groups=typed_groups,
+        adjusted_weight_spec=weights,
+        worst_group_accuracy=0.7,
+        adjusted_average_accuracy=0.7,
+        raw_average_accuracy=0.7,
+        metric_kind="validation",
+        split_name="validation",
+        seed_stage=task.stage,
+    )
+    return WaterbirdsCompletedStageRun(
+        schema_version="grit.waterbirds-search-stage-run/v1",
+        dataset="waterbirds_cf",
+        status="complete",
+        task=task,
+        lineage=task.lineage,
+        validation_metrics=(metric,),
+        checkpoint_decision=select_waterbirds_checkpoint((metric,)),
+    )
+
+
+def _waterbirds_stage_runs(
+    plan: SearchPlan,
+    candidates: Sequence[SearchCandidate],
+    stage: Literal[SeedStage.TUNING, SeedStage.CONFIRMATION],
+    weights: WaterbirdsAdjustedWeightSpec,
+) -> tuple[WaterbirdsCompletedStageRun, ...]:
+    seeds = (
+        plan.seeds.stages.tuning
+        if stage is SeedStage.TUNING
+        else plan.seeds.stages.confirmation
+    )
+    return tuple(
+        _waterbirds_stage_run(
+            make_search_task(plan, candidate, stage, seed), weights
+        )
+        for candidate in candidates
+        for seed in seeds
+    )
+
+
+def _mock_complete_transition_stages(
+    monkeypatch: pytest.MonkeyPatch,
+    tuning_runs: tuple[CompletedStageRun, ...],
+    confirmation_runs: tuple[CompletedStageRun, ...],
+) -> None:
+    def status(
+        _scheduler: LocalRunScheduler,
+        tasks: Sequence[SearchRunTask],
+    ) -> SearchStatus:
+        task_ids = tuple(task.task_id for task in tasks)
+        if tasks and tasks[0].stage is SeedStage.FINAL:
+            complete_ids: tuple[str, ...] = ()
+            missing_ids = task_ids
+        else:
+            complete_ids = task_ids
+            missing_ids = ()
+        return SearchStatus(
+            schema_version="grit.search-status/v1",
+            plan_digest=tasks[0].plan_digest,
+            complete_task_ids=complete_ids,
+            missing_task_ids=missing_ids,
+            interrupted_task_ids=(),
+        )
+
+    def completed_results(
+        _scheduler: LocalRunScheduler,
+        tasks: Sequence[SearchRunTask],
+    ) -> tuple[CompletedStageRun, ...]:
+        if not tasks:
+            raise AssertionError("status requested an empty completed stage")
+        return (
+            tuning_runs
+            if tasks[0].stage is SeedStage.TUNING
+            else confirmation_runs
+        )
+
+    monkeypatch.setattr(LocalRunScheduler, "status", status)
+    monkeypatch.setattr(
+        LocalRunScheduler, "completed_results", completed_results
+    )
+
+
+def test_status_recomputes_cmnist_finalists_unions_and_winners_read_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path, plan = _write_stored_plan_fixture(tmp_path)
+    selected_candidates = tuple(
+        candidate
+        for method in ("erm", "grit")
+        for candidate in tuple(
+            item for item in plan.candidates if item.method_id == method
+        )[:3]
+    )
+    tuning_runs = _cmnist_stage_runs(
+        plan, selected_candidates, SeedStage.TUNING
+    )
+    finalists, unions = compute_cmnist_finalists(plan, tuning_runs)
+    root = Path(plan.resolved_config.output_root)
+    for method in ("erm", "grit"):
+        selection_root = root / "selection" / method
+        persist_canonical_artifact(
+            selection_root / "primary-tuning-finalists.json",
+            finalists[(method, CmnistSelector.PRIMARY_ROBUST)],
+        )
+        persist_canonical_artifact(
+            selection_root / "secondary-tuning-finalists.json",
+            finalists[(method, CmnistSelector.SECONDARY_SOURCE)],
+        )
+        persist_canonical_artifact(
+            selection_root / "confirmation-union.json", unions[method]
+        )
+    by_id = {candidate.candidate_id: candidate for candidate in plan.candidates}
+    confirmation_candidates = tuple(
+        by_id[candidate_id]
+        for method in ("erm", "grit")
+        for candidate_id in unions[method].confirmation_candidate_ids
+    )
+    confirmation_runs = _cmnist_stage_runs(
+        plan, confirmation_candidates, SeedStage.CONFIRMATION
+    )
+    winners = compute_cmnist_winners(plan, finalists, confirmation_runs)
+    for (method, selector), winner in winners.items():
+        persist_canonical_artifact(
+            root / "selection" / method / f"{selector.value}-winner.json",
+            winner,
+        )
+    _mock_complete_transition_stages(
+        monkeypatch,
+        cast(tuple[CompletedStageRun, ...], tuning_runs),
+        cast(tuple[CompletedStageRun, ...], confirmation_runs),
+    )
+    before = _filesystem_snapshot(root)
+    status = production_search_status(config_path)
+    assert status.phase == "final"
+    assert status.frozen_winner_count == 4
+    assert _filesystem_snapshot(root) == before
+
+    primary_path = root / "selection/erm/primary_robust-winner.json"
+    primary_payload = primary_path.read_text(encoding="utf-8")
+    primary_path.write_text(
+        winners[("erm", CmnistSelector.SECONDARY_SOURCE)].canonical_json(),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="canonical confirmation"):
+        production_search_status(config_path)
+    primary_path.write_text(primary_payload, encoding="utf-8")
+
+    finalist_path = root / "selection/erm/primary-tuning-finalists.json"
+    original_finalist_payload = finalists[
+        ("erm", CmnistSelector.PRIMARY_ROBUST)
+    ].canonical_json()
+    wrong_seed = cast(dict[str, object], json.loads(original_finalist_payload))
+    wrong_seed["tuning_seeds"] = [999, 102, 103]
+    finalist_path.write_text(json.dumps(wrong_seed), encoding="utf-8")
+    with pytest.raises(ValueError, match="tuning"):
+        production_search_status(config_path)
+
+    out_of_plan = cast(dict[str, object], json.loads(original_finalist_payload))
+    ordered = cast(list[dict[str, object]], out_of_plan["ordered_candidates"])
+    ordered[0]["candidate_id"] = "candidate:000-forged"
+    decisions = cast(
+        list[dict[str, object]],
+        ordered[0]["contributing_checkpoint_decisions"],
+    )
+    for decision in decisions:
+        checkpoint = cast(dict[str, object], decision["checkpoint"])
+        checkpoint["candidate_id"] = "candidate:000-forged"
+    finalist_path.write_text(json.dumps(out_of_plan), encoding="utf-8")
+    with pytest.raises(ValueError, match="canonical tuning"):
+        production_search_status(config_path)
+
+    wrong_method_payload = finalists[
+        ("grit", CmnistSelector.PRIMARY_ROBUST)
+    ].canonical_json()
+    finalist_path.write_text(wrong_method_payload, encoding="utf-8")
+    with pytest.raises(ValueError, match="canonical tuning"):
+        production_search_status(config_path)
+
+
+def test_status_recomputes_waterbirds_finalists_and_winners(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    weights = _waterbirds_weight_spec()
+    config_path, plan = _write_stored_plan_fixture(
+        tmp_path,
+        "waterbirds_cf",
+        adjusted_weight_spec_digest=weights.canonical_digest(),
+    )
+    selected_candidates = tuple(
+        candidate
+        for method in ("erm", "grit")
+        for candidate in tuple(
+            item for item in plan.candidates if item.method_id == method
+        )[:3]
+    )
+    tuning_runs = _waterbirds_stage_runs(
+        plan, selected_candidates, SeedStage.TUNING, weights
+    )
+    finalists = compute_waterbirds_finalists(plan, tuning_runs)
+    root = Path(plan.resolved_config.output_root)
+    for method, finalist in finalists.items():
+        persist_canonical_artifact(
+            root / "selection" / method / "tuning-finalists.json", finalist
+        )
+    by_id = {candidate.candidate_id: candidate for candidate in plan.candidates}
+    confirmation_candidates = tuple(
+        by_id[item.candidate_id]
+        for method in ("erm", "grit")
+        for item in finalists[method].ordered_candidates
+    )
+    confirmation_runs = _waterbirds_stage_runs(
+        plan, confirmation_candidates, SeedStage.CONFIRMATION, weights
+    )
+    winners = compute_waterbirds_winners(plan, finalists, confirmation_runs)
+    for method, winner in winners.items():
+        persist_canonical_artifact(
+            root / "selection" / method / "winner.json", winner
+        )
+    _mock_complete_transition_stages(
+        monkeypatch,
+        cast(tuple[CompletedStageRun, ...], tuning_runs),
+        cast(tuple[CompletedStageRun, ...], confirmation_runs),
+    )
+    status = production_search_status(config_path)
+    assert status.phase == "final"
+    assert status.frozen_winner_count == 2
+
+    finalist_path = root / "selection/erm/tuning-finalists.json"
+    original = cast(
+        dict[str, object],
+        json.loads(finalists["erm"].canonical_json()),
+    )
+    original["dataset_manifest_digest"] = "sha256:forged-dataset"
+    original["feature_cache_manifest_digest"] = "sha256:forged-cache"
+    original["adjusted_weight_spec_digest"] = "sha256:forged-weights"
+    for candidate in cast(
+        list[dict[str, object]], original["ordered_candidates"]
+    ):
+        candidate["dataset_manifest_digest"] = "sha256:forged-dataset"
+        candidate["feature_cache_manifest_digest"] = "sha256:forged-cache"
+        candidate["adjusted_weight_spec_digest"] = "sha256:forged-weights"
+        for decision in cast(
+            list[dict[str, object]], candidate["checkpoint_decisions"]
+        ):
+            decision["dataset_manifest_digest"] = "sha256:forged-dataset"
+            decision["feature_cache_manifest_digest"] = "sha256:forged-cache"
+            decision["adjusted_weight_spec_digest"] = "sha256:forged-weights"
+    finalist_path.write_text(json.dumps(original), encoding="utf-8")
+    with pytest.raises(ValueError, match="canonical tuning"):
+        production_search_status(config_path)
+
+    finalist_path.write_text(
+        finalists["grit"].canonical_json(), encoding="utf-8"
+    )
+    with pytest.raises(ValueError, match="canonical tuning"):
+        production_search_status(config_path)
+
+
 def test_completed_run_reuse_and_missing_run_continuation(tmp_path: Path) -> None:
     plan = build_search_plan(resolved_search_fixture())
     tasks = tuple(
@@ -878,6 +1494,7 @@ def test_completed_run_reuse_and_missing_run_continuation(tmp_path: Path) -> Non
     status = scheduler.status(tasks)
     assert status.complete_task_ids == tuple(task.task_id for task in tasks)
     assert not status.missing_task_ids
+    assert scheduler.completed_results(tasks) == resumed
 
 
 def test_corrupt_or_incompatible_prior_result_is_rejected(tmp_path: Path) -> None:

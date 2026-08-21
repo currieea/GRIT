@@ -336,6 +336,15 @@ class SearchPlan(StrictBoundaryModel):
             raise ValueError("search plan run counts are inconsistent")
         if self.output_schemas != _expected_output_schemas(config):
             raise ValueError("search plan output schema inventory is inconsistent")
+        revision = self.code.git_revision
+        if (
+            self.code.git_dirty
+            or len(revision) not in {40, 64}
+            or any(character not in "0123456789abcdef" for character in revision)
+        ):
+            raise ValueError(
+                "reportable search plans require a clean, exact Git commit"
+            )
         return self
 
 
@@ -367,7 +376,10 @@ def resolve_production_search_config(
             validated, dataset_path, feature_path, pair_path
         )
     output_root = _resolve_path(base, validated.output_root)
-    _require_safe_output_root(output_root)
+    _require_safe_output_root(
+        output_root,
+        input_manifest_paths=(dataset_path, feature_path, pair_path),
+    )
     return ResolvedProductionSearchConfig(
         schema_version="grit.resolved-production-search/v1",
         authored_config_digest=validated.canonical_digest(),
@@ -382,6 +394,13 @@ def resolve_production_search_config(
 def build_search_plan(resolved: ResolvedProductionSearchConfig) -> SearchPlan:
     """Expand one verified config into the complete deterministic candidate plan."""
 
+    return _build_search_plan(resolved, _code_provenance())
+
+
+def _build_search_plan(
+    resolved: ResolvedProductionSearchConfig,
+    code_provenance: CodeProvenance,
+) -> SearchPlan:
     checked = ResolvedProductionSearchConfig.model_validate_json(
         resolved.canonical_json()
     )
@@ -400,7 +419,7 @@ def build_search_plan(resolved: ResolvedProductionSearchConfig) -> SearchPlan:
         candidates=candidates,
         seeds=config.seeds,
         expected_run_counts=_expected_run_counts(config),
-        code=_code_provenance(),
+        code=CodeProvenance.model_validate(code_provenance),
         environment=_environment_provenance(),
         output_schemas=_expected_output_schemas(config),
     )
@@ -531,13 +550,18 @@ def write_search_plan(
 ) -> SearchPlan:
     """Validate and atomically persist authored, resolved, and plan artifacts."""
 
+    code = _code_provenance()
     resolved = resolve_production_search_config(config, config_path=config_path)
-    plan = build_search_plan(resolved)
+    plan = _build_search_plan(resolved, code)
     output_root = Path(resolved.output_root)
-    output_root.mkdir(parents=True, exist_ok=True)
     authored_target = output_root / "authored-config.yaml"
     resolved_target = output_root / "resolved-config.json"
     plan_target = output_root / "search-plan.json"
+    _require_compatible_output_directory(
+        output_root,
+        planning_targets=(authored_target, resolved_target, plan_target),
+    )
+    output_root.mkdir(parents=True, exist_ok=True)
     existing = tuple(
         target.exists() for target in (authored_target, resolved_target, plan_target)
     )
@@ -1036,20 +1060,37 @@ def _resolve_path(base: Path, value: str) -> Path:
     return path.resolve() if path.is_absolute() else (base / path).resolve()
 
 
-def _require_safe_output_root(output_root: Path) -> None:
-    """Keep generated output from changing the plan's source dirty-state."""
+def _require_safe_output_root(
+    output_root: Path,
+    *,
+    input_manifest_paths: tuple[Path, Path, Path],
+) -> None:
+    """Require a dedicated output tree disjoint from source and prepared inputs."""
 
+    resolved_output = output_root.resolve()
+    if resolved_output == Path(resolved_output.anchor):
+        raise ValueError("production output_root cannot be a filesystem root")
+    repository_root = _git_repository_root()
+    if resolved_output == repository_root or repository_root.is_relative_to(
+        resolved_output
+    ):
+        raise ValueError("production output_root cannot be the repository root")
+    for manifest_path in input_manifest_paths:
+        prepared_root = manifest_path.resolve().parent
+        if resolved_output == prepared_root or resolved_output.is_relative_to(
+            prepared_root
+        ):
+            raise ValueError(
+                "production output_root cannot be a prepared-artifact directory "
+                "or one of its descendants"
+            )
+        if manifest_path.resolve().is_relative_to(resolved_output):
+            raise ValueError(
+                "production output_root cannot contain prepared input artifacts"
+            )
     try:
-        repository_root = Path(
-            subprocess.run(
-                ["git", "rev-parse", "--show-toplevel"],
-                check=True,
-                capture_output=True,
-                text=True,
-            ).stdout.strip()
-        ).resolve()
-        relative = output_root.relative_to(repository_root)
-    except (OSError, subprocess.CalledProcessError, ValueError):
+        relative = resolved_output.relative_to(repository_root)
+    except ValueError:
         return
     ignored = subprocess.run(
         ["git", "check-ignore", "--quiet", relative.as_posix()],
@@ -1061,6 +1102,27 @@ def _require_safe_output_root(output_root: Path) -> None:
     if ignored.returncode != 0:
         raise ValueError(
             "production output_root inside the repository must be Git-ignored"
+        )
+
+
+def _require_compatible_output_directory(
+    output_root: Path,
+    *,
+    planning_targets: tuple[Path, Path, Path],
+) -> None:
+    if not output_root.exists():
+        return
+    if not output_root.is_dir():
+        raise ValueError("production output_root must be a directory")
+    entries = tuple(output_root.iterdir())
+    existing_planning = tuple(path.is_file() for path in planning_targets)
+    if not entries:
+        return
+    if not all(existing_planning):
+        if any(existing_planning):
+            raise ValueError("search planning outputs are only partially present")
+        raise ValueError(
+            "production output_root must be empty or contain a complete compatible plan"
         )
 
 
@@ -1104,25 +1166,50 @@ def _atomic_write_text(path: Path, payload: str) -> None:
 
 
 def _code_provenance() -> CodeProvenance:
+    repository_root = _git_repository_root()
     try:
         revision = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
+            ["git", "rev-parse", "--verify", "HEAD^{commit}"],
+            cwd=repository_root,
             check=True,
             capture_output=True,
             text=True,
         ).stdout.strip()
-        dirty = bool(
-            subprocess.run(
-                ["git", "status", "--porcelain"],
-                check=True,
-                capture_output=True,
-                text=True,
-            ).stdout.strip()
-        )
-    except (OSError, subprocess.CalledProcessError):
-        revision = "unavailable"
-        dirty = True
-    return CodeProvenance(git_revision=revision, git_dirty=dirty)
+        dirty_output = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=normal"],
+            cwd=repository_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise ValueError(
+            "reportable search requires an available Git commit and clean worktree"
+        ) from error
+    if (
+        len(revision) not in {40, 64}
+        or any(character not in "0123456789abcdef" for character in revision)
+    ):
+        raise ValueError("reportable search could not resolve an exact Git commit")
+    if dirty_output:
+        raise ValueError("reportable search requires a clean Git worktree")
+    return CodeProvenance(git_revision=revision, git_dirty=False)
+
+
+def _git_repository_root() -> Path:
+    try:
+        root = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=Path(__file__).resolve().parents[2],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise ValueError("production search requires a Git worktree") from error
+    if not root:
+        raise ValueError("production search could not resolve the Git repository root")
+    return Path(root).resolve()
 
 
 def _environment_provenance() -> EnvironmentProvenance:

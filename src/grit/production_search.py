@@ -39,6 +39,7 @@ from grit.results import ArtifactReference, OrdinaryRunResult, SucceededStatus
 from grit.schemas import CmnistSelector, SeedStage, StrictBoundaryModel
 from grit.search import (
     CmnistProductionSearchConfig,
+    ResolvedProductionSearchConfig,
     SearchCandidate,
     SearchPlan,
     WaterbirdsProductionSearchConfig,
@@ -63,6 +64,7 @@ from grit.search_scheduler import (
     CompletedStageRun,
     LocalRunScheduler,
     SearchRunTask,
+    WaterbirdsCompletedStageRun,
     make_final_search_task,
     make_search_task,
 )
@@ -152,10 +154,54 @@ def run_production_search(
 def production_search_status(config_path: Path) -> ProductionSearchStatus:
     """Report canonical completed work without invoking a trainer."""
 
-    plan = plan_production_search(config_path)
+    plan = _load_existing_search_plan(config_path)
     if isinstance(plan.resolved_config.config, CmnistProductionSearchConfig):
         return _cmnist_status(plan)
     return _waterbirds_status(plan)
+
+
+def _load_existing_search_plan(config_path: Path) -> SearchPlan:
+    """Load one compatible planning triplet without resolving inputs or writing."""
+
+    supplied_path = config_path.resolve()
+    supplied_payload = supplied_path.read_text(encoding="utf-8")
+    supplied = load_production_search_config(supplied_path)
+    output_value = Path(supplied.output_root)
+    output_root = (
+        output_value.resolve()
+        if output_value.is_absolute()
+        else (supplied_path.parent / output_value).resolve()
+    )
+    authored_path = output_root / "authored-config.yaml"
+    resolved_path = output_root / "resolved-config.json"
+    plan_path = output_root / "search-plan.json"
+    planning_paths = (authored_path, resolved_path, plan_path)
+    if not all(path.is_file() for path in planning_paths):
+        raise ValueError(
+            "no complete production search plan exists; run `grit-search plan` first"
+        )
+    stored_payload = authored_path.read_text(encoding="utf-8")
+    if stored_payload != supplied_payload:
+        raise ValueError("saved authored config does not match the supplied YAML")
+    stored_authored = load_production_search_config(authored_path)
+    stored_resolved = ResolvedProductionSearchConfig.model_validate_json(
+        resolved_path.read_text(encoding="utf-8")
+    )
+    stored_plan = SearchPlan.model_validate_json(
+        plan_path.read_text(encoding="utf-8")
+    )
+    if stored_authored != supplied:
+        raise ValueError("saved authored config does not match the supplied YAML")
+    if (
+        stored_resolved.config != supplied
+        or Path(stored_resolved.authored_config_path).resolve() != supplied_path
+        or Path(stored_resolved.output_root).resolve() != output_root
+        or stored_plan.resolved_config != stored_resolved
+    ):
+        raise ValueError(
+            "saved resolved config or search plan does not match the supplied YAML"
+        )
+    return stored_plan
 
 
 def _run_cmnist_search(plan: SearchPlan) -> CmnistProductionSummary:
@@ -368,6 +414,29 @@ def _cmnist_finalists(
     dict[tuple[MethodId, CmnistSelector], TuningFinalistsArtifact],
     dict[MethodId, FinalistUnion],
 ]:
+    artifacts, unions = compute_cmnist_finalists(plan, runs)
+    for method in ("erm", "grit"):
+        primary = artifacts[(method, CmnistSelector.PRIMARY_ROBUST)]
+        secondary = artifacts[(method, CmnistSelector.SECONDARY_SOURCE)]
+        union = unions[method]
+        root = output_root / "selection" / method
+        persist_canonical_artifact(
+            root / "primary-tuning-finalists.json", primary
+        )
+        persist_canonical_artifact(
+            root / "secondary-tuning-finalists.json", secondary
+        )
+        persist_canonical_artifact(root / "confirmation-union.json", union)
+    return artifacts, unions
+
+
+def compute_cmnist_finalists(
+    plan: SearchPlan,
+    runs: tuple[CmnistCompletedStageRun, ...],
+) -> tuple[
+    dict[tuple[MethodId, CmnistSelector], TuningFinalistsArtifact],
+    dict[MethodId, FinalistUnion],
+]:
     metrics = tuple(metric for run in runs for metric in run.validation_metrics)
     artifacts: dict[
         tuple[MethodId, CmnistSelector], TuningFinalistsArtifact
@@ -389,14 +458,6 @@ def _cmnist_finalists(
         artifacts[(method, CmnistSelector.PRIMARY_ROBUST)] = primary
         artifacts[(method, CmnistSelector.SECONDARY_SOURCE)] = secondary
         unions[method] = union
-        root = output_root / "selection" / method
-        persist_canonical_artifact(
-            root / "primary-tuning-finalists.json", primary
-        )
-        persist_canonical_artifact(
-            root / "secondary-tuning-finalists.json", secondary
-        )
-        persist_canonical_artifact(root / "confirmation-union.json", union)
     return artifacts, unions
 
 
@@ -405,6 +466,23 @@ def _freeze_cmnist_winners(
     finalists: dict[tuple[MethodId, CmnistSelector], TuningFinalistsArtifact],
     runs: tuple[CmnistCompletedStageRun, ...],
     output_root: Path,
+) -> dict[tuple[MethodId, CmnistSelector], FrozenCandidateSelection]:
+    winners = compute_cmnist_winners(plan, finalists, runs)
+    for (method, selector), frozen in winners.items():
+        persist_canonical_artifact(
+            output_root
+            / "selection"
+            / method
+            / f"{selector.value}-winner.json",
+            frozen,
+        )
+    return winners
+
+
+def compute_cmnist_winners(
+    plan: SearchPlan,
+    finalists: dict[tuple[MethodId, CmnistSelector], TuningFinalistsArtifact],
+    runs: tuple[CmnistCompletedStageRun, ...],
 ) -> dict[tuple[MethodId, CmnistSelector], FrozenCandidateSelection]:
     metrics = tuple(metric for run in runs for metric in run.validation_metrics)
     winners: dict[
@@ -429,13 +507,6 @@ def _freeze_cmnist_winners(
             )
             frozen = freeze_candidate(decision, artifact, plan.seeds.stages)
             winners[(method, selector)] = frozen
-            persist_canonical_artifact(
-                output_root
-                / "selection"
-                / method
-                / f"{selector.value}-winner.json",
-                frozen,
-            )
     return winners
 
 
@@ -784,37 +855,73 @@ def _cmnist_status(plan: SearchPlan) -> ProductionSearchStatus:
             final_expected=0,
             final_complete=0,
         )
+    tuning_runs_untyped = scheduler.completed_results(tuning)
+    if any(
+        not isinstance(run, CmnistCompletedStageRun)
+        for run in tuning_runs_untyped
+    ):
+        raise ValueError("CMNIST tuning stage contains another dataset result")
+    tuning_runs = cast(tuple[CmnistCompletedStageRun, ...], tuning_runs_untyped)
+    expected_finalists, expected_unions = compute_cmnist_finalists(
+        plan, tuning_runs
+    )
     root = Path(plan.resolved_config.output_root)
-    unions: dict[MethodId, FinalistUnion] = {}
+    finalist_artifact_count = 0
     for method in ("erm", "grit"):
-        path = root / "selection" / method / "confirmation-union.json"
-        if not path.exists():
-            return ProductionSearchStatus(
-                schema_version="grit.production-search-status/v1",
-                dataset="cmnist",
-                plan_digest=plan.canonical_digest(),
-                phase="confirmation",
-                tuning_expected=len(tuning),
-                tuning_complete=complete,
-                confirmation_expected=0,
-                confirmation_complete=0,
-                frozen_winner_count=0,
-                final_expected=0,
-                final_complete=0,
+        selection_root = root / "selection" / method
+        finalist_paths = (
+            (
+                selection_root / "primary-tuning-finalists.json",
+                TuningFinalistsArtifact,
+                expected_finalists[(method, CmnistSelector.PRIMARY_ROBUST)],
+            ),
+            (
+                selection_root / "secondary-tuning-finalists.json",
+                TuningFinalistsArtifact,
+                expected_finalists[(method, CmnistSelector.SECONDARY_SOURCE)],
+            ),
+            (
+                selection_root / "confirmation-union.json",
+                FinalistUnion,
+                expected_unions[method],
+            ),
+        )
+        for path, artifact_type, expected in finalist_paths:
+            if not path.exists():
+                continue
+            finalist_artifact_count += 1
+            observed = artifact_type.model_validate_json(
+                path.read_text(encoding="utf-8")
             )
-        unions[method] = FinalistUnion.model_validate_json(
-            path.read_text(encoding="utf-8")
+            if observed != expected:
+                raise ValueError(
+                    f"CMNIST selection artifact does not match canonical tuning "
+                    f"results: {path}"
+                )
+    if finalist_artifact_count != 6:
+        return ProductionSearchStatus(
+            schema_version="grit.production-search-status/v1",
+            dataset="cmnist",
+            plan_digest=plan.canonical_digest(),
+            phase="confirmation",
+            tuning_expected=len(tuning),
+            tuning_complete=complete,
+            confirmation_expected=0,
+            confirmation_complete=0,
+            frozen_winner_count=0,
+            final_expected=0,
+            final_complete=0,
         )
     by_id = {item.candidate_id: item for item in plan.candidates}
     confirmation = tuple(
         make_search_task(
             plan,
-            by_id[candidate_id],
+            _planned_candidate(by_id, candidate_id),
             SeedStage.CONFIRMATION,
             seed,
         )
         for method in ("erm", "grit")
-        for candidate_id in unions[method].confirmation_candidate_ids
+        for candidate_id in expected_unions[method].confirmation_candidate_ids
         for seed in config.seeds.stages.confirmation
     )
     confirmation_status = scheduler.status(confirmation)
@@ -833,7 +940,19 @@ def _cmnist_status(plan: SearchPlan) -> ProductionSearchStatus:
             final_expected=0,
             final_complete=0,
         )
-    winners: list[FrozenCandidateSelection] = []
+    confirmation_runs_untyped = scheduler.completed_results(confirmation)
+    if any(
+        not isinstance(run, CmnistCompletedStageRun)
+        for run in confirmation_runs_untyped
+    ):
+        raise ValueError("CMNIST confirmation stage contains another dataset result")
+    confirmation_runs = cast(
+        tuple[CmnistCompletedStageRun, ...], confirmation_runs_untyped
+    )
+    expected_winners = compute_cmnist_winners(
+        plan, expected_finalists, confirmation_runs
+    )
+    winner_count = 0
     for method in ("erm", "grit"):
         for selector in (
             CmnistSelector.PRIMARY_ROBUST,
@@ -841,12 +960,16 @@ def _cmnist_status(plan: SearchPlan) -> ProductionSearchStatus:
         ):
             path = root / "selection" / method / f"{selector.value}-winner.json"
             if path.exists():
-                winners.append(
-                    FrozenCandidateSelection.model_validate_json(
-                        path.read_text(encoding="utf-8")
-                    )
+                winner_count += 1
+                observed = FrozenCandidateSelection.model_validate_json(
+                    path.read_text(encoding="utf-8")
                 )
-    if len(winners) != 4:
+                if observed != expected_winners[(method, selector)]:
+                    raise ValueError(
+                        "CMNIST frozen winner does not match canonical confirmation "
+                        f"results: {path}"
+                    )
+    if winner_count != 4:
         return ProductionSearchStatus(
             schema_version="grit.production-search-status/v1",
             dataset="cmnist",
@@ -856,15 +979,18 @@ def _cmnist_status(plan: SearchPlan) -> ProductionSearchStatus:
             tuning_complete=complete,
             confirmation_expected=len(confirmation),
             confirmation_complete=confirmation_complete,
-            frozen_winner_count=len(winners),
+            frozen_winner_count=winner_count,
             final_expected=0,
             final_complete=0,
         )
     final = tuple(
         make_final_search_task(
-            plan, by_id[winner.candidate_id], seed, winner
+            plan,
+            _planned_candidate(by_id, winner.candidate_id),
+            seed,
+            winner,
         )
-        for winner in winners
+        for winner in expected_winners.values()
         for seed in config.seeds.stages.final
     )
     final_status = scheduler.status(final)
@@ -913,37 +1039,60 @@ def _waterbirds_status(plan: SearchPlan) -> ProductionSearchStatus:
             final_expected=0,
             final_complete=0,
         )
+    tuning_runs_untyped = scheduler.completed_results(tuning)
+    if any(
+        not isinstance(run, WaterbirdsCompletedStageRun)
+        for run in tuning_runs_untyped
+    ):
+        raise ValueError("Waterbirds tuning stage contains another dataset result")
+    tuning_runs = cast(
+        tuple[WaterbirdsCompletedStageRun, ...], tuning_runs_untyped
+    )
+    from grit.production_waterbirds_search import (
+        compute_waterbirds_finalists,
+        compute_waterbirds_winners,
+    )
+
+    expected_finalists = compute_waterbirds_finalists(plan, tuning_runs)
     root = Path(plan.resolved_config.output_root)
-    finalists: dict[MethodId, WaterbirdsTuningFinalists] = {}
+    finalist_count = 0
     for method in ("erm", "grit"):
         path = root / "selection" / method / "tuning-finalists.json"
         if not path.exists():
-            return ProductionSearchStatus(
-                schema_version="grit.production-search-status/v1",
-                dataset="waterbirds_cf",
-                plan_digest=plan.canonical_digest(),
-                phase="confirmation",
-                tuning_expected=len(tuning),
-                tuning_complete=tuning_complete,
-                confirmation_expected=0,
-                confirmation_complete=0,
-                frozen_winner_count=0,
-                final_expected=0,
-                final_complete=0,
-            )
-        finalists[method] = WaterbirdsTuningFinalists.model_validate_json(
+            continue
+        finalist_count += 1
+        observed = WaterbirdsTuningFinalists.model_validate_json(
             path.read_text(encoding="utf-8")
+        )
+        if observed != expected_finalists[method]:
+            raise ValueError(
+                "Waterbirds finalist artifact does not match canonical tuning "
+                f"results: {path}"
+            )
+    if finalist_count != 2:
+        return ProductionSearchStatus(
+            schema_version="grit.production-search-status/v1",
+            dataset="waterbirds_cf",
+            plan_digest=plan.canonical_digest(),
+            phase="confirmation",
+            tuning_expected=len(tuning),
+            tuning_complete=tuning_complete,
+            confirmation_expected=0,
+            confirmation_complete=0,
+            frozen_winner_count=0,
+            final_expected=0,
+            final_complete=0,
         )
     by_id = {item.candidate_id: item for item in plan.candidates}
     confirmation = tuple(
         make_search_task(
             plan,
-            by_id[item.candidate_id],
+            _planned_candidate(by_id, item.candidate_id),
             SeedStage.CONFIRMATION,
             seed,
         )
         for method in ("erm", "grit")
-        for item in finalists[method].ordered_candidates
+        for item in expected_finalists[method].ordered_candidates
         for seed in config.seeds.stages.confirmation
     )
     confirmation_status = scheduler.status(confirmation)
@@ -962,16 +1111,32 @@ def _waterbirds_status(plan: SearchPlan) -> ProductionSearchStatus:
             final_expected=0,
             final_complete=0,
         )
-    winners: list[FrozenWaterbirdsCandidate] = []
+    confirmation_runs_untyped = scheduler.completed_results(confirmation)
+    if any(
+        not isinstance(run, WaterbirdsCompletedStageRun)
+        for run in confirmation_runs_untyped
+    ):
+        raise ValueError("Waterbirds confirmation contains another dataset result")
+    confirmation_runs = cast(
+        tuple[WaterbirdsCompletedStageRun, ...], confirmation_runs_untyped
+    )
+    expected_winners = compute_waterbirds_winners(
+        plan, expected_finalists, confirmation_runs
+    )
+    winner_count = 0
     for method in ("erm", "grit"):
         path = root / "selection" / method / "winner.json"
         if path.exists():
-            winners.append(
-                FrozenWaterbirdsCandidate.model_validate_json(
-                    path.read_text(encoding="utf-8")
-                )
+            winner_count += 1
+            observed = FrozenWaterbirdsCandidate.model_validate_json(
+                path.read_text(encoding="utf-8")
             )
-    if len(winners) != 2:
+            if observed != expected_winners[method]:
+                raise ValueError(
+                    "Waterbirds frozen winner does not match canonical confirmation "
+                    f"results: {path}"
+                )
+    if winner_count != 2:
         return ProductionSearchStatus(
             schema_version="grit.production-search-status/v1",
             dataset="waterbirds_cf",
@@ -981,15 +1146,18 @@ def _waterbirds_status(plan: SearchPlan) -> ProductionSearchStatus:
             tuning_complete=tuning_complete,
             confirmation_expected=len(confirmation),
             confirmation_complete=confirmation_complete,
-            frozen_winner_count=len(winners),
+            frozen_winner_count=winner_count,
             final_expected=0,
             final_complete=0,
         )
     final = tuple(
         make_final_search_task(
-            plan, by_id[winner.candidate_id], seed, winner
+            plan,
+            _planned_candidate(by_id, winner.candidate_id),
+            seed,
+            winner,
         )
-        for winner in winners
+        for winner in expected_winners.values()
         for seed in config.seeds.stages.final
     )
     final_status = scheduler.status(final)
@@ -1010,6 +1178,17 @@ def _waterbirds_status(plan: SearchPlan) -> ProductionSearchStatus:
         final_expected=len(final),
         final_complete=final_complete,
     )
+
+
+def _planned_candidate(
+    candidates: dict[str, SearchCandidate], candidate_id: str
+) -> SearchCandidate:
+    candidate = candidates.get(candidate_id)
+    if candidate is None:
+        raise ValueError(
+            f"selection artifact references an out-of-plan candidate: {candidate_id}"
+        )
+    return candidate
 
 
 def _complete_outputs_valid(plan: SearchPlan) -> bool:

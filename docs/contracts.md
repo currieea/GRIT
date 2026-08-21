@@ -147,8 +147,14 @@ boundary over already prepared artifacts:
 - the canonical plan records verified manifest paths and digests, exact 3+2+10 seeds,
   candidate order, expected stage counts, and code/environment identity without loading
   feature arrays or creating final-test capabilities;
+- reportable planning and execution require a resolvable committed Git revision and clean
+  worktree before any write or training, while read-only status validates an already-saved
+  planning triplet and may run from a dirty development tree;
 - run tasks retain the exact dataset-specific lineage and may be reused only when their
   canonical result and validation/checkpoint trace parse and match the plan;
+- status recomputes consumed CMNIST finalist unions/winners and Waterbirds
+  finalists/winners from canonical tuning/confirmation results instead of trusting saved
+  transition artifacts in isolation;
 - final tasks are a separate typed construction requiring the matching frozen candidate;
   each final seed still selects on validation, persists and restores that checkpoint, and
   only then opens final test; and

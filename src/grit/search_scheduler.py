@@ -485,6 +485,23 @@ class LocalRunScheduler:
             interrupted_task_ids=tuple(interrupted),
         )
 
+    def completed_results(
+        self, tasks: Sequence[SearchRunTask]
+    ) -> tuple[CompletedStageRun, ...]:
+        """Load a complete canonical stage without executing missing work."""
+
+        results: list[CompletedStageRun] = []
+        for task in tasks:
+            validated = self._validate_task(task)
+            completed = self._load_completed(validated)
+            if completed is None:
+                raise ValueError(
+                    "cannot load canonical stage results while planned tasks "
+                    "are missing"
+                )
+            results.append(completed)
+        return tuple(results)
+
     def _validate_task(self, task: SearchRunTask) -> SearchRunTask:
         validated = SearchRunTask.model_validate_json(task.canonical_json())
         if validated.plan_digest != self._plan_digest:

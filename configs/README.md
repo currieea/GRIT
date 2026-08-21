@@ -33,4 +33,8 @@ official CLIP cache, matching normalization, and matching adjusted-weight lineag
 The production examples describe executable local orchestration, not completed scientific
 results. The repository does not ship datasets and no full grid has been launched. Local
 canonical files remain authoritative; W&B mirroring is deferred. Conditional/nearest
-pairing and additional algorithms do not resolve through these schemas.
+pairing and additional algorithms remain deferred. Production `plan` and `run` require a
+clean committed Git worktree. Use a dedicated output directory disjoint from prepared
+artifacts (a
+repository-local directory must also be Git-ignored); `status` requires the previously
+written planning triplet and is read-only, so it may inspect that plan from a dirty tree.

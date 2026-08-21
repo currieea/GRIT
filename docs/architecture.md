@@ -353,9 +353,19 @@ command consumes the strict offline smoke profile and cannot produce a reportabl
 
 Milestone 6A implements `grit-search plan|run|status`. The shared command dispatches only
 after strict dataset discrimination. `plan` is final-data- and training-free; `run`
-continues the saved local lifecycle; `status` parses canonical state without running a
-trainer. The checked-in production examples contain required placeholder paths. There is
-no implicit smoke fallback, dataset acquisition, W&B call, or automatic full-grid launch.
+continues the saved local lifecycle. Both require an exact committed Git revision and a
+clean worktree before any write or training. `status` never replans: it requires and
+cross-checks the existing authored configuration, resolved configuration, and plan, then
+recomputes any consumed finalist/union/winner artifact from canonical completed stage
+results without writing, loading feature arrays, or running a trainer. It therefore remains
+usable while the development worktree is dirty. The checked-in production examples contain
+required placeholder paths. There is no implicit smoke fallback, dataset acquisition,
+W&B call, or automatic full-grid launch.
+
+Production output uses a dedicated tree. Filesystem roots, the repository root, prepared
+artifact directories or descendants, roots containing prepared inputs, and unrelated
+nonempty directories are rejected. A Git-ignored directory inside the repository remains
+valid when it is otherwise isolated, preserving stable clean-worktree provenance.
 
 The existing top-level `scripts/` directory remains inherited preprocessing and
 compatibility evidence. Its files are not templates for rewrite commands and are not

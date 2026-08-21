@@ -645,6 +645,42 @@ Verification:
 - No real dataset, CLIP weight, reportable grid, W&B operation, estimated pair, later
   algorithm, generalized artifact store, or inherited implementation was touched or run.
 
+### Milestone 6A production-safety hardening
+
+- Made exact clean code provenance a production precondition. `grit-search plan` and
+  `run` now fail before writing or training unless Git resolves `HEAD` to a commit and the
+  worktree is clean; reportable search plans reject unavailable, malformed, or dirty code
+  provenance at their serialized boundary. Git-ignored isolated outputs remain allowed.
+- Made `status` a strictly read-only consumer of an existing planning triplet. It requires
+  the authored configuration copy, resolved configuration, and search plan to exist and
+  match the supplied YAML, and it neither replans nor resolves prepared inputs.
+- Reused the run path's pure dataset-specific selection computations so status recomputes
+  CMNIST primary/secondary finalists, confirmation unions, and winners and Waterbirds
+  finalists/winners from canonical completed tuning/confirmation results. Forged, stale,
+  wrong-seed, wrong-selector, wrong-method, wrong-lineage, and out-of-plan transition
+  artifacts are rejected before they can define later-stage progress.
+- Restricted production output to a dedicated nonexistent, empty, or exactly compatible
+  prior-search directory. Filesystem roots, the repository root, prepared-artifact trees,
+  roots containing prepared inputs, and unrelated nonempty directories are rejected.
+- Added filesystem-snapshot coverage for read-only status plus focused provenance,
+  continuation, output isolation, and both-dataset stage-transition regressions. No search
+  algorithm, artifact framework, production service, or Milestone 6B feature was added.
+
+Verification:
+
+- `uv lock --check` — passed (41 packages resolved).
+- `uv run --frozen ruff check .` — passed.
+- `uv run --frozen basedpyright` — 0 errors, warnings, or notes.
+- `uv run --frozen pytest` — 130 passed on Python 3.10.20.
+- `uv run --frozen grit-cmnist-run configs/cmnist/smoke.yaml` — passed, producing the
+  expected non-reportable 40-result lifecycle after the pre-existing ignored smoke output
+  was preserved; the prior local output was restored afterward.
+- `uv run --frozen grit-waterbirds-run configs/waterbirds/smoke.yaml` — passed, producing
+  the expected non-reportable 20-result lifecycle under the same preservation procedure.
+- `git diff --check` — passed before the checkpoint commit.
+- No real dataset, reportable search, W&B operation, estimated pairing, new algorithm,
+  generalized artifact storage, or inherited implementation was touched or run.
+
 ## Next proposed checkpoint
 
 Review Milestone 6A, then prepare the explicit real-server execution procedure or resolve

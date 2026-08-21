@@ -287,6 +287,19 @@ def _finalists(
 ) -> dict[WaterbirdsMethod, WaterbirdsTuningFinalists]:
     from grit.production_search import persist_canonical_artifact
 
+    artifacts = compute_waterbirds_finalists(plan, runs)
+    for method, finalists in artifacts.items():
+        persist_canonical_artifact(
+            output_root / "selection" / method / "tuning-finalists.json",
+            finalists,
+        )
+    return artifacts
+
+
+def compute_waterbirds_finalists(
+    plan: SearchPlan,
+    runs: tuple[WaterbirdsCompletedStageRun, ...],
+) -> dict[WaterbirdsMethod, WaterbirdsTuningFinalists]:
     records = tuple(item for run in runs for item in run.validation_metrics)
     artifacts: dict[WaterbirdsMethod, WaterbirdsTuningFinalists] = {}
     for method in ("erm", "grit"):
@@ -295,10 +308,6 @@ def _finalists(
             plan.seeds.stages,
         )
         artifacts[method] = finalists
-        persist_canonical_artifact(
-            output_root / "selection" / method / "tuning-finalists.json",
-            finalists,
-        )
     return artifacts
 
 
@@ -310,6 +319,19 @@ def _freeze_winners(
 ) -> dict[WaterbirdsMethod, FrozenWaterbirdsCandidate]:
     from grit.production_search import persist_canonical_artifact
 
+    winners = compute_waterbirds_winners(plan, finalists, runs)
+    for method, frozen in winners.items():
+        persist_canonical_artifact(
+            output_root / "selection" / method / "winner.json", frozen
+        )
+    return winners
+
+
+def compute_waterbirds_winners(
+    plan: SearchPlan,
+    finalists: dict[WaterbirdsMethod, WaterbirdsTuningFinalists],
+    runs: tuple[WaterbirdsCompletedStageRun, ...],
+) -> dict[WaterbirdsMethod, FrozenWaterbirdsCandidate]:
     records = tuple(item for run in runs for item in run.validation_metrics)
     winners: dict[WaterbirdsMethod, FrozenWaterbirdsCandidate] = {}
     for method in ("erm", "grit"):
@@ -328,9 +350,6 @@ def _freeze_winners(
             decision, artifact, plan.seeds.stages
         )
         winners[method] = frozen
-        persist_canonical_artifact(
-            output_root / "selection" / method / "winner.json", frozen
-        )
     return winners
 
 
