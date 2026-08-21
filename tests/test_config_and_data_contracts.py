@@ -8,6 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from grit.config import (
+    CmnistArtifactLineageConfig,
     DisabledPairsConfig,
     ErmAlgorithmConfig,
     LinearProjectionConfig,
@@ -94,6 +95,11 @@ def test_scientific_candidate_identity_excludes_selector_branch_only() -> None:
 def test_reportable_config_requires_pinned_official_clip_and_training() -> None:
     payload = ordinary_erm_config().model_dump(mode="python")
     payload["reportable"] = True
+    payload["artifact_lineage"] = CmnistArtifactLineageConfig(
+        dataset_manifest_digest="sha256:dataset",
+        feature_cache_manifest_digest="sha256:features",
+        pair_manifest_digest=None,
+    )
     reportable = OrdinaryExperimentConfig.model_validate(payload)
     assert reportable.reportable is True
 

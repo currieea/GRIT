@@ -194,6 +194,14 @@ class CmnistTestOracleSelectionConfig(StrictBoundaryModel):
     test_oracle: Literal[True]
 
 
+class CmnistArtifactLineageConfig(StrictBoundaryModel):
+    """Prepared-artifact identity required by reportable CMNIST runs."""
+
+    dataset_manifest_digest: NonEmptyStr
+    feature_cache_manifest_digest: NonEmptyStr
+    pair_manifest_digest: NonEmptyStr | None
+
+
 class _CommonCmnistExperimentConfig(StrictBoundaryModel):
     schema_version: Literal["grit.experiment/v1"]
     experiment_name: NonEmptyStr
@@ -207,6 +215,7 @@ class _CommonCmnistExperimentConfig(StrictBoundaryModel):
     training: LinearProbeTrainingConfig
     runtime: CpuRuntimeConfig
     seed_sets: SeedSets
+    artifact_lineage: CmnistArtifactLineageConfig | None = None
 
     def scientific_config_digest(self) -> str:
         """Identify trainable candidate fields independently of selector and seeds."""
@@ -238,6 +247,13 @@ class _CommonCmnistExperimentConfig(StrictBoundaryModel):
                     "initial GRIT requires projection.kind='linear_pair_difference'"
                 )
         if self.reportable:
+            if self.artifact_lineage is None:
+                raise ValueError("reportable CMNIST requires prepared-artifact lineage")
+            if isinstance(self.algorithm, ErmAlgorithmConfig):
+                if self.artifact_lineage.pair_manifest_digest is not None:
+                    raise ValueError("reportable CMNIST ERM cannot bind oracle pairs")
+            elif self.artifact_lineage.pair_manifest_digest is None:
+                raise ValueError("reportable CMNIST GRIT requires oracle-pair lineage")
             counts = self.dataset.source_counts
             if (counts.train_e01, counts.train_e02, counts.validation, counts.test) != (
                 25_000,

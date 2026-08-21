@@ -152,6 +152,9 @@ class CandidateSelectionDecision(StrictBoundaryModel):
 class TuningFinalistsArtifact(StrictBoundaryModel):
     """Durable ordered top three for one method and ordinary selector."""
 
+    schema_version: Literal["grit.cmnist-tuning-finalists/v1"] = (
+        "grit.cmnist-tuning-finalists/v1"
+    )
     artifact_id: NonEmptyStr
     selector: CmnistSelector
     method_id: NonEmptyStr
@@ -191,6 +194,9 @@ class TuningFinalistsArtifact(StrictBoundaryModel):
 
 
 class FrozenCandidateSelection(StrictBoundaryModel):
+    schema_version: Literal["grit.cmnist-frozen-candidate/v1"] = (
+        "grit.cmnist-frozen-candidate/v1"
+    )
     frozen_selection_id: NonEmptyStr
     selector: CmnistSelector
     method_id: NonEmptyStr
@@ -276,6 +282,9 @@ class FrozenCheckpointSelection(StrictBoundaryModel):
 class FinalistUnion(StrictBoundaryModel):
     """Primary/secondary top sets confirmed once without merging their winners."""
 
+    schema_version: Literal["grit.cmnist-finalist-union/v1"] = (
+        "grit.cmnist-finalist-union/v1"
+    )
     method_id: NonEmptyStr
     primary: TuningFinalistsArtifact
     secondary: TuningFinalistsArtifact

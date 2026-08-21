@@ -260,7 +260,43 @@ class OrdinaryRunResult(StrictBoundaryModel):
                 raise ValueError(
                     "final metric identity does not match selected result state"
                 )
+        if self.resolved_config.reportable:
+            self._validate_reportable_cmnist_artifacts()
         return self
+
+    def _validate_reportable_cmnist_artifacts(self) -> None:
+        lineage = self.resolved_config.artifact_lineage
+        if lineage is None:
+            raise ValueError("reportable CMNIST result lacks artifact lineage")
+        by_kind = {artifact.kind: artifact for artifact in self.artifacts}
+        if len(by_kind) != len(self.artifacts):
+            raise ValueError("CMNIST result artifact kinds must be unique")
+        if (
+            len({artifact.artifact_id for artifact in self.artifacts})
+            != len(self.artifacts)
+            or len({artifact.relative_uri for artifact in self.artifacts})
+            != len(self.artifacts)
+        ):
+            raise ValueError("CMNIST result artifact references must be unique")
+        required = {
+            "dataset_manifest",
+            "feature_manifest",
+            "selected_linear_checkpoint",
+        }
+        if self.resolved_config.algorithm.kind == "grit":
+            required |= {"pair_manifest", "projection_diagnostics"}
+        if set(by_kind) != required:
+            raise ValueError("CMNIST result required artifact references are missing")
+        if (
+            by_kind["dataset_manifest"].digest
+            != lineage.dataset_manifest_digest
+            or by_kind["feature_manifest"].digest
+            != lineage.feature_cache_manifest_digest
+        ):
+            raise ValueError("CMNIST result artifact lineage is inconsistent")
+        if self.resolved_config.algorithm.kind == "grit":
+            if by_kind["pair_manifest"].digest != lineage.pair_manifest_digest:
+                raise ValueError("CMNIST result pair lineage is inconsistent")
 
 
 class CmnistTestOracleDiagnosticResult(StrictBoundaryModel):

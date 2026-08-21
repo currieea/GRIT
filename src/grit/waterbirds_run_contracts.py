@@ -9,6 +9,7 @@ from typing import Annotated, Literal, TypeAlias
 from pydantic import (
     Field,
     FiniteFloat,
+    StrictBool,
     StrictFloat,
     StrictInt,
     StrictStr,
@@ -17,7 +18,7 @@ from pydantic import (
 
 from grit.config import LinearProbeTrainingConfig, SeedSets
 from grit.results import CodeProvenance, EnvironmentProvenance
-from grit.schemas import StrictBoundaryModel
+from grit.schemas import StrictBoundaryModel, canonical_digest_value
 from grit.selection import CheckpointIdentity
 from grit.waterbirds_selection import (
     FrozenWaterbirdsCandidate,
@@ -33,7 +34,7 @@ NonEmptyStr: TypeAlias = Annotated[StrictStr, Field(min_length=1)]
 class WaterbirdsCandidateConfig(StrictBoundaryModel):
     schema_version: Literal["grit.waterbirds-candidate/v2"]
     protocol_id: Literal["waterbirds_cf/v1"]
-    non_reportable: Literal[True]
+    non_reportable: StrictBool
     method_id: Literal["erm", "grit"]
     dataset_profile: Literal["fixture", "production"]
     dataset_manifest_digest: NonEmptyStr
@@ -49,6 +50,11 @@ class WaterbirdsCandidateConfig(StrictBoundaryModel):
 
     @model_validator(mode="after")
     def _validate_method(self) -> WaterbirdsCandidateConfig:
+        if (self.dataset_profile == "fixture") != self.non_reportable:
+            raise ValueError(
+                "Waterbirds fixture configs must be non-reportable and production "
+                "configs must be reportable"
+            )
         if self.method_id == "erm" and any(
             value is not None
             for value in (
@@ -69,10 +75,28 @@ class WaterbirdsCandidateConfig(StrictBoundaryModel):
             )
         ):
             raise ValueError("Waterbirds GRIT config requires oracle projection")
+        if self.dataset_profile == "production":
+            training = self.training
+            if (
+                training.batch_size != 256
+                or training.max_epochs != 100
+                or float(training.learning_rate)
+                not in {0.0001, 0.0003, 0.001, 0.003}
+                or float(training.weight_decay)
+                not in {0.0, 0.00001, 0.0001, 0.001}
+            ):
+                raise ValueError(
+                    "production Waterbirds requires approved linear-probe settings"
+                )
         return self
 
     def scientific_config_digest(self) -> str:
-        return self.canonical_digest()
+        return canonical_digest_value(
+            self.model_dump(
+                mode="json",
+                exclude={"projection_diagnostics_digest", "seed_sets"},
+            )
+        )
 
 
 class _WaterbirdsArtifactReference(StrictBoundaryModel):

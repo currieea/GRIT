@@ -1,0 +1,33 @@
+# Production-capable example. Replace every __REQUIRED_* path before planning.
+schema_version: grit.production-search/v1
+dataset: waterbirds_cf
+protocol_id: waterbirds_cf/v1
+experiment_name: waterbirds-cf-primary-openai-clip
+experiment_variant: primary_unnormalized
+normalization: none
+artifacts:
+  dataset_manifest: __REQUIRED_WATERBIRDS_ARTIFACT_ROOT__/dataset-manifest.json
+  feature_cache_manifest: __REQUIRED_WATERBIRDS_ARTIFACT_ROOT__/feature-cache/manifest.json
+  oracle_pair_manifest: __REQUIRED_WATERBIRDS_ARTIFACT_ROOT__/pair-manifest.json
+seeds:
+  construction: 1729
+  pairs: 2718
+  stages:
+    tuning: [1101, 1102, 1103]
+    confirmation: [2101, 2102]
+    final: [3101, 3102, 3103, 3104, 3105, 3106, 3107, 3108, 3109, 3110]
+search_space:
+  methods: [erm, grit]
+  learning_rates: [0.0001, 0.0003, 0.001, 0.003]
+  weight_decays: [0.0, 0.00001, 0.0001, 0.001]
+  projection_ranks: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
+selectors: [waterbirds_validation_worst_group]
+pair_count: 240
+batch_size: 256
+max_epochs: 100
+output_root: __REQUIRED_OUTPUT_ROOT__/waterbirds-primary
+runtime:
+  device: cpu
+  deterministic_algorithms: true
+  workers: 1
+relative_singular_value_tolerance: 0.000000000001

@@ -195,6 +195,9 @@ class WaterbirdsCandidateSelection(_WaterbirdsArtifactLineage):
 
 
 class WaterbirdsTuningFinalists(_WaterbirdsArtifactLineage):
+    schema_version: Literal["grit.waterbirds-tuning-finalists/v1"] = (
+        "grit.waterbirds-tuning-finalists/v1"
+    )
     artifact_id: NonEmptyStr
     selector: Literal["waterbirds_validation_worst_group"]
     method_id: Literal["erm", "grit"]
@@ -229,6 +232,9 @@ class WaterbirdsTuningFinalists(_WaterbirdsArtifactLineage):
 
 
 class FrozenWaterbirdsCandidate(_WaterbirdsArtifactLineage):
+    schema_version: Literal["grit.waterbirds-frozen-candidate/v1"] = (
+        "grit.waterbirds-frozen-candidate/v1"
+    )
     frozen_selection_id: NonEmptyStr
     selector: Literal["waterbirds_validation_worst_group"]
     method_id: Literal["erm", "grit"]
