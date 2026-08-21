@@ -24,7 +24,7 @@ from pydantic import (
 from grit.config import LinearProbeTrainingConfig, SeedSets
 from grit.features import OfficialOpenAiClipEncoder
 from grit.projection import FittedLinearProjection
-from grit.results import ArtifactReference, CodeProvenance, EnvironmentProvenance
+from grit.results import CodeProvenance, EnvironmentProvenance
 from grit.schemas import SeedStage, StrictBoundaryModel
 from grit.tracking import EventSink, LifecycleEvent, NullEventSink
 from grit.training import (
@@ -37,6 +37,7 @@ from grit.waterbirds import (
     WaterbirdsConstruction,
     construct_waterbirds_cf,
     load_waterbirds_assets,
+    mint_waterbirds_adjusted_weight_spec,
     waterbirds_oracle_relation_view,
 )
 from grit.waterbirds_features import (
@@ -52,8 +53,16 @@ from grit.waterbirds_pairs import (
     build_waterbirds_oracle_pairs,
 )
 from grit.waterbirds_run_contracts import (
+    WaterbirdsArtifactReference,
     WaterbirdsCandidateConfig,
+    WaterbirdsCheckpointArtifactReference,
+    WaterbirdsDatasetArtifactReference,
+    WaterbirdsFeatureArtifactReference,
+    WaterbirdsFinalSeedObservation,
     WaterbirdsMethodSmokeSummary,
+    WaterbirdsPairArtifactReference,
+    WaterbirdsPairedSeedDifference,
+    WaterbirdsProjectionArtifactReference,
     WaterbirdsRunResult,
     WaterbirdsSmokeSummary,
     make_waterbirds_metric_summary,
@@ -223,24 +232,41 @@ def run_waterbirds_smoke(
         _run_method(smoke, construction, pairs, cache, "erm", output_root),
         _run_method(smoke, construction, pairs, cache, "grit", output_root),
     )
+    erm_by_seed = {
+        item.seed: float(item.worst_group_accuracy)
+        for item in methods[0].final_observations
+    }
+    grit_by_seed = {
+        item.seed: float(item.worst_group_accuracy)
+        for item in methods[1].final_observations
+    }
     paired_worst = tuple(
-        grit - erm
-        for erm, grit in zip(
-            methods[0].final_worst_group_accuracies,
-            methods[1].final_worst_group_accuracies,
-            strict=True,
+        WaterbirdsPairedSeedDifference(
+            seed=seed,
+            grit_minus_erm_worst_group_accuracy=(
+                grit_by_seed[seed] - erm_by_seed[seed]
+            ),
         )
+        for seed in smoke.seed_sets.final
     )
     summary = WaterbirdsSmokeSummary(
-        schema_version="grit.waterbirds-smoke-result/v1",
+        schema_version="grit.waterbirds-smoke-result/v2",
         non_reportable=True,
         dataset_manifest_digest=construction.manifest.canonical_digest(),
         pair_manifest_digest=pairs.manifest.canonical_digest(),
         feature_cache_manifest_digest=feature_manifest.canonical_digest(),
+        normalization=feature_manifest.normalization,
+        adjusted_weight_spec_digest=mint_waterbirds_adjusted_weight_spec(
+            construction.manifest
+        ).canonical_digest(),
         methods=methods,
         paired_worst_group_differences=paired_worst,
         paired_worst_group_summary=make_waterbirds_metric_summary(
-            "grit_minus_erm_worst_group_accuracy", paired_worst
+            "grit_minus_erm_worst_group_accuracy",
+            tuple(
+                float(item.grit_minus_erm_worst_group_accuracy)
+                for item in paired_worst
+            ),
         ),
     )
     (output_root / "smoke-result.json").write_text(
@@ -297,10 +323,7 @@ def _run_method(
         frozen.canonical_json() + "\n", encoding="utf-8"
     )
     selected = by_id[frozen.candidate_id]
-    result_paths: list[str] = []
-    final_worst: list[float] = []
-    final_adjusted: list[float] = []
-    final_raw: list[float] = []
+    observations: list[WaterbirdsFinalSeedObservation] = []
     for seed in smoke.seed_sets.final:
         result, relative = _run_final_seed(
             construction,
@@ -311,25 +334,41 @@ def _run_method(
             seed,
             output_root,
         )
-        result_paths.append(relative)
-        final_worst.append(float(result.final_test_metric.worst_group_accuracy))
-        final_adjusted.append(float(result.final_test_metric.adjusted_average_accuracy))
-        final_raw.append(float(result.final_test_metric.raw_average_accuracy))
-    worst_values = tuple(final_worst)
-    adjusted_values = tuple(final_adjusted)
-    raw_values = tuple(final_raw)
+        observations.append(
+            WaterbirdsFinalSeedObservation(
+                seed=seed,
+                method_id=method,
+                result_path=relative,
+                metric_record_id=result.final_test_metric.record_id,
+                worst_group_accuracy=result.final_test_metric.worst_group_accuracy,
+                adjusted_average_accuracy=(
+                    result.final_test_metric.adjusted_average_accuracy
+                ),
+                raw_average_accuracy=result.final_test_metric.raw_average_accuracy,
+            )
+        )
+    typed_observations = tuple(observations)
+    worst_values = tuple(float(item.worst_group_accuracy) for item in observations)
+    adjusted_values = tuple(
+        float(item.adjusted_average_accuracy) for item in observations
+    )
+    raw_values = tuple(float(item.raw_average_accuracy) for item in observations)
     return WaterbirdsMethodSmokeSummary(
         method_id=method,
+        dataset_manifest_digest=construction.manifest.canonical_digest(),
+        feature_cache_manifest_digest=cache.manifest.canonical_digest(),
+        normalization=cache.manifest.normalization,
+        adjusted_weight_spec_digest=mint_waterbirds_adjusted_weight_spec(
+            construction.manifest
+        ).canonical_digest(),
         selected_candidate_id=frozen.candidate_id,
         finalist_candidate_ids=(
             finalists.ordered_candidates[0].candidate_id,
             finalists.ordered_candidates[1].candidate_id,
             finalists.ordered_candidates[2].candidate_id,
         ),
-        result_paths=tuple(result_paths),
-        final_worst_group_accuracies=worst_values,
-        final_adjusted_average_accuracies=adjusted_values,
-        final_raw_average_accuracies=raw_values,
+        configured_final_seeds=smoke.seed_sets.final,
+        final_observations=typed_observations,
         worst_group_summary=make_waterbirds_metric_summary(
             "worst_group_accuracy", worst_values
         ),
@@ -366,7 +405,7 @@ def _candidates(
     values: list[_Candidate] = []
     for learning_rate in smoke.learning_rates:
         config = WaterbirdsCandidateConfig(
-            schema_version="grit.waterbirds-candidate/v1",
+            schema_version="grit.waterbirds-candidate/v2",
             protocol_id="waterbirds_cf/v1",
             non_reportable=True,
             method_id=method,
@@ -374,8 +413,16 @@ def _candidates(
             dataset_manifest_digest=construction.manifest.canonical_digest(),
             feature_cache_manifest_digest=cache.manifest.canonical_digest(),
             normalization=smoke.normalization,
+            adjusted_weight_spec_digest=mint_waterbirds_adjusted_weight_spec(
+                construction.manifest
+            ).canonical_digest(),
             pair_manifest_digest=(
                 pairs.manifest.canonical_digest() if method == "grit" else None
+            ),
+            projection_diagnostics_digest=(
+                projection.diagnostics.canonical_digest()
+                if projection is not None
+                else None
             ),
             projection_rank=smoke.projection_rank if method == "grit" else None,
             relative_singular_value_tolerance=(
@@ -431,7 +478,7 @@ def _train(
     return train_waterbirds_linear_probe(
         cache.training_table(),
         cache.validation_table(),
-        construction.manifest.counts.training_groups,
+        mint_waterbirds_adjusted_weight_spec(construction.manifest),
         candidate.config.training,
         run_id=run_id,
         candidate_id=candidate.candidate_id,
@@ -480,52 +527,61 @@ def _run_final_seed(
     final_metric = compute_waterbirds_final_metric(
         final_view,
         predictions,
-        training_group_counts=construction.manifest.counts.training_groups,
+        adjusted_weights=mint_waterbirds_adjusted_weight_spec(construction.manifest),
         record_id=f"metric:{run_id}:test",
     )
     checkpoint_relative = checkpoint_root.relative_to(output_root).as_posix()
-    artifacts = [
-        ArtifactReference(
+    artifacts: list[WaterbirdsArtifactReference] = [
+        WaterbirdsDatasetArtifactReference(
             artifact_id="waterbirds-cf-dataset",
             kind="dataset_manifest",
             relative_uri="construction/dataset-manifest.json",
             digest=construction.manifest.canonical_digest(),
         ),
-        ArtifactReference(
+        WaterbirdsFeatureArtifactReference(
             artifact_id="waterbirds-feature-cache",
             kind="feature_manifest",
             relative_uri="feature-cache/manifest.json",
             digest=cache.manifest.canonical_digest(),
+            dataset_manifest_digest=construction.manifest.canonical_digest(),
+            normalization=cache.manifest.normalization,
         ),
-        ArtifactReference(
+        WaterbirdsCheckpointArtifactReference(
             artifact_id=checkpoint_manifest.store_id,
             kind="selected_linear_checkpoint",
             relative_uri=f"{checkpoint_relative}/manifest.json",
             digest=checkpoint_manifest.canonical_digest(),
+            checkpoint=frozen_checkpoint.checkpoint,
         ),
     ]
     if method == "grit":
         artifacts.extend(
             (
-                ArtifactReference(
+                WaterbirdsPairArtifactReference(
                     artifact_id="waterbirds-oracle-pairs",
                     kind="pair_manifest",
                     relative_uri="pair-manifest.json",
                     digest=pairs.manifest.canonical_digest(),
+                    dataset_manifest_digest=construction.manifest.canonical_digest(),
                 ),
-                ArtifactReference(
+                WaterbirdsProjectionArtifactReference(
                     artifact_id="waterbirds-linear-projection",
                     kind="projection_diagnostics",
                     relative_uri="runs/grit/projection.json",
                     digest=_projection(candidate).diagnostics.canonical_digest(),
+                    pair_manifest_digest=pairs.manifest.canonical_digest(),
+                    feature_cache_manifest_digest=cache.manifest.canonical_digest(),
+                    normalization=cache.manifest.normalization,
+                    requested_rank=_projection(candidate).diagnostics.requested_rank,
                 ),
             )
         )
     result = WaterbirdsRunResult(
-        schema_version="grit.waterbirds-run-result/v1",
+        schema_version="grit.waterbirds-run-result/v2",
         result_kind="ordinary_waterbirds",
         status="succeeded",
         run_id=run_id,
+        final_seed=seed,
         resolved_config=candidate.config,
         resolved_config_digest=candidate.config.canonical_digest(),
         code=_code_provenance(),
@@ -535,6 +591,7 @@ def _run_final_seed(
         checkpoint_selection=frozen_checkpoint,
         restoration=restoration,
         final_test_metric=final_metric,
+        selected_checkpoint_manifest_digest=checkpoint_manifest.canonical_digest(),
         artifacts=tuple(artifacts),
     )
     run_root.mkdir(parents=True, exist_ok=True)

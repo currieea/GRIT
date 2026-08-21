@@ -18,10 +18,15 @@ from pydantic import (
 )
 
 from grit.config import SeedSets
-from grit.schemas import SeedStage, StrictBoundaryModel, canonical_digest_value
+from grit.schemas import SeedStage, StrictBoundaryModel
 from grit.selection import CheckpointIdentity
-from grit.waterbirds import GroupId, WaterbirdsGroupCounts
+from grit.waterbirds import (
+    WATERBIRDS_GROUP_ORDER,
+    GroupId,
+    WaterbirdsAdjustedWeightSpec,
+)
 from grit.waterbirds_features import (
+    Normalization,
     WaterbirdsEvaluationFeatureTable,
     WaterbirdsFinalTestView,
 )
@@ -30,12 +35,14 @@ NonEmptyStr: TypeAlias = Annotated[StrictStr, Field(min_length=1)]
 NonNegativeInt: TypeAlias = Annotated[StrictInt, Field(ge=0)]
 Accuracy: TypeAlias = Annotated[FiniteFloat, Field(ge=0.0, le=1.0)]
 
-GROUP_ORDER: tuple[GroupId, ...] = (
-    "landbird_land",
-    "landbird_water",
-    "waterbird_land",
-    "waterbird_water",
-)
+GROUP_ORDER = WATERBIRDS_GROUP_ORDER
+
+
+class _WaterbirdsArtifactLineage(StrictBoundaryModel):
+    dataset_manifest_digest: NonEmptyStr
+    feature_cache_manifest_digest: NonEmptyStr
+    normalization: Normalization
+    adjusted_weight_spec_digest: NonEmptyStr
 
 
 class WaterbirdsGroupAccuracy(StrictBoundaryModel):
@@ -53,14 +60,12 @@ class WaterbirdsGroupAccuracy(StrictBoundaryModel):
         return self
 
 
-class _WaterbirdsMetricIdentity(StrictBoundaryModel):
+class _WaterbirdsMetricIdentity(_WaterbirdsArtifactLineage):
     record_id: NonEmptyStr
     run_id: NonEmptyStr
     candidate_id: NonEmptyStr
     method_id: Literal["erm", "grit"]
     scientific_config_digest: NonEmptyStr
-    dataset_manifest_digest: NonEmptyStr
-    feature_cache_manifest_digest: NonEmptyStr
     checkpoint_id: NonEmptyStr
     epoch: NonNegativeInt
     seed: StrictInt
@@ -71,8 +76,7 @@ class _WaterbirdsMetricIdentity(StrictBoundaryModel):
         WaterbirdsGroupAccuracy,
         WaterbirdsGroupAccuracy,
     ]
-    training_group_counts: WaterbirdsGroupCounts
-    training_weights_digest: NonEmptyStr
+    adjusted_weight_spec: WaterbirdsAdjustedWeightSpec
     worst_group_accuracy: Accuracy
     adjusted_average_accuracy: Accuracy
     raw_average_accuracy: Accuracy
@@ -83,17 +87,14 @@ class _WaterbirdsMetricIdentity(StrictBoundaryModel):
             raise ValueError(
                 "Waterbirds metrics require all four groups in fixed order"
             )
-        weights = self.training_group_counts.as_tuple()
-        if min(weights) <= 0:
-            raise ValueError("Waterbirds training weights require every group")
-        if self.training_weights_digest != canonical_digest_value(
-            {
-                "source": "waterbirds_cf_training_group_counts",
-                "groups": GROUP_ORDER,
-                "counts": weights,
-            }
+        weights = self.adjusted_weight_spec.training_group_counts.as_tuple()
+        if (
+            self.adjusted_weight_spec.dataset_manifest_digest
+            != self.dataset_manifest_digest
+            or self.adjusted_weight_spec.canonical_digest()
+            != self.adjusted_weight_spec_digest
         ):
-            raise ValueError("Waterbirds training-weight digest is inconsistent")
+            raise ValueError("Waterbirds adjusted-weight lineage is inconsistent")
         accuracies = tuple(float(group.accuracy) for group in self.groups)
         expected_worst = min(accuracies)
         expected_adjusted = sum(
@@ -128,7 +129,7 @@ class WaterbirdsFinalTestMetricRecord(_WaterbirdsMetricIdentity):
     seed_stage: Literal[SeedStage.FINAL]
 
 
-class WaterbirdsCheckpointSelection(StrictBoundaryModel):
+class WaterbirdsCheckpointSelection(_WaterbirdsArtifactLineage):
     decision_id: NonEmptyStr
     selector: Literal["waterbirds_validation_worst_group"]
     method_id: Literal["erm", "grit"]
@@ -141,7 +142,7 @@ class WaterbirdsCheckpointSelection(StrictBoundaryModel):
     contributing_record_id: NonEmptyStr
 
 
-class WaterbirdsCandidateSelection(StrictBoundaryModel):
+class WaterbirdsCandidateSelection(_WaterbirdsArtifactLineage):
     decision_id: NonEmptyStr
     selector: Literal["waterbirds_validation_worst_group"]
     method_id: Literal["erm", "grit"]
@@ -174,6 +175,10 @@ class WaterbirdsCandidateSelection(StrictBoundaryModel):
                 raise ValueError("Waterbirds candidate config identity is inconsistent")
             if decision.projection_rank != self.projection_rank:
                 raise ValueError("Waterbirds candidate projection rank is inconsistent")
+            if _lineage(decision) != _lineage(self):
+                raise ValueError(
+                    "Waterbirds candidate artifact lineage is inconsistent"
+                )
             if decision.seed_stage is SeedStage.FINAL:
                 raise ValueError("final-stage records cannot select hyperparameters")
         if fmean(
@@ -189,7 +194,7 @@ class WaterbirdsCandidateSelection(StrictBoundaryModel):
         return self
 
 
-class WaterbirdsTuningFinalists(StrictBoundaryModel):
+class WaterbirdsTuningFinalists(_WaterbirdsArtifactLineage):
     artifact_id: NonEmptyStr
     selector: Literal["waterbirds_validation_worst_group"]
     method_id: Literal["erm", "grit"]
@@ -209,6 +214,8 @@ class WaterbirdsTuningFinalists(StrictBoundaryModel):
         for decision in self.ordered_candidates:
             if decision.method_id != self.method_id:
                 raise ValueError("Waterbirds finalist method is inconsistent")
+            if _lineage(decision) != _lineage(self):
+                raise ValueError("Waterbirds finalist artifact lineage is inconsistent")
             observed = {
                 (item.seed_stage, item.seed) for item in decision.checkpoint_decisions
             }
@@ -221,7 +228,7 @@ class WaterbirdsTuningFinalists(StrictBoundaryModel):
         return self
 
 
-class FrozenWaterbirdsCandidate(StrictBoundaryModel):
+class FrozenWaterbirdsCandidate(_WaterbirdsArtifactLineage):
     frozen_selection_id: NonEmptyStr
     selector: Literal["waterbirds_validation_worst_group"]
     method_id: Literal["erm", "grit"]
@@ -258,6 +265,11 @@ class FrozenWaterbirdsCandidate(StrictBoundaryModel):
             tuning.projection_rank,
         ):
             raise ValueError("frozen Waterbirds candidate identity is inconsistent")
+        if (
+            _lineage(self) != _lineage(self.finalists)
+            or _lineage(self) != _lineage(self.decision)
+        ):
+            raise ValueError("frozen Waterbirds artifact lineage is inconsistent")
         if self.finalists.tuning_seeds != self.seed_sets.tuning:
             raise ValueError("Waterbirds finalist seeds do not match configuration")
         observed = {
@@ -272,7 +284,7 @@ class FrozenWaterbirdsCandidate(StrictBoundaryModel):
         return self
 
 
-class FrozenWaterbirdsCheckpoint(StrictBoundaryModel):
+class FrozenWaterbirdsCheckpoint(_WaterbirdsArtifactLineage):
     frozen_checkpoint_id: NonEmptyStr
     candidate_selection_id: NonEmptyStr
     method_id: Literal["erm", "grit"]
@@ -287,6 +299,8 @@ class FrozenWaterbirdsCheckpoint(StrictBoundaryModel):
             raise ValueError("Waterbirds frozen checkpoint method is inconsistent")
         if self.decision.checkpoint != self.checkpoint:
             raise ValueError("Waterbirds frozen checkpoint identity is inconsistent")
+        if _lineage(self.decision) != _lineage(self):
+            raise ValueError("Waterbirds frozen checkpoint lineage is inconsistent")
         return self
 
 
@@ -294,7 +308,7 @@ def compute_waterbirds_validation_metric(
     table: WaterbirdsEvaluationFeatureTable,
     predictions: torch.Tensor,
     *,
-    training_group_counts: WaterbirdsGroupCounts,
+    adjusted_weights: WaterbirdsAdjustedWeightSpec,
     record_id: str,
     run_id: str,
     candidate_id: str,
@@ -308,8 +322,13 @@ def compute_waterbirds_validation_metric(
 ) -> WaterbirdsValidationMetricRecord:
     if table.split_role != "validation":
         raise TypeError("validation metrics require a Waterbirds validation table")
+    weights = WaterbirdsAdjustedWeightSpec.model_validate_json(
+        adjusted_weights.canonical_json()
+    )
+    if weights.dataset_manifest_digest != table.dataset_manifest_digest:
+        raise ValueError("Waterbirds adjusted weights belong to another dataset")
     values = _group_values(table, predictions)
-    aggregate = _aggregate_fields(values, training_group_counts)
+    aggregate = _aggregate_fields(values, weights)
     return WaterbirdsValidationMetricRecord(
         record_id=record_id,
         run_id=run_id,
@@ -318,13 +337,14 @@ def compute_waterbirds_validation_metric(
         scientific_config_digest=scientific_config_digest,
         dataset_manifest_digest=table.dataset_manifest_digest,
         feature_cache_manifest_digest=table.feature_cache_manifest_digest,
+        normalization=table.normalization,
+        adjusted_weight_spec_digest=weights.canonical_digest(),
         checkpoint_id=checkpoint_id,
         epoch=epoch,
         seed=seed,
         projection_rank=projection_rank,
         groups=values,
-        training_group_counts=training_group_counts,
-        training_weights_digest=_training_weights_digest(training_group_counts),
+        adjusted_weight_spec=weights,
         worst_group_accuracy=aggregate[0],
         adjusted_average_accuracy=aggregate[1],
         raw_average_accuracy=aggregate[2],
@@ -338,7 +358,7 @@ def compute_waterbirds_final_metric(
     view: WaterbirdsFinalTestView,
     predictions: torch.Tensor,
     *,
-    training_group_counts: WaterbirdsGroupCounts,
+    adjusted_weights: WaterbirdsAdjustedWeightSpec,
     record_id: str,
 ) -> WaterbirdsFinalTestMetricRecord:
     if (
@@ -346,8 +366,13 @@ def compute_waterbirds_final_metric(
         or view.table.split_role != "final_test"
     ):
         raise TypeError("final metrics require a gate-authorized Waterbirds final view")
+    weights = WaterbirdsAdjustedWeightSpec.model_validate_json(
+        adjusted_weights.canonical_json()
+    )
+    if weights.dataset_manifest_digest != view.table.dataset_manifest_digest:
+        raise ValueError("Waterbirds adjusted weights belong to another dataset")
     values = _group_values(view.table, predictions)
-    aggregate = _aggregate_fields(values, training_group_counts)
+    aggregate = _aggregate_fields(values, weights)
     return WaterbirdsFinalTestMetricRecord(
         record_id=record_id,
         run_id=view.run_id,
@@ -356,13 +381,14 @@ def compute_waterbirds_final_metric(
         scientific_config_digest=view.scientific_config_digest,
         dataset_manifest_digest=view.table.dataset_manifest_digest,
         feature_cache_manifest_digest=view.feature_cache_manifest_digest,
+        normalization=view.table.normalization,
+        adjusted_weight_spec_digest=weights.canonical_digest(),
         checkpoint_id=view.checkpoint_id,
         epoch=view.epoch,
         seed=view.seed,
         projection_rank=view.projection_rank,
         groups=values,
-        training_group_counts=training_group_counts,
-        training_weights_digest=_training_weights_digest(training_group_counts),
+        adjusted_weight_spec=weights,
         worst_group_accuracy=aggregate[0],
         adjusted_average_accuracy=aggregate[1],
         raw_average_accuracy=aggregate[2],
@@ -385,6 +411,10 @@ def select_waterbirds_checkpoint(
             item.seed_stage,
             item.seed,
             item.projection_rank,
+            item.dataset_manifest_digest,
+            item.feature_cache_manifest_digest,
+            item.normalization,
+            item.adjusted_weight_spec_digest,
         )
         for item in validated
     }
@@ -419,6 +449,10 @@ def select_waterbirds_checkpoint(
         worst_group_accuracy=selected.worst_group_accuracy,
         adjusted_average_accuracy=selected.adjusted_average_accuracy,
         projection_rank=selected.projection_rank,
+        dataset_manifest_digest=selected.dataset_manifest_digest,
+        feature_cache_manifest_digest=selected.feature_cache_manifest_digest,
+        normalization=selected.normalization,
+        adjusted_weight_spec_digest=selected.adjusted_weight_spec_digest,
         contributing_record_id=selected.record_id,
     )
 
@@ -448,6 +482,10 @@ def make_waterbirds_tuning_finalists(
         artifact_id=f"waterbirds-finalists:{top[0].method_id}",
         selector="waterbirds_validation_worst_group",
         method_id=top[0].method_id,
+        dataset_manifest_digest=top[0].dataset_manifest_digest,
+        feature_cache_manifest_digest=top[0].feature_cache_manifest_digest,
+        normalization=top[0].normalization,
+        adjusted_weight_spec_digest=top[0].adjusted_weight_spec_digest,
         tuning_seeds=validated_seeds.tuning,
         ordered_candidates=top,
     )
@@ -482,6 +520,7 @@ def select_confirmed_waterbirds_candidate(
         if (
             confirmation.scientific_config_digest != tuning.scientific_config_digest
             or confirmation.projection_rank != tuning.projection_rank
+            or _lineage(confirmation) != _lineage(tuning)
         ):
             raise ValueError("Waterbirds confirmation candidate identity changed")
         decisions = (*tuning.checkpoint_decisions, *confirmation.checkpoint_decisions)
@@ -499,6 +538,14 @@ def select_confirmed_waterbirds_candidate(
                     float(item.adjusted_average_accuracy) for item in decisions
                 ),
                 projection_rank=confirmation.projection_rank,
+                dataset_manifest_digest=confirmation.dataset_manifest_digest,
+                feature_cache_manifest_digest=(
+                    confirmation.feature_cache_manifest_digest
+                ),
+                normalization=confirmation.normalization,
+                adjusted_weight_spec_digest=(
+                    confirmation.adjusted_weight_spec_digest
+                ),
                 checkpoint_decisions=decisions,
             )
         )
@@ -521,6 +568,10 @@ def freeze_waterbirds_candidate(
         candidate_id=validated.candidate_id,
         scientific_config_digest=validated.scientific_config_digest,
         projection_rank=validated.projection_rank,
+        dataset_manifest_digest=validated.dataset_manifest_digest,
+        feature_cache_manifest_digest=validated.feature_cache_manifest_digest,
+        normalization=validated.normalization,
+        adjusted_weight_spec_digest=validated.adjusted_weight_spec_digest,
         seed_sets=_seed_sets(seed_sets),
         finalists=artifact,
         decision=validated,
@@ -550,12 +601,17 @@ def freeze_waterbirds_final_checkpoint(
         selected.checkpoint.scientific_config_digest
         != frozen_candidate.scientific_config_digest
         or selected.projection_rank != frozen_candidate.projection_rank
+        or _lineage(selected) != _lineage(frozen_candidate)
     ):
         raise ValueError("Waterbirds final checkpoint hyperparameters changed")
     return FrozenWaterbirdsCheckpoint(
         frozen_checkpoint_id=f"frozen:{selected.decision_id}",
         candidate_selection_id=frozen_candidate.frozen_selection_id,
         method_id=selected.method_id,
+        dataset_manifest_digest=selected.dataset_manifest_digest,
+        feature_cache_manifest_digest=selected.feature_cache_manifest_digest,
+        normalization=selected.normalization,
+        adjusted_weight_spec_digest=selected.adjusted_weight_spec_digest,
         checkpoint=selected.checkpoint,
         decision=selected,
     )
@@ -568,6 +624,9 @@ def _rank_candidates(
     methods = {item.method_id for item in records}
     if len(methods) != 1:
         raise ValueError("Waterbirds methods must be selected independently")
+    lineages = {_lineage(item) for item in records}
+    if len(lineages) != 1:
+        raise ValueError("Waterbirds selection cannot mix artifact lineage")
     by_run: dict[tuple[str, str], list[WaterbirdsValidationMetricRecord]] = defaultdict(
         list
     )
@@ -605,6 +664,14 @@ def _rank_candidates(
                     float(item.adjusted_average_accuracy) for item in decisions
                 ),
                 projection_rank=ranks.pop(),
+                dataset_manifest_digest=decisions[0].dataset_manifest_digest,
+                feature_cache_manifest_digest=(
+                    decisions[0].feature_cache_manifest_digest
+                ),
+                normalization=decisions[0].normalization,
+                adjusted_weight_spec_digest=(
+                    decisions[0].adjusted_weight_spec_digest
+                ),
                 checkpoint_decisions=tuple(decisions),
             )
         )
@@ -683,10 +750,10 @@ def _aggregate_fields(
         WaterbirdsGroupAccuracy,
         WaterbirdsGroupAccuracy,
     ],
-    training_counts: WaterbirdsGroupCounts,
+    adjusted_weights: WaterbirdsAdjustedWeightSpec,
 ) -> tuple[float, float, float]:
     accuracies = tuple(float(group.accuracy) for group in groups)
-    weights = training_counts.as_tuple()
+    weights = adjusted_weights.training_group_counts.as_tuple()
     if min(weights) <= 0:
         raise ValueError("Waterbirds training weights require every group")
     adjusted = sum(
@@ -696,11 +763,12 @@ def _aggregate_fields(
     return min(accuracies), adjusted, raw
 
 
-def _training_weights_digest(counts: WaterbirdsGroupCounts) -> str:
-    return canonical_digest_value(
-        {
-            "source": "waterbirds_cf_training_group_counts",
-            "groups": GROUP_ORDER,
-            "counts": counts.as_tuple(),
-        }
+def _lineage(
+    value: _WaterbirdsArtifactLineage,
+) -> tuple[str, str, Normalization, str]:
+    return (
+        value.dataset_manifest_digest,
+        value.feature_cache_manifest_digest,
+        value.normalization,
+        value.adjusted_weight_spec_digest,
     )

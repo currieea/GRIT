@@ -131,7 +131,8 @@ The paper-aligned reconstruction defines the following construction:
 5. Apply the official GroupDRO crop, resize, mask, and compositing geometry to create 184
    landbird-on-water and 56 waterbird-on-land examples.
 6. Retain each selected majority Waterbirds image and its generated opposite-background
-   version as one controlled pair.
+   version as one controlled pair. Record the same deterministic source-selection
+   position on the retained majority record, generated record, and relationship.
 7. Replace the 240 original, unrelated minority training records with the 240 generated
    minority endpoints. Do not append an unrestricted augmentation bank.
 8. Keep the released Waterbirds validation and test images and assignments byte-for-byte
@@ -143,6 +144,11 @@ creates a different artifact version. The NUL-delimited hash-ranking payload and
 identity tie-break make selection independent of input enumeration order. Because the
 paper's original selection and background-assignment seeds are unavailable, the rewrite
 does not claim byte-level identity with the authors' historical Waterbirds-CF artifact.
+The retained majority endpoint is the released Waterbirds JPEG. Its generated partner is
+a canonical PNG composite. Both are bound to the same digest of the masked source-CUB
+foreground before compositing, but the protocol does not claim that their encoded endpoint
+pixels are byte-identical. Replaced released minority IDs are unique and absent from the
+current constructed records.
 
 Thus the expected Waterbirds-CF training set still has 4,795 records:
 
@@ -196,7 +202,8 @@ Every supervised record must have an immutable example ID and record at least:
 - whether it is an unpaired, majority-endpoint, or generated-minority record;
 - pair ID and endpoint role when applicable;
 - Places background asset ID for every generated endpoint;
-- source image, mask, and background hashes;
+- source image and mask hashes, the canonical masked source-CUB foreground digest before
+  compositing, and generated-background hashes;
 - construction seed and deterministic selection position; and
 - dataset version and manifest schema version.
 
@@ -365,6 +372,10 @@ Evaluation uses the four `(y, background)` groups.
 - Every group count and accuracy is always reported.
 - Adjusted-average accuracy weights group accuracies by the validated Waterbirds-CF
   training proportions and is the primary average-accuracy companion.
+- The adjusted weights are a dataset-specific capability minted from the validated
+  dataset manifest. Its canonical group order, group counts, source-manifest digest, and
+  own digest travel with metric and selection artifacts; callers cannot substitute an
+  arbitrary count tuple.
 - Raw sample-average accuracy may also be reported but is labeled `raw_average`.
 - A missing expected group is an integrity failure rather than a silently ignored group.
 
@@ -408,6 +419,7 @@ does not define selection.
 - The selected configuration is evaluated on ten fresh final seeds shared across
   methods.
 - Final reporting uses only the ten final seeds, not tuning or confirmation seeds.
+- Canonical summaries require the configured ten final seed identities exactly once.
 - Method-specific spaces and budgets are declared in advance; methods are not forced to
   waste trials merely to have identical trial counts.
 
@@ -417,7 +429,8 @@ rank candidates. Later methods add only their prespecified method-specific param
 
 Final results report mean, standard deviation, and a 95% t-interval across final seeds.
 Because methods use the same final seeds, method comparisons also report paired
-per-seed differences with a 95% t-interval.
+per-seed differences with a 95% t-interval. Pairing is by explicit seed identity, never
+by tuple position.
 
 ## Configuration contract
 
@@ -533,6 +546,13 @@ Each completed run records:
 - dependency and device information; and
 - structured training, selection, checkpoint, and final-evaluation results.
 
+Validation metrics, checkpoint decisions, candidate decisions, tuning finalists,
+candidate/checkpoint freezes, and final results retain one consistent dataset-manifest,
+feature-cache, normalization, and adjusted-weight-spec lineage. Canonical result parsing
+also requires one unique typed reference for each applicable dataset, feature,
+selected-checkpoint, pair, and projection artifact and checks those references against the
+resolved configuration and selected checkpoint.
+
 The same artifact configuration and seeds must reproduce the same records, pairs,
 features, search ordering, and selection result.
 
@@ -555,6 +575,13 @@ features, search ordering, and selection result.
 - Search ranks aggregated validation configurations rather than individual seeds.
 - The selected checkpoint is restored before final test evaluation.
 - Adjusted-average weights match validated training group proportions.
+- Selection rejects dataset, feature-cache, normalization, or adjusted-weight lineage
+  changes between tuning, confirmation, freezing, and final reporting.
+- Replaced released IDs are unique and absent from the constructed records; retained and
+  generated pair endpoints carry the relationship's deterministic selection position.
+- Final summaries contain each configured final seed exactly once, and paired method
+  differences join observations by seed identity.
+- Required result artifact references are unique, correctly typed, and lineage-matched.
 - Snow/desert records cannot be loaded as canonical Waterbirds-CF groups.
 - Search summaries can be recomputed from saved per-run records.
 

@@ -154,6 +154,7 @@ class WaterbirdsFeatureCacheManifest(StrictBoundaryModel):
 class WaterbirdsTrainingFeatureTable:
     dataset_manifest_digest: str
     feature_cache_manifest_digest: str
+    normalization: Normalization
     record_ids: tuple[str, ...]
     features: torch.Tensor
     labels: torch.Tensor
@@ -163,6 +164,7 @@ class WaterbirdsTrainingFeatureTable:
 class WaterbirdsEvaluationFeatureTable:
     dataset_manifest_digest: str
     feature_cache_manifest_digest: str
+    normalization: Normalization
     split_role: Literal["validation", "final_test"]
     record_ids: tuple[str, ...]
     features: torch.Tensor
@@ -298,6 +300,7 @@ class WaterbirdsFeatureCache:
         return WaterbirdsTrainingFeatureTable(
             dataset_manifest_digest=self.manifest.dataset_manifest_digest,
             feature_cache_manifest_digest=self.manifest.canonical_digest(),
+            normalization=self.manifest.normalization,
             record_ids=tuple(record.record_id for record in rows),
             features=self.features[indices].clone(),
             labels=torch.tensor(
@@ -359,6 +362,7 @@ class WaterbirdsFeatureCache:
         return WaterbirdsEvaluationFeatureTable(
             dataset_manifest_digest=self.manifest.dataset_manifest_digest,
             feature_cache_manifest_digest=self.manifest.canonical_digest(),
+            normalization=self.manifest.normalization,
             split_role=role,
             record_ids=tuple(record.record_id for record in rows),
             features=self.features[indices].clone(),

@@ -18,7 +18,7 @@ PositiveInt: TypeAlias = Annotated[StrictInt, Field(gt=0)]
 
 
 class WaterbirdsOraclePairManifest(StrictBoundaryModel):
-    schema_version: Literal["grit.waterbirds-oracle-pairs/v1"]
+    schema_version: Literal["grit.waterbirds-oracle-pairs/v2"]
     dataset_manifest_digest: NonEmptyStr
     construction_method_id: Literal["waterbirds-clean-oracle-pairs-v1"]
     orientation: Literal["land_minus_water"]
@@ -81,7 +81,7 @@ def build_waterbirds_oracle_pairs(
         raise ValueError("Waterbirds oracle relation lineage is inconsistent")
     pair_ids = tuple(record.pair_id for record in records)
     manifest = WaterbirdsOraclePairManifest(
-        schema_version="grit.waterbirds-oracle-pairs/v1",
+        schema_version="grit.waterbirds-oracle-pairs/v2",
         dataset_manifest_digest=dataset.canonical_digest(),
         construction_method_id="waterbirds-clean-oracle-pairs-v1",
         orientation="land_minus_water",

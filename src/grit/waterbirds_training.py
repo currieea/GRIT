@@ -18,7 +18,7 @@ from grit.training import (
     LinearProbeAlgorithm,
     LinearProbeState,
 )
-from grit.waterbirds import WaterbirdsGroupCounts
+from grit.waterbirds import WaterbirdsAdjustedWeightSpec
 from grit.waterbirds_features import (
     WaterbirdsEvaluationFeatureTable,
     WaterbirdsTrainingFeatureTable,
@@ -56,7 +56,7 @@ class TrainedWaterbirdsRun:
 def train_waterbirds_linear_probe(
     training: WaterbirdsTrainingFeatureTable,
     validation: WaterbirdsEvaluationFeatureTable,
-    training_group_counts: WaterbirdsGroupCounts,
+    adjusted_weights: WaterbirdsAdjustedWeightSpec,
     config: LinearProbeTrainingConfig,
     *,
     run_id: str,
@@ -77,6 +77,8 @@ def train_waterbirds_linear_probe(
         != validation.feature_cache_manifest_digest
     ):
         raise ValueError("Waterbirds train and validation feature caches do not match")
+    if training.normalization != validation.normalization:
+        raise ValueError("Waterbirds train and validation normalizations do not match")
     if method_id == "erm" and (projection is not None or projection_rank is not None):
         raise ValueError("Waterbirds ERM cannot use a projection")
     if method_id == "grit" and (projection is None or projection_rank is None):
@@ -112,7 +114,7 @@ def train_waterbirds_linear_probe(
             compute_waterbirds_validation_metric(
                 validation,
                 predictions,
-                training_group_counts=training_group_counts,
+                adjusted_weights=adjusted_weights,
                 record_id=f"metric:{checkpoint_id}:validation",
                 run_id=run_id,
                 candidate_id=candidate_id,

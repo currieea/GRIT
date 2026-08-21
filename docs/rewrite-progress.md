@@ -547,6 +547,44 @@ Verification:
 - No Waterbirds, CUB, Places, CLIP, or other real asset was downloaded. No reportable
   sweep, test-oracle diagnostic, W&B operation, or legacy implementation change ran.
 
+### Milestone 5 artifact-boundary hardening
+
+- Added a Waterbirds-specific adjusted-weight specification minted from a revalidated
+  dataset manifest. It canonically binds the four-group order, training counts, dataset
+  digest, and its own digest; metric constructors no longer accept caller-supplied group
+  counts.
+- Threaded dataset-manifest, feature-cache, normalization, and adjusted-weight lineage
+  through validation metrics, checkpoint/candidate decisions, tuning finalists,
+  confirmation, candidate/checkpoint freezes, final metrics, resolved configurations,
+  smoke summaries, and run results. Every strict nested boundary rechecks its lineage.
+- Made final reporting explicitly seed-addressed. Each run records its final seed, method
+  summaries require the configured ten seed observations exactly once and in canonical
+  order, and GRIT-minus-ERM differences are joined by matching seed identities.
+- Strengthened construction provenance: retained majority endpoints now record the same
+  deterministic selection position as their generated partner and relationship; replaced
+  released IDs must be unique and absent from current records. Renamed the foreground
+  digest to identify the canonical masked source-CUB foreground before compositing, without
+  claiming released JPEG and generated PNG bytes are identical.
+- Replaced generic Waterbirds result references with a small discriminated reference
+  union. Successful ERM results require unique dataset, feature, and selected-checkpoint
+  references; GRIT additionally requires matching pair and projection references. The
+  parser rejects missing, duplicate, wrongly typed, or lineage-mismatched references.
+- Added focused regression coverage for cross-dataset/cache/normalization/weight mixing,
+  tuning-to-confirmation lineage changes, result weight mismatch, exact final seed sets,
+  construction positions/replacements, and required artifact references. The smoke path
+  remains hermetic and non-reportable; no Milestone 6 scope was introduced.
+
+Verification:
+
+- `uv lock --check` — passed (41 packages resolved).
+- `uv run --frozen ruff check .` — passed.
+- `uv run --frozen basedpyright` — 0 errors, warnings, or notes.
+- `UV_CACHE_DIR=/tmp/grit-uv-cache uv run --offline --frozen pytest` — 95 passed on
+  Python 3.10.20, including the deterministic Waterbirds smoke lifecycle.
+- `git diff --check` — passed before the correction commit.
+- No dependency, inherited implementation, dataset download, reportable sweep, W&B,
+  estimated-pairing, or Milestone 6 change was made.
+
 ## Next proposed checkpoint
 
 Review and approve Milestone 5, then decide the first bounded Milestone 6 pairing/search

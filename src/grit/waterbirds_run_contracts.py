@@ -16,8 +16,9 @@ from pydantic import (
 )
 
 from grit.config import LinearProbeTrainingConfig, SeedSets
-from grit.results import ArtifactReference, CodeProvenance, EnvironmentProvenance
+from grit.results import CodeProvenance, EnvironmentProvenance
 from grit.schemas import StrictBoundaryModel
+from grit.selection import CheckpointIdentity
 from grit.waterbirds_selection import (
     FrozenWaterbirdsCandidate,
     FrozenWaterbirdsCheckpoint,
@@ -30,7 +31,7 @@ NonEmptyStr: TypeAlias = Annotated[StrictStr, Field(min_length=1)]
 
 
 class WaterbirdsCandidateConfig(StrictBoundaryModel):
-    schema_version: Literal["grit.waterbirds-candidate/v1"]
+    schema_version: Literal["grit.waterbirds-candidate/v2"]
     protocol_id: Literal["waterbirds_cf/v1"]
     non_reportable: Literal[True]
     method_id: Literal["erm", "grit"]
@@ -38,7 +39,9 @@ class WaterbirdsCandidateConfig(StrictBoundaryModel):
     dataset_manifest_digest: NonEmptyStr
     feature_cache_manifest_digest: NonEmptyStr
     normalization: Literal["none", "l2"]
+    adjusted_weight_spec_digest: NonEmptyStr
     pair_manifest_digest: NonEmptyStr | None
+    projection_diagnostics_digest: NonEmptyStr | None
     projection_rank: Annotated[StrictInt, Field(ge=0, le=24)] | None
     relative_singular_value_tolerance: Annotated[StrictFloat, Field(gt=0.0)] | None
     training: LinearProbeTrainingConfig
@@ -50,6 +53,7 @@ class WaterbirdsCandidateConfig(StrictBoundaryModel):
             value is not None
             for value in (
                 self.pair_manifest_digest,
+                self.projection_diagnostics_digest,
                 self.projection_rank,
                 self.relative_singular_value_tolerance,
             )
@@ -59,6 +63,7 @@ class WaterbirdsCandidateConfig(StrictBoundaryModel):
             value is None
             for value in (
                 self.pair_manifest_digest,
+                self.projection_diagnostics_digest,
                 self.projection_rank,
                 self.relative_singular_value_tolerance,
             )
@@ -70,11 +75,56 @@ class WaterbirdsCandidateConfig(StrictBoundaryModel):
         return self.canonical_digest()
 
 
+class _WaterbirdsArtifactReference(StrictBoundaryModel):
+    artifact_id: NonEmptyStr
+    relative_uri: NonEmptyStr
+    digest: NonEmptyStr
+
+
+class WaterbirdsDatasetArtifactReference(_WaterbirdsArtifactReference):
+    kind: Literal["dataset_manifest"]
+
+
+class WaterbirdsFeatureArtifactReference(_WaterbirdsArtifactReference):
+    kind: Literal["feature_manifest"]
+    dataset_manifest_digest: NonEmptyStr
+    normalization: Literal["none", "l2"]
+
+
+class WaterbirdsCheckpointArtifactReference(_WaterbirdsArtifactReference):
+    kind: Literal["selected_linear_checkpoint"]
+    checkpoint: CheckpointIdentity
+
+
+class WaterbirdsPairArtifactReference(_WaterbirdsArtifactReference):
+    kind: Literal["pair_manifest"]
+    dataset_manifest_digest: NonEmptyStr
+
+
+class WaterbirdsProjectionArtifactReference(_WaterbirdsArtifactReference):
+    kind: Literal["projection_diagnostics"]
+    pair_manifest_digest: NonEmptyStr
+    feature_cache_manifest_digest: NonEmptyStr
+    normalization: Literal["none", "l2"]
+    requested_rank: Annotated[StrictInt, Field(ge=0, le=24)]
+
+
+WaterbirdsArtifactReference = Annotated[
+    WaterbirdsDatasetArtifactReference
+    | WaterbirdsFeatureArtifactReference
+    | WaterbirdsCheckpointArtifactReference
+    | WaterbirdsPairArtifactReference
+    | WaterbirdsProjectionArtifactReference,
+    Field(discriminator="kind"),
+]
+
+
 class WaterbirdsRunResult(StrictBoundaryModel):
-    schema_version: Literal["grit.waterbirds-run-result/v1"]
+    schema_version: Literal["grit.waterbirds-run-result/v2"]
     result_kind: Literal["ordinary_waterbirds"]
     status: Literal["succeeded"]
     run_id: NonEmptyStr
+    final_seed: StrictInt
     resolved_config: WaterbirdsCandidateConfig
     resolved_config_digest: NonEmptyStr
     code: CodeProvenance
@@ -84,7 +134,8 @@ class WaterbirdsRunResult(StrictBoundaryModel):
     checkpoint_selection: FrozenWaterbirdsCheckpoint
     restoration: WaterbirdsRestorationReceipt
     final_test_metric: WaterbirdsFinalTestMetricRecord
-    artifacts: tuple[ArtifactReference, ...]
+    selected_checkpoint_manifest_digest: NonEmptyStr
+    artifacts: tuple[WaterbirdsArtifactReference, ...]
 
     @model_validator(mode="after")
     def _validate_result(self) -> WaterbirdsRunResult:
@@ -98,6 +149,12 @@ class WaterbirdsRunResult(StrictBoundaryModel):
             or candidate.scientific_config_digest != digest
             or candidate.projection_rank != config.projection_rank
             or candidate.seed_sets != config.seed_sets
+            or candidate.dataset_manifest_digest != config.dataset_manifest_digest
+            or candidate.feature_cache_manifest_digest
+            != config.feature_cache_manifest_digest
+            or candidate.normalization != config.normalization
+            or candidate.adjusted_weight_spec_digest
+            != config.adjusted_weight_spec_digest
         ):
             raise ValueError("Waterbirds frozen candidate does not match result config")
         checkpoint = self.checkpoint_selection
@@ -108,7 +165,14 @@ class WaterbirdsRunResult(StrictBoundaryModel):
             or checkpoint.checkpoint.candidate_id != candidate.candidate_id
             or checkpoint.checkpoint.scientific_config_digest != digest
             or checkpoint.decision.seed not in config.seed_sets.final
+            or checkpoint.decision.seed != self.final_seed
             or checkpoint.decision.projection_rank != config.projection_rank
+            or checkpoint.dataset_manifest_digest != config.dataset_manifest_digest
+            or checkpoint.feature_cache_manifest_digest
+            != config.feature_cache_manifest_digest
+            or checkpoint.normalization != config.normalization
+            or checkpoint.adjusted_weight_spec_digest
+            != config.adjusted_weight_spec_digest
         ):
             raise ValueError("Waterbirds checkpoint does not match result lifecycle")
         if (
@@ -132,6 +196,8 @@ class WaterbirdsRunResult(StrictBoundaryModel):
                 metric.projection_rank,
                 metric.dataset_manifest_digest,
                 metric.feature_cache_manifest_digest,
+                metric.normalization,
+                metric.adjusted_weight_spec_digest,
             )
             expected = (
                 self.run_id,
@@ -143,6 +209,8 @@ class WaterbirdsRunResult(StrictBoundaryModel):
                 config.projection_rank,
                 config.dataset_manifest_digest,
                 config.feature_cache_manifest_digest,
+                config.normalization,
+                config.adjusted_weight_spec_digest,
             )
             if identity != expected:
                 raise ValueError(
@@ -172,6 +240,8 @@ class WaterbirdsRunResult(StrictBoundaryModel):
             final.projection_rank,
             final.dataset_manifest_digest,
             final.feature_cache_manifest_digest,
+            final.normalization,
+            final.adjusted_weight_spec_digest,
         )
         expected_final = (
             self.run_id,
@@ -184,10 +254,66 @@ class WaterbirdsRunResult(StrictBoundaryModel):
             config.projection_rank,
             config.dataset_manifest_digest,
             config.feature_cache_manifest_digest,
+            config.normalization,
+            config.adjusted_weight_spec_digest,
         )
         if final_identity != expected_final:
             raise ValueError("Waterbirds final metric identity is inconsistent")
+        self._validate_artifacts()
         return self
+
+    def _validate_artifacts(self) -> None:
+        config = self.resolved_config
+        artifacts_by_kind = {artifact.kind: artifact for artifact in self.artifacts}
+        if len(artifacts_by_kind) != len(self.artifacts):
+            raise ValueError("Waterbirds result artifact kinds must be unique")
+        if len({artifact.artifact_id for artifact in self.artifacts}) != len(
+            self.artifacts
+        ) or len({artifact.relative_uri for artifact in self.artifacts}) != len(
+            self.artifacts
+        ):
+            raise ValueError("Waterbirds result artifact references must be unique")
+        required = {
+            "dataset_manifest",
+            "feature_manifest",
+            "selected_linear_checkpoint",
+        }
+        if config.method_id == "grit":
+            required |= {"pair_manifest", "projection_diagnostics"}
+        if set(artifacts_by_kind) != required:
+            raise ValueError(
+                "Waterbirds result required artifact references are missing"
+            )
+        dataset = artifacts_by_kind["dataset_manifest"]
+        feature = artifacts_by_kind["feature_manifest"]
+        checkpoint = artifacts_by_kind["selected_linear_checkpoint"]
+        if (
+            dataset.digest != config.dataset_manifest_digest
+            or not isinstance(feature, WaterbirdsFeatureArtifactReference)
+            or feature.digest != config.feature_cache_manifest_digest
+            or feature.dataset_manifest_digest != config.dataset_manifest_digest
+            or feature.normalization != config.normalization
+            or not isinstance(checkpoint, WaterbirdsCheckpointArtifactReference)
+            or checkpoint.digest != self.selected_checkpoint_manifest_digest
+            or checkpoint.checkpoint != self.checkpoint_selection.checkpoint
+        ):
+            raise ValueError("Waterbirds result artifact lineage is inconsistent")
+        if config.method_id == "grit":
+            pair = artifacts_by_kind["pair_manifest"]
+            projection = artifacts_by_kind["projection_diagnostics"]
+            if (
+                not isinstance(pair, WaterbirdsPairArtifactReference)
+                or pair.digest != config.pair_manifest_digest
+                or pair.dataset_manifest_digest != config.dataset_manifest_digest
+                or not isinstance(projection, WaterbirdsProjectionArtifactReference)
+                or projection.digest != config.projection_diagnostics_digest
+                or projection.pair_manifest_digest != config.pair_manifest_digest
+                or projection.feature_cache_manifest_digest
+                != config.feature_cache_manifest_digest
+                or projection.normalization != config.normalization
+                or projection.requested_rank != config.projection_rank
+            ):
+                raise ValueError("Waterbirds GRIT artifact lineage is inconsistent")
 
 
 MetricName: TypeAlias = Literal[
@@ -227,20 +353,56 @@ def make_waterbirds_metric_summary(
     )
 
 
+class WaterbirdsFinalSeedObservation(StrictBoundaryModel):
+    seed: StrictInt
+    method_id: Literal["erm", "grit"]
+    result_path: NonEmptyStr
+    metric_record_id: NonEmptyStr
+    worst_group_accuracy: FiniteFloat
+    adjusted_average_accuracy: FiniteFloat
+    raw_average_accuracy: FiniteFloat
+
+
+class WaterbirdsPairedSeedDifference(StrictBoundaryModel):
+    seed: StrictInt
+    grit_minus_erm_worst_group_accuracy: FiniteFloat
+
+
 class WaterbirdsMethodSmokeSummary(StrictBoundaryModel):
     method_id: Literal["erm", "grit"]
+    dataset_manifest_digest: NonEmptyStr
+    feature_cache_manifest_digest: NonEmptyStr
+    normalization: Literal["none", "l2"]
+    adjusted_weight_spec_digest: NonEmptyStr
     selected_candidate_id: NonEmptyStr
     finalist_candidate_ids: tuple[NonEmptyStr, NonEmptyStr, NonEmptyStr]
-    result_paths: tuple[NonEmptyStr, ...]
-    final_worst_group_accuracies: tuple[float, ...]
-    final_adjusted_average_accuracies: tuple[float, ...]
-    final_raw_average_accuracies: tuple[float, ...]
+    configured_final_seeds: Annotated[
+        tuple[StrictInt, ...], Field(min_length=10, max_length=10)
+    ]
+    final_observations: Annotated[
+        tuple[WaterbirdsFinalSeedObservation, ...], Field(min_length=10, max_length=10)
+    ]
     worst_group_summary: WaterbirdsMetricSummary
     adjusted_average_summary: WaterbirdsMetricSummary
     raw_average_summary: WaterbirdsMetricSummary
 
     @model_validator(mode="after")
     def _validate_summary(self) -> WaterbirdsMethodSmokeSummary:
+        if len(set(self.configured_final_seeds)) != 10:
+            raise ValueError("Waterbirds configured final seeds must be unique")
+        observed_seeds = tuple(item.seed for item in self.final_observations)
+        if observed_seeds != self.configured_final_seeds:
+            raise ValueError(
+                "Waterbirds final observations require configured seeds exactly once"
+            )
+        if any(item.method_id != self.method_id for item in self.final_observations):
+            raise ValueError("Waterbirds final observation method is inconsistent")
+        if len({item.result_path for item in self.final_observations}) != 10 or len(
+            {item.metric_record_id for item in self.final_observations}
+        ) != 10:
+            raise ValueError(
+                "Waterbirds final observations must be uniquely attributable"
+            )
         series: tuple[
             tuple[MetricName, tuple[float, ...], WaterbirdsMetricSummary], ...
         ] = (
@@ -260,8 +422,6 @@ class WaterbirdsMethodSmokeSummary(StrictBoundaryModel):
                 self.raw_average_summary,
             ),
         )
-        if len(self.result_paths) != 10:
-            raise ValueError("Waterbirds smoke summary requires ten final results")
         for metric_name, values, summary in series:
             if len(values) != 10:
                 raise ValueError("Waterbirds smoke metric series requires ten seeds")
@@ -269,33 +429,83 @@ class WaterbirdsMethodSmokeSummary(StrictBoundaryModel):
                 raise ValueError("Waterbirds smoke metric summary is inconsistent")
         return self
 
+    @property
+    def result_paths(self) -> tuple[str, ...]:
+        return tuple(item.result_path for item in self.final_observations)
+
+    @property
+    def final_worst_group_accuracies(self) -> tuple[float, ...]:
+        return tuple(
+            float(item.worst_group_accuracy) for item in self.final_observations
+        )
+
+    @property
+    def final_adjusted_average_accuracies(self) -> tuple[float, ...]:
+        return tuple(
+            float(item.adjusted_average_accuracy) for item in self.final_observations
+        )
+
+    @property
+    def final_raw_average_accuracies(self) -> tuple[float, ...]:
+        return tuple(
+            float(item.raw_average_accuracy) for item in self.final_observations
+        )
+
 
 class WaterbirdsSmokeSummary(StrictBoundaryModel):
-    schema_version: Literal["grit.waterbirds-smoke-result/v1"]
+    schema_version: Literal["grit.waterbirds-smoke-result/v2"]
     non_reportable: Literal[True]
     dataset_manifest_digest: NonEmptyStr
     pair_manifest_digest: NonEmptyStr
     feature_cache_manifest_digest: NonEmptyStr
+    normalization: Literal["none", "l2"]
+    adjusted_weight_spec_digest: NonEmptyStr
     methods: tuple[WaterbirdsMethodSmokeSummary, WaterbirdsMethodSmokeSummary]
-    paired_worst_group_differences: tuple[float, ...]
+    paired_worst_group_differences: tuple[WaterbirdsPairedSeedDifference, ...]
     paired_worst_group_summary: WaterbirdsMetricSummary
 
     @model_validator(mode="after")
     def _validate_paired_summary(self) -> WaterbirdsSmokeSummary:
         if tuple(item.method_id for item in self.methods) != ("erm", "grit"):
             raise ValueError("Waterbirds smoke methods must be ordered ERM then GRIT")
+        for method in self.methods:
+            if (
+                method.dataset_manifest_digest != self.dataset_manifest_digest
+                or method.feature_cache_manifest_digest
+                != self.feature_cache_manifest_digest
+                or method.normalization != self.normalization
+                or method.adjusted_weight_spec_digest
+                != self.adjusted_weight_spec_digest
+            ):
+                raise ValueError("Waterbirds smoke method lineage is inconsistent")
+        if self.methods[0].configured_final_seeds != (
+            self.methods[1].configured_final_seeds
+        ):
+            raise ValueError("Waterbirds paired methods require identical final seeds")
+        erm_by_seed = {
+            item.seed: float(item.worst_group_accuracy)
+            for item in self.methods[0].final_observations
+        }
+        grit_by_seed = {
+            item.seed: float(item.worst_group_accuracy)
+            for item in self.methods[1].final_observations
+        }
         expected = tuple(
-            grit - erm
-            for erm, grit in zip(
-                self.methods[0].final_worst_group_accuracies,
-                self.methods[1].final_worst_group_accuracies,
-                strict=True,
+            WaterbirdsPairedSeedDifference(
+                seed=seed,
+                grit_minus_erm_worst_group_accuracy=(
+                    grit_by_seed[seed] - erm_by_seed[seed]
+                ),
             )
+            for seed in self.methods[0].configured_final_seeds
         )
         if self.paired_worst_group_differences != expected:
             raise ValueError("Waterbirds paired differences are inconsistent")
         if self.paired_worst_group_summary != make_waterbirds_metric_summary(
-            "grit_minus_erm_worst_group_accuracy", expected
+            "grit_minus_erm_worst_group_accuracy",
+            tuple(
+                float(item.grit_minus_erm_worst_group_accuracy) for item in expected
+            ),
         ):
             raise ValueError("Waterbirds paired summary is inconsistent")
         return self

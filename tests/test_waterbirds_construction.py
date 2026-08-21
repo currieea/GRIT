@@ -20,6 +20,7 @@ from grit.waterbirds import (
     WaterbirdsOracleRelationView,
     composite_groupdro,
     construct_waterbirds_cf,
+    mint_waterbirds_adjusted_weight_spec,
     parse_places_backgrounds,
     waterbirds_oracle_relation_view,
     waterbirds_training_view,
@@ -62,6 +63,25 @@ def test_fixture_construction_replaces_minority_and_preserves_counts(
     assert {
         relationship.orientation for relationship in construction.manifest.relationships
     } == {"land_minus_water"}
+    records = {record.record_id: record for record in construction.manifest.records}
+    for relationship in construction.manifest.relationships:
+        majority = records[relationship.majority_record_id]
+        assert majority.selection_position == relationship.source_selection_position
+        assert (
+            majority.canonical_masked_source_foreground_digest
+            == relationship.canonical_masked_source_foreground_digest
+        )
+
+    weights = mint_waterbirds_adjusted_weight_spec(construction.manifest)
+    assert weights.group_order == (
+        "landbird_land",
+        "landbird_water",
+        "waterbird_land",
+        "waterbird_water",
+    )
+    assert weights.training_group_counts == construction.manifest.counts.training_groups
+    assert weights.dataset_manifest_digest == construction.manifest.canonical_digest()
+    assert weights.canonical_digest().startswith("sha256:")
 
 
 def test_construction_is_order_independent_and_seeded(tmp_path: Path) -> None:
@@ -174,6 +194,38 @@ def test_manifest_round_trip_revalidates_relationship_identity(tmp_path: Path) -
     production_claim["base_artifact_name"] = BASE_ARTIFACT_NAME
     with pytest.raises(ValidationError, match="canonical inventory"):
         WaterbirdsDatasetManifest.model_validate_json(json.dumps(production_claim))
+
+
+def test_manifest_rejects_missing_majority_position_and_invalid_replacements(
+    tmp_path: Path,
+) -> None:
+    fixture = make_waterbirds_fixture(tmp_path / "assets")
+    construction = construct_waterbirds_cf(
+        fixture.assets, fixture.profile, tmp_path / "output"
+    )
+
+    missing_position = json.loads(construction.manifest.canonical_json())
+    majority_id = missing_position["relationships"][0]["majority_record_id"]
+    for record in missing_position["records"]:
+        if record["record_id"] == majority_id:
+            record["selection_position"] = None
+            break
+    with pytest.raises(ValidationError, match="selection position"):
+        WaterbirdsDatasetManifest.model_validate_json(json.dumps(missing_position))
+
+    duplicate = json.loads(construction.manifest.canonical_json())
+    duplicate["replaced_released_record_ids"][1] = (
+        duplicate["replaced_released_record_ids"][0]
+    )
+    with pytest.raises(ValidationError, match="must be unique"):
+        WaterbirdsDatasetManifest.model_validate_json(json.dumps(duplicate))
+
+    reintroduced = json.loads(construction.manifest.canonical_json())
+    reintroduced["replaced_released_record_ids"][0] = reintroduced["records"][0][
+        "record_id"
+    ]
+    with pytest.raises(ValidationError, match="absent from current records"):
+        WaterbirdsDatasetManifest.model_validate_json(json.dumps(reintroduced))
 
 
 def test_production_profile_rejects_fixture_inventory(tmp_path: Path) -> None:

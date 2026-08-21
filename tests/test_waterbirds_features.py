@@ -260,6 +260,7 @@ def test_final_view_is_bound_to_exact_waterbirds_feature_cache(
     table = WaterbirdsEvaluationFeatureTable(
         dataset_manifest_digest=first.manifest.dataset_manifest_digest,
         feature_cache_manifest_digest=first.manifest.canonical_digest(),
+        normalization=first.manifest.normalization,
         split_role="final_test",
         record_ids=tuple(record.record_id for record in final_rows),
         features=first.features[indices],

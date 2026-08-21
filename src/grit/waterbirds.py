@@ -42,6 +42,12 @@ GroupId: TypeAlias = Literal[
     "waterbird_land",
     "waterbird_water",
 ]
+WATERBIRDS_GROUP_ORDER: tuple[GroupId, GroupId, GroupId, GroupId] = (
+    "landbird_land",
+    "landbird_water",
+    "waterbird_land",
+    "waterbird_water",
+)
 Component: TypeAlias = Literal[
     "unpaired_majority",
     "majority_endpoint",
@@ -87,6 +93,25 @@ class WaterbirdsGroupCounts(StrictBoundaryModel):
             self.waterbird_land,
             self.waterbird_water,
         )
+
+
+class WaterbirdsAdjustedWeightSpec(StrictBoundaryModel):
+    """Dataset-bound adjusted-average weights issued from a validated manifest."""
+
+    schema_version: Literal["grit.waterbirds-adjusted-weights/v1"]
+    group_order: tuple[GroupId, GroupId, GroupId, GroupId]
+    training_group_counts: WaterbirdsGroupCounts
+    dataset_manifest_digest: NonEmptyStr
+
+    @model_validator(mode="after")
+    def _validate_weights(self) -> WaterbirdsAdjustedWeightSpec:
+        if self.group_order != WATERBIRDS_GROUP_ORDER:
+            raise ValueError(
+                "Waterbirds adjusted weights require canonical group order"
+            )
+        if min(self.training_group_counts.as_tuple()) <= 0:
+            raise ValueError("Waterbirds adjusted weights require every training group")
+        return self
 
 
 PRODUCTION_TRAIN_GROUP_COUNTS = WaterbirdsGroupCounts(
@@ -340,7 +365,7 @@ class WaterbirdsRecord(StrictBoundaryModel):
     image_sha256: NonEmptyStr
     source_image_sha256: NonEmptyStr
     mask_sha256: NonEmptyStr
-    foreground_pixels_digest: NonEmptyStr
+    canonical_masked_source_foreground_digest: NonEmptyStr
     bounding_box_xywh: tuple[
         NonNegativeFloat,
         NonNegativeFloat,
@@ -396,7 +421,7 @@ class WaterbirdsOracleRelationship(StrictBoundaryModel):
     water_image_sha256: NonEmptyStr
     source_image_sha256: NonEmptyStr
     mask_sha256: NonEmptyStr
-    foreground_pixels_digest: NonEmptyStr
+    canonical_masked_source_foreground_digest: NonEmptyStr
     land_background_asset_id: NonEmptyStr
     water_background_asset_id: NonEmptyStr
     geometry: GroupDroGeometry
@@ -442,7 +467,7 @@ class WaterbirdsConstructionCounts(StrictBoundaryModel):
 
 
 class WaterbirdsDatasetManifest(StrictBoundaryModel):
-    schema_version: Literal["grit.waterbirds-cf-dataset/v1"]
+    schema_version: Literal["grit.waterbirds-cf-dataset/v2"]
     dataset_id: Literal["waterbirds_cf"]
     profile_kind: Literal["production", "fixture"]
     non_reportable: StrictBool
@@ -537,6 +562,15 @@ class WaterbirdsDatasetManifest(StrictBoundaryModel):
             raise ValueError("Waterbirds-CF oracle relationship count is inconsistent")
         if len(self.replaced_released_record_ids) != self.counts.oracle_relationships:
             raise ValueError("Waterbirds-CF replacement count is inconsistent")
+        if len(set(self.replaced_released_record_ids)) != len(
+            self.replaced_released_record_ids
+        ):
+            raise ValueError("replaced released Waterbirds record IDs must be unique")
+        if set(self.replaced_released_record_ids) & set(record_ids):
+            raise ValueError(
+                "replaced released Waterbirds record IDs must be absent from current "
+                "records"
+            )
         training_by_id = {record.record_id: record for record in training}
         majority_ids: set[str] = set()
         generated_ids: set[str] = set()
@@ -595,10 +629,10 @@ class WaterbirdsDatasetManifest(StrictBoundaryModel):
                 or water.source_image_sha256 != relationship.source_image_sha256
                 or land.mask_sha256 != relationship.mask_sha256
                 or water.mask_sha256 != relationship.mask_sha256
-                or land.foreground_pixels_digest
-                != relationship.foreground_pixels_digest
-                or water.foreground_pixels_digest
-                != relationship.foreground_pixels_digest
+                or land.canonical_masked_source_foreground_digest
+                != relationship.canonical_masked_source_foreground_digest
+                or water.canonical_masked_source_foreground_digest
+                != relationship.canonical_masked_source_foreground_digest
                 or land.geometry != relationship.geometry
                 or water.geometry != relationship.geometry
                 or land.bounding_box_xywh != water.bounding_box_xywh
@@ -633,7 +667,10 @@ class WaterbirdsDatasetManifest(StrictBoundaryModel):
             if generated.record_id != expected_generated_id:
                 raise ValueError("generated Waterbirds record ID is inconsistent")
             if (
-                generated.selection_position != relationship.source_selection_position
+                majority.selection_position
+                != relationship.source_selection_position
+                or generated.selection_position
+                != relationship.source_selection_position
                 or relationship.source_selection_position
                 != relationship.background_selection_position
             ):
@@ -906,6 +943,20 @@ def validate_waterbirds_construction(
                 f"Waterbirds construction image identity is invalid: {record.record_id}"
             )
     return manifest
+
+
+def mint_waterbirds_adjusted_weight_spec(
+    manifest: WaterbirdsDatasetManifest,
+) -> WaterbirdsAdjustedWeightSpec:
+    """Mint adjusted weights only from a fully revalidated dataset manifest."""
+
+    validated = WaterbirdsDatasetManifest.model_validate_json(manifest.canonical_json())
+    return WaterbirdsAdjustedWeightSpec(
+        schema_version="grit.waterbirds-adjusted-weights/v1",
+        group_order=WATERBIRDS_GROUP_ORDER,
+        training_group_counts=validated.counts.training_groups,
+        dataset_manifest_digest=validated.canonical_digest(),
+    )
 
 
 def waterbirds_group_id(label: int, background: int) -> GroupId:
@@ -1295,7 +1346,7 @@ def construct_waterbirds_cf(
     selected_backgrounds = (*water_backgrounds, *land_backgrounds)
     relationships: list[WaterbirdsOracleRelationship] = []
     generated_records: list[WaterbirdsRecord] = []
-    pair_by_majority: dict[str, tuple[str, EndpointRole]] = {}
+    pair_by_majority: dict[str, tuple[str, EndpointRole, int]] = {}
     generated_paths: dict[str, Path] = {}
     for position, (majority, background) in enumerate(
         zip(selected_majority, selected_backgrounds, strict=True)
@@ -1362,7 +1413,7 @@ def construct_waterbirds_cf(
             image_sha256=generated_hash,
             source_image_sha256=cub.image_sha256,
             mask_sha256=cub.mask_sha256,
-            foreground_pixels_digest=foreground_digest,
+            canonical_masked_source_foreground_digest=foreground_digest,
             bounding_box_xywh=cub.bounding_box_xywh,
             pair_id=pair_id,
             endpoint_role=generated_endpoint,
@@ -1374,7 +1425,11 @@ def construct_waterbirds_cf(
         )
         generated_records.append(generated_record)
         generated_paths[generated_id] = generated_path
-        pair_by_majority[majority.record_id] = (pair_id, majority_endpoint)
+        pair_by_majority[majority.record_id] = (
+            pair_id,
+            majority_endpoint,
+            position,
+        )
 
         majority_background_id = (
             f"released-place:{majority.place_relative_path}"
@@ -1413,7 +1468,7 @@ def construct_waterbirds_cf(
                 water_image_sha256=water_hash,
                 source_image_sha256=cub.image_sha256,
                 mask_sha256=cub.mask_sha256,
-                foreground_pixels_digest=foreground_digest,
+                canonical_masked_source_foreground_digest=foreground_digest,
                 land_background_asset_id=land_background_id,
                 water_background_asset_id=water_background_id,
                 geometry=geometry,
@@ -1453,7 +1508,7 @@ def construct_waterbirds_cf(
                 height=source_rgb.size[1],
                 resampling="pillow_lanczos",
             )
-        pair_data: tuple[str, EndpointRole] | None = None
+        pair_data: tuple[str, EndpointRole, int] | None = None
         if released_record.split_role == "training":
             pair_data = pair_by_majority.get(released_record.record_id)
             component: Component = (
@@ -1487,7 +1542,7 @@ def construct_waterbirds_cf(
                 image_sha256=released_record.image_sha256,
                 source_image_sha256=cub.image_sha256,
                 mask_sha256=cub.mask_sha256,
-                foreground_pixels_digest=foreground_digest,
+                canonical_masked_source_foreground_digest=foreground_digest,
                 bounding_box_xywh=cub.bounding_box_xywh,
                 pair_id=pair_id,
                 endpoint_role=endpoint_role,
@@ -1502,7 +1557,7 @@ def construct_waterbirds_cf(
                 )
                 if released_record.split_role == "training"
                 else None,
-                selection_position=None,
+                selection_position=pair_data[2] if pair_data is not None else None,
                 geometry=geometry,
             )
         )
@@ -1544,7 +1599,7 @@ def construct_waterbirds_cf(
     if counts != requirements.expected_counts:
         raise ValueError("constructed Waterbirds-CF counts do not match the profile")
     manifest = WaterbirdsDatasetManifest(
-        schema_version="grit.waterbirds-cf-dataset/v1",
+        schema_version="grit.waterbirds-cf-dataset/v2",
         dataset_id="waterbirds_cf",
         profile_kind=requirements.profile_kind,
         non_reportable=requirements.non_reportable,

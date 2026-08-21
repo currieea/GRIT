@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from typing import Literal, cast
 
 import pytest
 import torch
+from pydantic import ValidationError
 
 from grit.config import SeedSets
-from grit.schemas import SeedStage, canonical_digest_value
-from grit.waterbirds import WaterbirdsGroupCounts
+from grit.schemas import SeedStage
+from grit.waterbirds import (
+    WATERBIRDS_GROUP_ORDER,
+    WaterbirdsAdjustedWeightSpec,
+    WaterbirdsGroupCounts,
+)
 from grit.waterbirds_features import WaterbirdsEvaluationFeatureTable
 from grit.waterbirds_selection import (
     GROUP_ORDER,
@@ -44,6 +50,17 @@ def _training_counts() -> WaterbirdsGroupCounts:
     )
 
 
+def _weight_spec(
+    dataset_manifest_digest: str = "dataset:fixture",
+) -> WaterbirdsAdjustedWeightSpec:
+    return WaterbirdsAdjustedWeightSpec(
+        schema_version="grit.waterbirds-adjusted-weights/v1",
+        group_order=WATERBIRDS_GROUP_ORDER,
+        training_group_counts=_training_counts(),
+        dataset_manifest_digest=dataset_manifest_digest,
+    )
+
+
 def _record(
     *,
     candidate: str,
@@ -53,6 +70,10 @@ def _record(
     correct: tuple[int, int, int, int] = (8, 8, 8, 8),
     method: Literal["erm", "grit"] = "erm",
     rank: int | None = None,
+    dataset_manifest_digest: str = "dataset:fixture",
+    feature_cache_manifest_digest: str = "features:fixture",
+    normalization: Literal["none", "l2"] = "none",
+    weight_spec: WaterbirdsAdjustedWeightSpec | None = None,
 ) -> WaterbirdsValidationMetricRecord:
     groups = tuple(
         WaterbirdsGroupAccuracy(
@@ -64,7 +85,8 @@ def _record(
         for group, value in zip(GROUP_ORDER, correct, strict=True)
     )
     typed_groups = (groups[0], groups[1], groups[2], groups[3])
-    weights = _training_counts().as_tuple()
+    adjusted_weights = weight_spec or _weight_spec(dataset_manifest_digest)
+    weights = adjusted_weights.training_group_counts.as_tuple()
     accuracies = tuple(value / 10 for value in correct)
     adjusted = sum(
         accuracy * count for accuracy, count in zip(accuracies, weights, strict=True)
@@ -78,21 +100,16 @@ def _record(
         candidate_id=candidate,
         method_id=method,
         scientific_config_digest=f"config:{candidate}",
-        dataset_manifest_digest="dataset:fixture",
-        feature_cache_manifest_digest="features:fixture",
+        dataset_manifest_digest=dataset_manifest_digest,
+        feature_cache_manifest_digest=feature_cache_manifest_digest,
+        normalization=normalization,
+        adjusted_weight_spec_digest=adjusted_weights.canonical_digest(),
         checkpoint_id=checkpoint,
         epoch=epoch,
         seed=seed,
         projection_rank=rank,
         groups=typed_groups,
-        training_group_counts=_training_counts(),
-        training_weights_digest=canonical_digest_value(
-            {
-                "source": "waterbirds_cf_training_group_counts",
-                "groups": GROUP_ORDER,
-                "counts": weights,
-            }
-        ),
+        adjusted_weight_spec=adjusted_weights,
         worst_group_accuracy=min(accuracies),
         adjusted_average_accuracy=adjusted,
         raw_average_accuracy=raw,
@@ -127,6 +144,7 @@ def test_group_metric_uses_training_proportions_not_validation_counts() -> None:
     table = WaterbirdsEvaluationFeatureTable(
         dataset_manifest_digest="dataset:fixture",
         feature_cache_manifest_digest="features:fixture",
+        normalization="none",
         split_role="validation",
         record_ids=("a", "b", "c", "d"),
         features=torch.zeros((4, 512)),
@@ -137,7 +155,7 @@ def test_group_metric_uses_training_proportions_not_validation_counts() -> None:
     metric = compute_waterbirds_validation_metric(
         table,
         torch.tensor([0, 0, 0, 1]),
-        training_group_counts=_training_counts(),
+        adjusted_weights=_weight_spec(),
         record_id="metric:one",
         run_id="run:one",
         candidate_id="candidate:one",
@@ -152,13 +170,14 @@ def test_group_metric_uses_training_proportions_not_validation_counts() -> None:
     assert metric.worst_group_accuracy == 0.0
     assert metric.raw_average_accuracy == 0.75
     assert metric.adjusted_average_accuracy == 0.9
-    assert metric.training_group_counts == _training_counts()
+    assert metric.adjusted_weight_spec.training_group_counts == _training_counts()
 
 
 def test_group_metric_rejects_missing_group() -> None:
     table = WaterbirdsEvaluationFeatureTable(
         dataset_manifest_digest="dataset:fixture",
         feature_cache_manifest_digest="features:fixture",
+        normalization="none",
         split_role="validation",
         record_ids=("a", "b", "c"),
         features=torch.zeros((3, 512)),
@@ -170,13 +189,43 @@ def test_group_metric_rejects_missing_group() -> None:
         compute_waterbirds_validation_metric(
             table,
             torch.tensor([0, 0, 1]),
-            training_group_counts=_training_counts(),
+            adjusted_weights=_weight_spec(),
             record_id="metric:missing",
             run_id="run:missing",
             candidate_id="candidate:missing",
             method_id="erm",
             scientific_config_digest="config:missing",
             checkpoint_id="checkpoint:missing",
+            epoch=1,
+            seed_stage=SeedStage.TUNING,
+            seed=101,
+            projection_rank=None,
+        )
+
+
+def test_group_metric_rejects_adjusted_weights_from_another_dataset() -> None:
+    table = WaterbirdsEvaluationFeatureTable(
+        dataset_manifest_digest="dataset:fixture",
+        feature_cache_manifest_digest="features:fixture",
+        normalization="none",
+        split_role="validation",
+        record_ids=("a", "b", "c", "d"),
+        features=torch.zeros((4, 512)),
+        labels=torch.tensor([0, 0, 1, 1]),
+        backgrounds=torch.tensor([0, 1, 0, 1]),
+        group_ids=GROUP_ORDER,
+    )
+    with pytest.raises(ValueError, match="another dataset"):
+        compute_waterbirds_validation_metric(
+            table,
+            torch.tensor([0, 0, 1, 1]),
+            adjusted_weights=_weight_spec("dataset:other"),
+            record_id="metric:cross-dataset-weights",
+            run_id="run:one",
+            candidate_id="candidate:one",
+            method_id="erm",
+            scientific_config_digest="config:one",
+            checkpoint_id="checkpoint:one",
             epoch=1,
             seed_stage=SeedStage.TUNING,
             seed=101,
@@ -346,3 +395,115 @@ def test_ordinary_selector_rejects_final_test_metric_type() -> None:
     final = WaterbirdsFinalTestMetricRecord.model_validate(payload)
     with pytest.raises(TypeError, match="validation metrics only"):
         select_waterbirds_checkpoint((cast(WaterbirdsValidationMetricRecord, final),))
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("dataset_manifest_digest", "dataset:other"),
+        ("feature_cache_manifest_digest", "features:other"),
+        ("normalization", "l2"),
+    ),
+)
+def test_checkpoint_selection_rejects_cross_artifact_metric_mixing(
+    field: str,
+    value: str,
+) -> None:
+    base = _record(candidate="a", seed_stage=SeedStage.TUNING, seed=101, epoch=1)
+    if field == "dataset_manifest_digest":
+        changed = _record(
+            candidate="a",
+            seed_stage=SeedStage.TUNING,
+            seed=101,
+            epoch=2,
+            dataset_manifest_digest=value,
+            weight_spec=_weight_spec(value),
+        )
+    elif field == "feature_cache_manifest_digest":
+        changed = _record(
+            candidate="a",
+            seed_stage=SeedStage.TUNING,
+            seed=101,
+            epoch=2,
+            feature_cache_manifest_digest=value,
+        )
+    else:
+        changed = _record(
+            candidate="a",
+            seed_stage=SeedStage.TUNING,
+            seed=101,
+            epoch=2,
+            normalization=cast(Literal["none", "l2"], value),
+        )
+    with pytest.raises(ValueError, match="one candidate run"):
+        select_waterbirds_checkpoint((base, changed))
+
+
+def test_checkpoint_selection_rejects_cross_weight_metric_mixing() -> None:
+    base = _record(candidate="a", seed_stage=SeedStage.TUNING, seed=101, epoch=1)
+    changed_weights = WaterbirdsAdjustedWeightSpec(
+        schema_version="grit.waterbirds-adjusted-weights/v1",
+        group_order=WATERBIRDS_GROUP_ORDER,
+        training_group_counts=WaterbirdsGroupCounts(
+            landbird_land=3,
+            landbird_water=2,
+            waterbird_land=1,
+            waterbird_water=4,
+        ),
+        dataset_manifest_digest="dataset:fixture",
+    )
+    changed = _record(
+        candidate="a",
+        seed_stage=SeedStage.TUNING,
+        seed=101,
+        epoch=2,
+        weight_spec=changed_weights,
+    )
+    with pytest.raises(ValueError, match="one candidate run"):
+        select_waterbirds_checkpoint((base, changed))
+
+
+def test_tuning_and_confirmation_reject_lineage_changes() -> None:
+    candidates = (
+        ("a", (9, 9, 9, 9), None),
+        ("b", (8, 8, 8, 8), None),
+        ("c", (7, 7, 7, 7), None),
+    )
+    tuning = _records_for_candidates(
+        candidates, stage=SeedStage.TUNING, seeds=_seed_sets().tuning
+    )
+    with pytest.raises(ValueError, match="artifact lineage"):
+        make_waterbirds_tuning_finalists(
+            (
+                *tuning[:-1],
+                _record(
+                    candidate="c",
+                    seed_stage=SeedStage.TUNING,
+                    seed=103,
+                    correct=(7, 7, 7, 7),
+                    feature_cache_manifest_digest="features:other",
+                ),
+            ),
+            _seed_sets(),
+        )
+
+    finalists = make_waterbirds_tuning_finalists(tuning, _seed_sets())
+    serialized = json.loads(finalists.canonical_json())
+    serialized["feature_cache_manifest_digest"] = "features:other"
+    with pytest.raises(ValidationError, match="finalist artifact lineage"):
+        type(finalists).model_validate_json(json.dumps(serialized))
+    changed_confirmation = tuple(
+        _record(
+            candidate=candidate,
+            seed_stage=SeedStage.CONFIRMATION,
+            seed=seed,
+            correct=correct,
+            feature_cache_manifest_digest="features:other",
+        )
+        for candidate, correct, _ in candidates
+        for seed in _seed_sets().confirmation
+    )
+    with pytest.raises(ValueError, match="identity changed"):
+        select_confirmed_waterbirds_candidate(
+            changed_confirmation, finalists, _seed_sets()
+        )
