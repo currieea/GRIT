@@ -89,6 +89,9 @@ from grit.training import (
 )
 
 NonEmptyStr: TypeAlias = Annotated[StrictStr, Field(min_length=1)]
+CMNIST_DATASET_MANIFEST_RELATIVE_PATH = Path("dataset-manifest.json")
+CMNIST_PAIR_MANIFEST_RELATIVE_PATH = Path("pair-manifest.json")
+CMNIST_FEATURE_CACHE_RELATIVE_ROOT = Path("feature-cache")
 
 
 class CmnistSmokeRunConfig(StrictBoundaryModel):
@@ -271,7 +274,7 @@ def prepare_official_cmnist(
             weights_root=clip_weights_root,
             allow_download=allow_download,
         ),
-        output_root / "feature-cache",
+        output_root / CMNIST_FEATURE_CACHE_RELATIVE_ROOT,
         normalization=normalization,
     )
 
@@ -731,8 +734,14 @@ def _write_construction_manifests(
 ) -> None:
     values = (
         ("partition-manifest.json", construction.partitions.manifest.canonical_json()),
-        ("dataset-manifest.json", construction.manifest.canonical_json()),
-        ("pair-manifest.json", pairs.manifest.canonical_json()),
+        (
+            CMNIST_DATASET_MANIFEST_RELATIVE_PATH.as_posix(),
+            construction.manifest.canonical_json(),
+        ),
+        (
+            CMNIST_PAIR_MANIFEST_RELATIVE_PATH.as_posix(),
+            pairs.manifest.canonical_json(),
+        ),
     )
     for name, payload in values:
         (root / name).write_text(payload + "\n", encoding="utf-8")

@@ -39,8 +39,8 @@ uv run --frozen grit-cmnist-prepare \
   --data-root /ABSOLUTE/PATH/TO/MNIST \
   --clip-weights-root /ABSOLUTE/PATH/TO/CLIP-WEIGHTS \
   --output-root /ABSOLUTE/PATH/TO/PREPARED/CMNIST \
-  --construction-seed 0 \
-  --pair-seed 0 \
+  --construction-seed 1729 \
+  --pair-seed 2718 \
   --normalization none
 ```
 
@@ -48,6 +48,11 @@ Without `--allow-download`, both MNIST and the pinned official OpenAI CLIP weigh
 already be present. Adding that flag explicitly permits those two downloads. Successful
 preparation writes `dataset-manifest.json`, `pair-manifest.json`, and
 `feature-cache/manifest.json` alongside the cache arrays.
+
+These are not illustrative defaults: preparation seeds must exactly match the production
+configuration that will consume the artifacts. The checked CMNIST example declares
+construction seed `1729` and oracle-pair seed `2718`, so artifacts prepared with other
+seeds are incompatible with that example and planning rejects them.
 
 Waterbirds-CF preparation requires already acquired released Waterbirds metadata/images,
 source CUB images, segmentation masks, and the approved Places background assets:
@@ -60,7 +65,7 @@ uv run --frozen grit-waterbirds-prepare \
   --places-root /ABSOLUTE/PATH/TO/PLACES \
   --clip-weights-root /ABSOLUTE/PATH/TO/CLIP-WEIGHTS \
   --output-root /ABSOLUTE/PATH/TO/PREPARED/WATERBIRDS \
-  --construction-seed 0 \
+  --construction-seed 1729 \
   --normalization none
 ```
 
@@ -68,6 +73,8 @@ That command never downloads Waterbirds, CUB, masks, or Places. The pinned CLIP 
 must also be installed unless `--allow-clip-download` is explicitly supplied. Successful
 preparation writes `construction/dataset-manifest.json`, `pair-manifest.json`, and
 `feature-cache/manifest.json` plus the constructed images and cache array.
+The checked Waterbirds example likewise declares construction seed `1729`; use a different
+seed only with a correspondingly reviewed production configuration.
 
 The preparation and search output roots must be disjoint. The planner rejects an output
 root that is a filesystem/repository root, equals or nests inside a prepared-artifact tree,

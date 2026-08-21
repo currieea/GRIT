@@ -268,18 +268,21 @@ def validate_execution_limits(
         raise ValueError("stop_after supports only the tuning boundary")
     if limits.method not in {"erm", "grit", "all"}:
         raise ValueError("method must be erm, grit, or all")
-    if limits.max_new_runs is not None and (
-        isinstance(limits.max_new_runs, bool)
-    ):
-        raise ValueError("max_new_runs must be an integer")
-    if limits.max_new_runs is not None and limits.max_new_runs <= 0:
+    max_new_runs = _validate_optional_exact_integer(
+        limits.max_new_runs, "max_new_runs"
+    )
+    tuning_seed = _validate_optional_exact_integer(
+        limits.tuning_seed, "tuning_seed"
+    )
+    candidate_ids = _validate_candidate_ids(limits.candidate_ids)
+    if max_new_runs is not None and max_new_runs <= 0:
         raise ValueError("max_new_runs must be positive")
-    if len(limits.candidate_ids) != len(set(limits.candidate_ids)):
+    if len(candidate_ids) != len(set(candidate_ids)):
         raise ValueError("candidate_id filters must be unique")
     uses_tuning_filter = (
         limits.method != "all"
-        or bool(limits.candidate_ids)
-        or limits.tuning_seed is not None
+        or bool(candidate_ids)
+        or tuning_seed is not None
     )
     if uses_tuning_filter and limits.stop_after != "tuning":
         raise ValueError(
@@ -288,7 +291,7 @@ def validate_execution_limits(
     by_id = {candidate.candidate_id: candidate for candidate in plan.candidates}
     unknown = tuple(
         candidate_id
-        for candidate_id in limits.candidate_ids
+        for candidate_id in candidate_ids
         if candidate_id not in by_id
     )
     if unknown:
@@ -296,7 +299,7 @@ def validate_execution_limits(
     if limits.method != "all":
         wrong_method = tuple(
             candidate_id
-            for candidate_id in limits.candidate_ids
+            for candidate_id in candidate_ids
             if by_id[candidate_id].method_id != limits.method
         )
         if wrong_method:
@@ -304,19 +307,26 @@ def validate_execution_limits(
                 "candidate IDs do not agree with the method filter: "
                 f"{wrong_method}"
             )
-    if (
-        limits.tuning_seed is not None
-        and (
-            isinstance(limits.tuning_seed, bool)
-        )
-    ):
-        raise ValueError("tuning_seed must be an integer")
-    if (
-        limits.tuning_seed is not None
-        and limits.tuning_seed not in plan.seeds.stages.tuning
-    ):
+    if tuning_seed is not None and tuning_seed not in plan.seeds.stages.tuning:
         raise ValueError("tuning_seed is not one of the configured tuning seeds")
     return limits
+
+
+def _validate_optional_exact_integer(value: object, field_name: str) -> int | None:
+    if value is None:
+        return None
+    if type(value) is not int:
+        raise ValueError(f"{field_name} must be an integer")
+    return value
+
+
+def _validate_candidate_ids(values: tuple[object, ...]) -> tuple[str, ...]:
+    validated: list[str] = []
+    for value in values:
+        if not isinstance(value, str) or not value:
+            raise ValueError("candidate IDs must be nonempty strings")
+        validated.append(value)
+    return tuple(validated)
 
 
 def limited_tuning_candidates(

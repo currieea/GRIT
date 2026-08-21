@@ -720,6 +720,35 @@ Verification:
 - No server asset, real pilot, full grid, final result, timing measurement, or scientific
   performance claim was produced.
 
+### Milestone 6A bounded-execution correction
+
+- Corrected the real-server preparation commands to use the checked production lineage:
+  construction seed `1729` for both datasets and CMNIST pair seed `2718`. The root and
+  configuration documentation now state that preparation seeds must match the consuming
+  production configuration exactly.
+- Corrected the Waterbirds production example to consume
+  `construction/dataset-manifest.json`. Audited all stated CMNIST and Waterbirds prepared
+  dataset, pair, and feature-manifest paths against the two preparation implementations;
+  no other path mismatch was found.
+- Centralized only the preparation-relative roots/manifest names needed for a structured
+  regression tying both checked YAML examples to the implemented output layouts.
+- Tightened the programmatic execution-limit boundary to accept only exact integers for
+  budgets/seeds, reject booleans, and require unique nonempty string candidate IDs before
+  dataset dispatch. Candidate grids, selection, task identity, checkpoints, final access,
+  reporting, and completed-task reuse are unchanged.
+
+Verification:
+
+- `UV_CACHE_DIR=/tmp/grit-uv-cache uv lock --check` — passed (41 packages resolved).
+- `UV_CACHE_DIR=/tmp/grit-uv-cache uv run --frozen ruff check .` — passed.
+- `UV_CACHE_DIR=/tmp/grit-uv-cache uv run --frozen basedpyright` — 0 errors,
+  warnings, or notes.
+- `UV_CACHE_DIR=/tmp/grit-uv-cache uv run --frozen pytest` — 158 passed on
+  Python 3.10.20.
+- Both required non-reportable smoke commands passed; pre-existing ignored smoke outputs
+  were preserved and restored.
+- `git diff --check` passed. No real asset, pilot, grid, or reportable result was produced.
+
 ## Next proposed checkpoint
 
 Review the Milestone 6A server procedure, then run the documented two-task pilot with

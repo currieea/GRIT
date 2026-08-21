@@ -6,7 +6,7 @@ experiment_name: waterbirds-cf-primary-openai-clip
 experiment_variant: primary_unnormalized
 normalization: none
 artifacts:
-  dataset_manifest: __REQUIRED_WATERBIRDS_ARTIFACT_ROOT__/dataset-manifest.json
+  dataset_manifest: __REQUIRED_WATERBIRDS_ARTIFACT_ROOT__/construction/dataset-manifest.json
   feature_cache_manifest: __REQUIRED_WATERBIRDS_ARTIFACT_ROOT__/feature-cache/manifest.json
   oracle_pair_manifest: __REQUIRED_WATERBIRDS_ARTIFACT_ROOT__/pair-manifest.json
 seeds:

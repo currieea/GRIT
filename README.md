@@ -45,11 +45,16 @@ uv run --frozen grit-cmnist-prepare \
   --data-root /path/to/mnist \
   --clip-weights-root /path/to/clip-weights \
   --output-root /path/to/cmnist-cache \
+  --construction-seed 1729 \
+  --pair-seed 2718 \
+  --normalization none \
   --allow-download
 ```
 
 Omit `--allow-download` to require that both source data and weights already exist.
-Preparation does not run the full scientific hyperparameter sweep.
+These seeds match the checked production-search example; preparation seeds must match the
+configuration that consumes the artifacts. Preparation does not run the full scientific
+hyperparameter sweep.
 
 ### Production-capable local search
 

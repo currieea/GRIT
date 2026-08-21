@@ -15,6 +15,8 @@ replace them with explicit real manifest/output paths, then use `grit-search pla
 seed stages, and unnormalized primary representation. An L2 sensitivity run must use a
 separate configuration named `l2_normalized_sensitivity` and an L2 cache; changing only a
 path or normalization field is rejected by lineage validation.
+Its preparation root contains `dataset-manifest.json`, `pair-manifest.json`, and
+`feature-cache/manifest.json`; the checked construction/pair seeds are `1729`/`2718`.
 Use the [real-server execution runbook](../docs/server-execution.md) to prepare assets,
 copy a placeholder configuration to a server-owned path, inspect canonical pilot
 candidates, execute two bounded tuning tasks, and resume the unchanged full search.
@@ -32,6 +34,8 @@ Pinned official CLIP weights must already exist unless the operator explicitly p
 is the corresponding strict 16-ERM/400-oracle-GRIT local-search example. It accepts only a
 reportable 4,795/1,199/5,794 Waterbirds-CF manifest, exact 240-pair oracle manifest, pinned
 official CLIP cache, matching normalization, and matching adjusted-weight lineage.
+The preparation root contains `construction/dataset-manifest.json`, `pair-manifest.json`,
+and `feature-cache/manifest.json`; its checked construction seed is `1729`.
 
 The production examples describe executable local orchestration, not completed scientific
 results. The repository does not ship datasets and no full grid has been launched. Local

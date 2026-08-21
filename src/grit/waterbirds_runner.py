@@ -86,6 +86,9 @@ from grit.waterbirds_training import (
 )
 
 NonEmptyStr: TypeAlias = Annotated[StrictStr, Field(min_length=1)]
+WATERBIRDS_CONSTRUCTION_RELATIVE_ROOT = Path("construction")
+WATERBIRDS_PAIR_MANIFEST_RELATIVE_PATH = Path("pair-manifest.json")
+WATERBIRDS_FEATURE_CACHE_RELATIVE_ROOT = Path("feature-cache")
 
 
 class WaterbirdsSmokeRunConfig(StrictBoundaryModel):
@@ -164,11 +167,11 @@ def prepare_server_waterbirds(
             base_artifact_name=BASE_ARTIFACT_NAME,
             construction_seed=construction_seed,
         ),
-        output_root / "construction",
+        output_root / WATERBIRDS_CONSTRUCTION_RELATIVE_ROOT,
     )
     pairs = build_waterbirds_oracle_pairs(waterbirds_oracle_relation_view(construction))
     output_root.mkdir(parents=True, exist_ok=True)
-    (output_root / "pair-manifest.json").write_text(
+    (output_root / WATERBIRDS_PAIR_MANIFEST_RELATIVE_PATH).write_text(
         pairs.manifest.canonical_json() + "\n", encoding="utf-8"
     )
     _ = prepare_waterbirds_feature_cache(
@@ -177,7 +180,7 @@ def prepare_server_waterbirds(
             weights_root=clip_weights_root,
             allow_download=allow_clip_download,
         ),
-        output_root / "feature-cache",
+        output_root / WATERBIRDS_FEATURE_CACHE_RELATIVE_ROOT,
         normalization=normalization,
     )
 

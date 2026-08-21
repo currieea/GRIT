@@ -53,6 +53,11 @@ from grit.production_waterbirds_search import (
 )
 from grit.projection import FittedLinearProjection, fit_linear_projection
 from grit.results import CodeProvenance, EnvironmentProvenance
+from grit.runner import (
+    CMNIST_DATASET_MANIFEST_RELATIVE_PATH,
+    CMNIST_FEATURE_CACHE_RELATIVE_ROOT,
+    CMNIST_PAIR_MANIFEST_RELATIVE_PATH,
+)
 from grit.schemas import CmnistSelector, SeedStage, canonical_digest_value
 from grit.search import (
     APPROVED_LEARNING_RATES,
@@ -91,6 +96,11 @@ from grit.waterbirds import (
     WATERBIRDS_GROUP_ORDER,
     WaterbirdsAdjustedWeightSpec,
     WaterbirdsGroupCounts,
+)
+from grit.waterbirds_runner import (
+    WATERBIRDS_CONSTRUCTION_RELATIVE_ROOT,
+    WATERBIRDS_FEATURE_CACHE_RELATIVE_ROOT,
+    WATERBIRDS_PAIR_MANIFEST_RELATIVE_PATH,
 )
 from grit.waterbirds_selection import (
     WaterbirdsGroupAccuracy,
@@ -134,6 +144,56 @@ def _seeds() -> SearchSeedConfig:
             final=(301, 302, 303, 304, 305, 306, 307, 308, 309, 310),
         ),
     )
+
+
+def test_checked_production_examples_match_preparation_layout_and_seeds() -> None:
+    repository = Path(__file__).resolve().parents[1]
+    cmnist = load_production_search_config(
+        repository / "configs/cmnist/production-search.yaml"
+    )
+    waterbirds = load_production_search_config(
+        repository / "configs/waterbirds/production-search.yaml"
+    )
+    assert isinstance(cmnist, CmnistProductionSearchConfig)
+    assert isinstance(waterbirds, WaterbirdsProductionSearchConfig)
+    assert cmnist.seeds.construction == 1729
+    assert cmnist.seeds.pairs == 2718
+    assert cmnist.artifacts.dataset_manifest == (
+        "__REQUIRED_CMNIST_ARTIFACT_ROOT__/"
+        f"{CMNIST_DATASET_MANIFEST_RELATIVE_PATH.as_posix()}"
+    )
+    assert cmnist.artifacts.feature_cache_manifest == (
+        "__REQUIRED_CMNIST_ARTIFACT_ROOT__/"
+        f"{(CMNIST_FEATURE_CACHE_RELATIVE_ROOT / 'manifest.json').as_posix()}"
+    )
+    assert cmnist.artifacts.oracle_pair_manifest == (
+        "__REQUIRED_CMNIST_ARTIFACT_ROOT__/"
+        f"{CMNIST_PAIR_MANIFEST_RELATIVE_PATH.as_posix()}"
+    )
+
+    assert waterbirds.seeds.construction == 1729
+    waterbirds_dataset_manifest = (
+        WATERBIRDS_CONSTRUCTION_RELATIVE_ROOT / "dataset-manifest.json"
+    )
+    assert waterbirds.artifacts.dataset_manifest == (
+        "__REQUIRED_WATERBIRDS_ARTIFACT_ROOT__/"
+        f"{waterbirds_dataset_manifest.as_posix()}"
+    )
+    assert waterbirds.artifacts.feature_cache_manifest == (
+        "__REQUIRED_WATERBIRDS_ARTIFACT_ROOT__/"
+        f"{(WATERBIRDS_FEATURE_CACHE_RELATIVE_ROOT / 'manifest.json').as_posix()}"
+    )
+    assert waterbirds.artifacts.oracle_pair_manifest == (
+        "__REQUIRED_WATERBIRDS_ARTIFACT_ROOT__/"
+        f"{WATERBIRDS_PAIR_MANIFEST_RELATIVE_PATH.as_posix()}"
+    )
+
+    runbook = (repository / "docs/server-execution.md").read_text(encoding="utf-8")
+    assert runbook.count("--construction-seed 1729") == 2
+    assert "--pair-seed 2718" in runbook
+    readme = (repository / "README.md").read_text(encoding="utf-8")
+    assert "--construction-seed 1729" in readme
+    assert "--pair-seed 2718" in readme
 
 
 def _space() -> SearchSpaceConfig:
@@ -1753,6 +1813,46 @@ def test_tuning_filters_select_only_canonical_tasks_for_each_dataset(
     ("limits", "message"),
     (
         (ProductionExecutionLimits(max_new_runs=0), "positive"),
+        (ProductionExecutionLimits(max_new_runs=-1), "positive"),
+        (
+            ProductionExecutionLimits(max_new_runs=cast(int, 1.5)),
+            "integer",
+        ),
+        (
+            ProductionExecutionLimits(max_new_runs=cast(int, True)),
+            "integer",
+        ),
+        (
+            ProductionExecutionLimits(
+                stop_after="tuning", tuning_seed=cast(int, 101.0)
+            ),
+            "integer",
+        ),
+        (
+            ProductionExecutionLimits(
+                stop_after="tuning", tuning_seed=cast(int, False)
+            ),
+            "integer",
+        ),
+        (
+            ProductionExecutionLimits(
+                stop_after="tuning", candidate_ids=("",)
+            ),
+            "nonempty strings",
+        ),
+        (
+            ProductionExecutionLimits(
+                stop_after="tuning", candidate_ids=(cast(str, 7),)
+            ),
+            "nonempty strings",
+        ),
+        (
+            ProductionExecutionLimits(
+                stop_after="tuning",
+                candidate_ids=("candidate:duplicate", "candidate:duplicate"),
+            ),
+            "unique",
+        ),
         (
             ProductionExecutionLimits(method="erm"),
             "require stop_after=tuning",
@@ -1778,6 +1878,54 @@ def test_invalid_execution_limits_fail_before_any_executor(
     with pytest.raises(ValueError, match=message):
         _ = validate_execution_limits(plan, limits)
     assert not calls
+
+
+def test_execution_limits_accept_exact_integers_and_nonempty_candidate_ids() -> None:
+    plan = build_search_plan(resolved_search_fixture())
+    candidate = plan.candidates[0]
+    limits = ProductionExecutionLimits(
+        stop_after="tuning",
+        candidate_ids=(candidate.candidate_id,),
+        tuning_seed=plan.seeds.stages.tuning[0],
+        max_new_runs=1,
+    )
+    assert validate_execution_limits(plan, limits) is limits
+
+
+@pytest.mark.parametrize(
+    "limits",
+    (
+        ProductionExecutionLimits(max_new_runs=cast(int, 1.0)),
+        ProductionExecutionLimits(max_new_runs=cast(int, True)),
+        ProductionExecutionLimits(
+            stop_after="tuning", tuning_seed=cast(int, 101.0)
+        ),
+        ProductionExecutionLimits(
+            stop_after="tuning", candidate_ids=(cast(str, object()),)
+        ),
+    ),
+)
+def test_programmatic_invalid_limits_fail_before_dataset_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+    limits: ProductionExecutionLimits,
+) -> None:
+    plan = build_search_plan(resolved_search_fixture())
+    dispatch_calls: list[str] = []
+
+    def fake_plan(_path: Path) -> SearchPlan:
+        return plan
+
+    def forbidden_dispatch(
+        _plan: SearchPlan,
+        _limits: ProductionExecutionLimits | None = None,
+    ) -> None:
+        dispatch_calls.append("dispatch")
+
+    monkeypatch.setattr("grit.production_search.plan_production_search", fake_plan)
+    monkeypatch.setattr("grit.production_search._run_cmnist_search", forbidden_dispatch)
+    with pytest.raises(ValueError, match="integer|nonempty strings"):
+        _ = run_production_search(Path("unused.yaml"), limits)
+    assert not dispatch_calls
 
 
 def test_cmnist_real_plan_pilot_runs_two_canonical_tuning_tasks_only(
