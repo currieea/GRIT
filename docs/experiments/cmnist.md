@@ -1,7 +1,8 @@
 # ColoredMNIST experiment protocol
 
-Status: **Core construction, deterministic partition, representation, projection, and
-selection protocol approved; estimated-pair details unresolved**
+Status: **Core construction, deterministic partition, representation, projection,
+selection, and production-capable local ERM/oracle-GRIT search implemented; no real grid
+executed and estimated-pair details remain unresolved**
 
 ## Purpose
 
@@ -411,6 +412,23 @@ selectors.
 
 The search runner saves every resolved candidate and per-seed validation metric. W&B may
 mirror the search, but local structured results define selection semantics.
+
+Milestone 6A implements this approved ERM/oracle-GRIT grid locally. The production schema
+requires explicit dataset, feature-cache, and 256-pair manifest paths; the canonical
+production inventory; pinned official OpenAI CLIP identity; one matching normalization;
+and explicit construction, pair, 3 tuning, 2 confirmation, and 10 final seeds. Planning
+emits all 416 ordered candidates and expected stage counts without loading arrays,
+training, checkpoints, or final-test access. The primary unnormalized experiment and the
+named L2 sensitivity are distinct configurations and caches.
+
+The run scheduler applies both selectors to the same saved tuning runs, confirms the
+ordered union of their method-specific top threes once, and freezes separate winners.
+Final tasks cannot be planned from validation records alone: they require the matching
+frozen-winner artifact, then train on a fresh final seed, select an epoch from validation,
+persist and restore that checkpoint, and only then open `test_ood`. Canonical stage results,
+selection artifacts, ten-seed summaries, per-seed paired differences, and the verified
+experiment index are local authority. No real 1,248-run tuning stage was executed while
+implementing this system, so this status makes no scientific performance claim.
 
 Final results report mean, standard deviation, and a 95% t-interval across final seeds.
 Because methods use the same final seeds, comparisons also report paired per-seed

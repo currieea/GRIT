@@ -1,7 +1,7 @@
 # Target architecture for the GRIT rewrite
 
-Status: **Milestone 4 CMNIST reviewed and complete; Milestone 5 Waterbirds vertical slice
-implemented and hermetically verified, awaiting user review**
+Status: **Milestones 4 and 5 reviewed and complete; Milestone 6A production-capable local
+ERM/oracle-GRIT search implemented without a real reportable execution**
 
 ## Architectural intent
 
@@ -250,8 +250,8 @@ before the corresponding method is in scope.
 
 ### Experiment runner
 
-Status: **Concrete local CMNIST and Waterbirds smoke orchestration implemented;
-generalized search scheduling and production sweeps deferred.**
+Status: **Concrete smoke orchestration and narrow shared production-search scheduling
+implemented; real reportable grids remain unexecuted.**
 
 The eventual runner owns the lifecycle:
 
@@ -281,7 +281,30 @@ only after both decisions are frozen and the matching checkpoint is restored.
 Milestone 5 repeats that lifecycle with Waterbirds-CF four-group metrics and its single
 approved selector. Its offline smoke runner executes exactly three declared candidates,
 the 3+2 seed confirmation protocol, and ten final seeds for ERM and oracle GRIT. This is
-lifecycle verification, not the deferred reportable grid scheduler or a scientific result.
+lifecycle verification, not a scientific result.
+
+Milestone 6A extracts only the lifecycle mechanics demonstrated by both datasets:
+canonical task identity, deterministic directories, atomic result publication, strict
+completed-run reuse, and interruption recovery at the run boundary. Dataset adapters keep
+their own metric records, selectors, finalist/freeze types, final gates, and result schemas.
+The scheduler does not define a universal metric or artifact store and does not resume an
+optimizer mid-epoch.
+
+The strict production YAML root is discriminated by dataset and resolves three explicit
+manifest paths. Planning revalidates production inventories, official OpenAI CLIP identity,
+normalization, pair counts, cross-manifest lineage, and referenced feature-file digests.
+It then emits the ordered 16-ERM/400-GRIT grid and exact stage seeds without loading feature
+arrays or constructing final-test capabilities. Final tasks cannot be minted from a plan:
+they require a revalidated dataset-specific frozen-winner artifact, and each successful
+final run embeds and separately persists the validation-selected, restored-checkpoint
+result.
+
+Continuation is deliberately run-level. A completed directory is reused only after its
+canonical stage result, task, plan digest, candidate, method, stage, seed, lineage,
+validation trace, checkpoint decision, and (for final work) full result artifact all parse
+and match. An explicitly marked interrupted staging directory is archived before retry;
+a fully written staging result is promoted without retraining. Corrupt or incompatible
+scientific output fails instead of being overwritten.
 
 ### Selection policy
 
@@ -328,6 +351,12 @@ Preparation accepts explicit server paths and never downloads Waterbirds, CUB, m
 Places; only a separately requested pinned CLIP-weight download is possible. The run
 command consumes the strict offline smoke profile and cannot produce a reportable result.
 
+Milestone 6A implements `grit-search plan|run|status`. The shared command dispatches only
+after strict dataset discrimination. `plan` is final-data- and training-free; `run`
+continues the saved local lifecycle; `status` parses canonical state without running a
+trainer. The checked-in production examples contain required placeholder paths. There is
+no implicit smoke fallback, dataset acquisition, W&B call, or automatic full-grid launch.
+
 The existing top-level `scripts/` directory remains inherited preprocessing and
 compatibility evidence. Its files are not templates for rewrite commands and are not
 brought wholesale under strict lint or type checking. All new Python implementation,
@@ -342,6 +371,8 @@ tests remain under `tests/`.
 - Dataset, algorithm, pair builder, projection, selector, and tracker are selected through
   explicit registries.
 - Resolved configurations are saved with results.
+- Production plans canonically record verified input paths/digests, the full ordered grid,
+  stage seeds, expected run counts, code/environment provenance, and output schema versions.
 - Machine-specific paths are CLI/environment overrides, not committed defaults.
 - Method-specific parameters have descriptive names; avoid generic `param1`, `param2`,
   and `param3` in the new path.
@@ -383,8 +414,7 @@ entry points.
 - Upper supported Python version and the compatible PyTorch/CLIP/CUDA matrix
 
 Scientific construction and estimated-pair choices remain in their protocol documents.
-The smallest contract spine is implemented and synthetically verified. After user approval,
-exercise and revise it directly in the CMNIST vertical slice. Waterbirds is the second
-proving ground; only after both slices should internal names or module boundaries be treated
-as stable shared interfaces. Generalized artifacts, full resume, production W&B,
+The smallest contract spine and both vertical slices are implemented and hermetically
+verified. Milestone 6A reuses their demonstrated lifecycle without declaring the internal
+names a supported public API. Generalized artifacts, full resume, production W&B,
 later-method hooks, and raw-image/accelerator abstractions remain explicitly deferred.

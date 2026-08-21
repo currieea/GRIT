@@ -4,8 +4,10 @@ This directory contains the design and experimental contracts for the GRIT rewri
 scientific protocols were established before implementation so decisions are reviewed
 rather than inferred from legacy code. The minimal Milestone 3 contract spine is approved,
 implemented, and verified. Milestone 4 CMNIST is reviewed. The implemented and hermetically
-verified Milestone 5 Waterbirds vertical slice now provides the second dataset test and is
-awaiting user review; shared names remain revisable until that review is accepted.
+verified Milestone 5 Waterbirds vertical slice is reviewed and complete. Milestone 6A now
+implements the production-capable local ERM/oracle-GRIT search over prepared artifacts;
+no real reportable grid has been run. Estimated pairing, later algorithms, and W&B remain
+deferred.
 
 ## Documents
 

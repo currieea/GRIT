@@ -51,6 +51,35 @@ uv run --frozen grit-cmnist-prepare \
 Omit `--allow-download` to require that both source data and weights already exist.
 Preparation does not run the full scientific hyperparameter sweep.
 
+### Production-capable local search
+
+Milestone 6A adds a local, configuration-driven search for the approved CMNIST and
+Waterbirds-CF ERM/oracle-GRIT studies over already prepared official OpenAI CLIP feature
+artifacts. The checked-in examples contain conspicuous placeholder paths and therefore
+cannot accidentally fall back to smoke data:
+
+```bash
+uv run --frozen grit-search plan configs/cmnist/production-search.yaml
+uv run --frozen grit-search plan configs/waterbirds/production-search.yaml
+uv run --frozen grit-search status /path/to/production-search.yaml
+uv run --frozen grit-search run /path/to/production-search.yaml
+```
+
+`plan` parses and cross-validates the dataset, feature-cache, and oracle-pair manifests,
+checks every referenced feature artifact digest, and writes the complete 416-candidate
+plan without loading feature arrays, training, creating checkpoints, or issuing final-test
+access. `run` executes or continues the exact 3-seed tuning, top-three confirmation, and
+10-seed final lifecycle. `status` only validates and reports canonical run state.
+All three operations take the same authored production YAML. If its output root is inside
+the source repository, that root must be Git-ignored so planning cannot change the recorded
+code dirty-state.
+
+Local JSON is authoritative. A production-capable command is not evidence that the real
+scientific grid was executed: this repository has run only hermetic smoke workflows and
+manifest-only plan tests. Real reportable execution still requires verified server assets
+and an approved server environment. W&B mirroring, conditional/nearest pairing, and later
+algorithms remain deferred.
+
 ## Inherited setup
 
 The commands below describe the preserved implementation and have not been reproduced as

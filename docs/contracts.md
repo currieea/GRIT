@@ -1,10 +1,10 @@
 # Shared contracts and design guidance
 
 Status: **Minimal Milestone 3 spine approved, implemented, and verified.**
-Detailed type names, field sets, and module boundaries remain internal and revisable until
-both the CMNIST and Waterbirds vertical slices have exercised them. CMNIST is reviewed;
-the implemented, hermetically verified Waterbirds slice now supplies the second proving
-ground and awaits user review before any internal names are treated as stable.
+Detailed type names, field sets, and module boundaries remain internal rather than a
+supported public API. Both CMNIST and Waterbirds have now exercised the scientific
+boundaries; Milestone 6A reuses only their demonstrated lifecycle mechanics for local
+production search.
 
 This proposal turns the approved experiment protocols into shared interfaces for the
 rewrite. It preserves useful mathematical behavior without preserving the inherited
@@ -136,6 +136,31 @@ feature, and pair manifests; deterministic `.npy` feature tables; the CPU-float6
 projection; real frozen-feature ERM/GRIT updates; and a narrow selected-linear-checkpoint
 adapter. These concrete boundaries do not approve a generalized artifact store, resume
 system, W&B integration, raw-image path, or later-method hooks.
+
+Milestone 5 exercises the same safeguards with Waterbirds-specific construction,
+four-group metrics, adjusted-weight provenance, oracle relationships, selection, final
+gating, and results. Milestone 6A then adds a deliberately narrow production-search
+boundary over already prepared artifacts:
+
+- a strict dataset-discriminated YAML resolves one normalization and the complete approved
+  16-ERM/400-oracle-GRIT candidate grid;
+- the canonical plan records verified manifest paths and digests, exact 3+2+10 seeds,
+  candidate order, expected stage counts, and code/environment identity without loading
+  feature arrays or creating final-test capabilities;
+- run tasks retain the exact dataset-specific lineage and may be reused only when their
+  canonical result and validation/checkpoint trace parse and match the plan;
+- final tasks are a separate typed construction requiring the matching frozen candidate;
+  each final seed still selects on validation, persists and restores that checkpoint, and
+  only then opens final test; and
+- canonical local stage results, selection artifacts, seed-addressed summaries, paired
+  differences, and a digest-verified experiment index remain authoritative. W&B is not in
+  this execution path.
+
+This is not a generalized search, resume, or artifact framework. Continuation is at the
+completed-run boundary; optimizer/RNG state and partial-epoch recovery remain unsupported.
+The production examples require explicit real manifest paths and cannot fall back to smoke
+artifacts. Implementing and testing the path did not execute the real scientific grid and
+does not create a reportable result.
 
 ## 1. Approved ownership rules and provisional responsibility map
 
@@ -1079,7 +1104,9 @@ candidate, run, checkpoint, contributor, or winner identities.
 **Classification:** separate ordinary/test-oracle Pydantic result types, canonical local
 JSON, round trips, and a null event sink are approved core. The complete provenance field
 inventory is provisional. Content-addressed storage, universal tensor containers,
-production histories, atomic artifact directories, and W&B integration are deferred.
+production histories, generalized artifact transactions, and W&B integration are
+deferred. Milestone 6A's narrow atomic per-run staging/publication boundary is implemented
+without implying any broader storage framework.
 
 Canonical local JSON is authoritative. Results form a strict discriminated union; the
 initial implementation includes only fields needed by the synthetic spine and CMNIST
@@ -1319,7 +1346,9 @@ resumability tests become required only with the component they validate.
 Milestone 4 adds separate concrete CMNIST tests for exact source/view counts, partition
 apportionment and ordering invariance, construction, oracle pairs, projection numerics,
 feature-cache validation, rank-zero equivalence, and the gated end-to-end lifecycle.
-Waterbirds-CF acquisition and group fixtures remain future work.
+Milestone 5 adds concrete Waterbirds-CF construction, group, feature, projection,
+selection, final-gate, result, and smoke tests. Real source-asset execution remains
+deferred; the hermetic fixtures are not reportable data.
 
 ## 12. Protocol trace and self-review
 
@@ -1410,8 +1439,6 @@ inventory only until a vertical slice demands them.
 - The scientific definitions of conditional/random and nearest-pair construction.
 - Whether to add the optional reporting-only paired ID rendering of CMNIST final-test
   sources.
-- Waterbirds acquisition, artifact-validation, reconstruction, and generated-artifact
-  implementation details beyond the approved logical protocol.
 - Search spaces and protocol details for Fish, SWAD, GroupDRO, IRM, REx, MatchDG, LISA, and
   other later algorithms.
 - Final PyTorch, CUDA, and CLIP compatibility versions, including the upper supported
@@ -1431,22 +1458,25 @@ These must become explicit protocol decisions before their configurations can re
 5. **Implemented and verified:** the CMNIST ERM/oracle-GRIT vertical slice exercised and
    revised the internal contracts, adding data, pair, projection, model, and training code
    only where that slice demanded it.
-6. Exercise and revise the same boundaries in Waterbirds before treating type names or
-   module boundaries as stable shared interfaces.
+6. **Implemented and verified:** Waterbirds-CF exercised the construction, group,
+   artifact-lineage, validation, final-gate, result, and smoke boundaries.
+7. **Implemented and verified without a real grid:** Milestone 6A reuses the demonstrated
+   lifecycle through strict production planning, run-level continuation, dataset-specific
+   selection/final paths, canonical summaries, and a verified local index.
+8. Review the real-server execution procedure before launching reportable work; add
+   estimated pairing or W&B only in a separately approved Milestone 6B scope.
 
-### Risks to test in the CMNIST vertical slice
+### Residual risks for real-server execution
 
-- Whether the provisional representation boundary is useful for cached frozen features
-  without designing raw-image or distributed training abstractions.
 - Numerical cost and reproducibility of full CPU-float64 SVD at actual CLIP dimensions and
   pair budgets.
 - Feature/projection device and dtype conversion consistency across training and every
   evaluation role.
 - The minimum real PyTorch checkpoint state needed for exact inference restoration.
-- Whether candidate/config identities remain understandable under real path overrides and
-  cache reuse without a generalized artifact framework.
-- Whether the candidate/checkpoint split and dual-selector finalist union remain simple in
-  an end-to-end search.
+- Operational duration, disk footprint, interruption behavior, and cache reuse over the
+  complete 1,248-run tuning stage on the approved server.
+- Whether reportable artifact paths and the pinned CPU/PyTorch environment need a narrowly
+  documented server override without changing scientific identity.
 
 Later-method extension points are not CMNIST risks to solve. They remain deferred until
 their own protocols and vertical evidence exist.

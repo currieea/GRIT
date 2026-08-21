@@ -6,10 +6,11 @@ boundaries and after material decisions; do not use it as a raw command transcri
 ## Current state
 
 - Branch: `rewrite`
-- Active milestone: Waterbirds ERM/oracle-GRIT vertical slice review (Milestone 5)
+- Active milestone: Production-capable local ERM/oracle-GRIT search review (Milestone 6A)
 - Legacy implementation: Preserved and statically characterized; runtime reproduction deferred
-- New implementation: Reviewed CMNIST plus implemented, server-ready, hermetically
-  verified Waterbirds-CF ERM/oracle-GRIT vertical slice awaiting user review
+- New implementation: Reviewed CMNIST and Waterbirds-CF vertical slices plus an
+  implemented, hermetically verified local production-search path; no real scientific
+  grid has been executed
 
 ## Completed checkpoints
 
@@ -585,8 +586,68 @@ Verification:
 - No dependency, inherited implementation, dataset download, reportable sweep, W&B,
   estimated-pairing, or Milestone 6 change was made.
 
+## Milestone 6A implementation checkpoint
+
+### Production-capable local ERM/oracle-GRIT search
+
+- Marked the reviewed Waterbirds Milestone 5 complete and added strict, dataset-
+  discriminated production YAML for already prepared CMNIST and Waterbirds-CF artifacts.
+  The schemas require production inventories, pinned official OpenAI CLIP identity,
+  matching dataset/cache/pair/normalization lineage, explicit construction/pair seeds,
+  and exact disjoint 3+2+10 stage seeds. Fixture and non-reportable inputs are rejected.
+- Added a canonical planner that emits the complete ordered 16-ERM/400-oracle-GRIT grid,
+  stable candidate identities, verified input manifests, expected run counts, provenance,
+  and concrete output-schema inventory. Parsing re-derives the grid, identities, counts,
+  selectors, and schema list from the resolved configuration rather than trusting stored
+  copies. Plan-only execution does not load feature arrays, train, create checkpoints, or
+  issue final-test capabilities.
+- Added a narrow shared run-level scheduler. Deterministic candidate/stage/seed directories
+  publish atomically; continuation reuses only fully parsed task/result/checkpoint state,
+  promotes a durable staging result, archives explicitly interrupted staging work, and
+  refuses corrupt or incompatible output. It does not promise partial-epoch, optimizer,
+  scheduler, or RNG resume.
+- Reused dataset-specific selectors and result gates. CMNIST applies both selectors to the
+  same tuning results, confirms their ordered method-specific finalist union once, and
+  freezes separate winners. Waterbirds preserves its full dataset/cache/normalization/
+  adjusted-weight lineage. Every final task requires a frozen winner, persists and restores
+  its validation-selected checkpoint, and only then opens final test.
+- Added canonical per-run results, versioned finalist/freeze artifacts, seed-addressed
+  ten-run summaries, paired ERM-versus-GRIT differences, and an experiment index that
+  enumerates the complete JSON/YAML output tree and verifies file, plan, and resolved-
+  configuration identities. `status` reports complete only when final runs, summaries,
+  paired outputs, and that index all validate.
+- Added `grit-search plan|run|status` and conspicuous placeholder-path examples for the
+  primary unnormalized studies. L2 remains a separately named sensitivity using a distinct
+  cache. Output inside the repository must be Git-ignored so generated files cannot alter
+  the plan's recorded dirty-state.
+- Added hermetic regression coverage for exact grids/order, seed and scientific-candidate
+  identity, official source universes, fake/non-reportable and mixed-lineage rejection,
+  plan trust boundaries, plan-only lifecycle isolation, run reuse/interruption/corruption,
+  checkpoint provenance, summary seed pairing, and complete index round trips/tampering.
+
+Verification:
+
+- `UV_CACHE_DIR=/tmp/grit-milestone2.ENlzU4/cache uv lock --check` — passed (41 packages
+  resolved). The explicit cache was required because the environment-owned default uv cache
+  was read-only during final verification.
+- `UV_CACHE_DIR=/tmp/grit-milestone2.ENlzU4/cache uv run --offline --frozen ruff check .`
+  — passed.
+- `UV_CACHE_DIR=/tmp/grit-milestone2.ENlzU4/cache uv run --offline --frozen basedpyright`
+  — 0 errors, warnings, or notes.
+- `UV_CACHE_DIR=/tmp/grit-milestone2.ENlzU4/cache uv run --offline --frozen pytest` — 115
+  passed on Python 3.10.20.
+- Both existing non-reportable smoke commands passed after the production-search changes.
+- Actual `grit-search plan` commands over hermetic production-shaped manifest fixtures
+  emitted 416 candidates for each dataset; `status` reported 0/1,248 tuning runs without
+  training or final access.
+- Relative-link validation checked all 10 Markdown files under the repository root,
+  `docs/`, and `configs/` with no missing local target; `git diff --check` passed.
+- No real dataset, CLIP weight, reportable grid, W&B operation, estimated pair, later
+  algorithm, generalized artifact store, or inherited implementation was touched or run.
+
 ## Next proposed checkpoint
 
-Review and approve Milestone 5, then decide the first bounded Milestone 6 pairing/search
-task. Do not start estimated pairs, GroupDRO, production W&B, or the reportable scientific
-sweep before that review.
+Review Milestone 6A, then prepare the explicit real-server execution procedure or resolve
+the scientific definitions needed for Milestone 6B. Do not start estimated pairs,
+GroupDRO, production W&B, or a real reportable grid without that review and the required
+server artifacts.

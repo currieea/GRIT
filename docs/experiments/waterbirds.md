@@ -1,8 +1,8 @@
 # Waterbirds experiment protocol
 
-Status: **Core protocol and ERM/oracle-GRIT vertical slice implemented and hermetically
-verified; server source acquisition, reportable execution, and estimated-pair details
-remain**
+Status: **Core protocol, reviewed ERM/oracle-GRIT vertical slice, and production-capable
+local search implemented; server source acquisition, real reportable execution, and
+estimated-pair details remain**
 
 ## Purpose
 
@@ -426,6 +426,22 @@ does not define selection.
 For ERM and GRIT, the approved shared optimizer grid is the Cartesian product of the
 learning-rate and weight-decay candidates above. GRIT additionally searches the approved
 rank candidates. Later methods add only their prespecified method-specific parameters.
+
+Milestone 6A implements this ERM/oracle-GRIT grid over explicit prepared manifests. Strict
+planning accepts only the production 4,795/1,199/5,794 Waterbirds-CF inventory, exact
+184/56 oracle relation manifest, reportable official OpenAI CLIP cache, matching
+normalization, and dataset-minted adjusted-weight identity. It emits all 416 candidates
+and configured 3+2+10 seeds without loading features, training, or issuing final-test
+access. Unnormalized features remain primary; L2 is a separately named sensitivity with a
+different cache identity.
+
+The local scheduler retains Waterbirds dataset/cache/normalization/weight lineage in every
+stage result and uses only validation worst-group selection with the approved adjusted-
+average, lower-rank, earlier-epoch, and stable-identity ties. A final task requires its
+frozen method winner, selects and restores a validation checkpoint, then opens test once in
+the successful run lifecycle. Ten-seed summaries join ERM and GRIT by explicit seed, not
+completion order. Local canonical files and their verified experiment index are
+authoritative. The implementation ran no real grid and reports no Waterbirds result.
 
 Final results report mean, standard deviation, and a 95% t-interval across final seeds.
 Because methods use the same final seeds, method comparisons also report paired

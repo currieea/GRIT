@@ -43,7 +43,8 @@ Preserve baseline
     -> implement the minimal shared-contract spine
     -> exercise and revise it in the CMNIST vertical slice
     -> complete Waterbirds vertical slice
-    -> add pairing variants and production search/tracking
+    -> add production-capable local oracle search
+    -> add approved pairing variants and optional tracking mirrors
     -> port remaining methods
     -> compatibility review and cutover
 ```
@@ -161,8 +162,8 @@ Status: **Reviewed, implemented, and verified**
 
 ## Milestone 5: Waterbirds vertical slice
 
-Status: **Implemented and hermetically verified; awaiting user review and server-asset
-execution**
+Status: **Reviewed, implemented, and hermetically verified; real server-asset execution
+remains deferred**
 
 ### Work
 
@@ -180,18 +181,52 @@ execution**
 - Shared names and boundaries are reviewed only after both CMNIST and Waterbirds have
   exercised them.
 
-## Milestone 6: Pairing variants and experiment search
+## Milestone 6A: Production-capable local ERM/oracle-GRIT search
+
+Status: **Implemented and verified without executing a real scientific grid**
+
+### Work
+
+- Strict dataset-discriminated production YAML over already prepared CMNIST or
+  Waterbirds-CF feature artifacts.
+- Canonical 16-ERM/400-oracle-GRIT plans with explicit 3+2+10 seed stages.
+- A narrow shared run scheduler with deterministic task directories, atomic publication,
+  strict completed-run reuse, and run-level continuation.
+- Dataset-specific finalist, confirmation, freeze, final-gate, result, and ten-seed summary
+  paths, including CMNIST's dual-selector union and Waterbirds lineage.
+- `grit-search plan|run|status`, canonical experiment indexes, and placeholder-path
+  production examples.
+
+### Exit criteria
+
+- Planning rejects fixture/non-reportable, fake-encoder, wrong-count, mixed-normalization,
+  and cross-lineage artifacts before training and never opens final data.
+- Candidate ordering and identity are independent of YAML/dictionary ordering; duplicate
+  scientific configurations and ID collisions are rejected.
+- Tuning and confirmation aggregate configurations across configured seeds; final tasks
+  require a frozen winner, restore their selected checkpoint, and evaluate final test once
+  in the successful lifecycle.
+- Restart reuses only fully parsed matching results, continues missing work, archives
+  explicitly interrupted staging work, and refuses corrupt or incompatible outputs.
+- Local canonical outputs and their verified experiment index are authoritative. No W&B
+  service is needed to run or select.
+- Hermetic tests and plan-only manifest fixtures pass; a real 1,248-run tuning grid is not
+  an exit criterion and is not claimed.
+
+## Milestone 6B: Pairing variants and optional mirroring
+
+Status: **Deferred pending scientific definitions and a reviewed real-server execution
+procedure**
 
 ### Work
 
 - Enable conditional and nearest pairs through configuration.
-- Implement a local search runner with optional W&B tracking.
-- Separate search, confirmation, and final evaluation stages.
-- Aggregate identical configurations across seeds before selection.
+- Add optional W&B mirroring of already-authoritative local artifacts.
+- Extend the validated local search only when an approved method-specific space exists.
 
 ### Exit criteria
 
-- Local and W&B-backed runs apply identical selection semantics.
+- Any local and W&B-mirrored runs apply identical selection semantics.
 - Search never depends on final test metrics unless explicitly running a separately
   labeled test-oracle diagnostic.
 - The selected configuration is reproducible from saved artifacts.
