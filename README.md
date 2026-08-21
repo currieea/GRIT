@@ -61,6 +61,7 @@ cannot accidentally fall back to smoke data:
 ```bash
 uv run --frozen grit-search plan configs/cmnist/production-search.yaml
 uv run --frozen grit-search plan configs/waterbirds/production-search.yaml
+uv run --frozen grit-search pilot-candidates /path/to/production-search.yaml
 uv run --frozen grit-search status /path/to/production-search.yaml
 uv run --frozen grit-search run /path/to/production-search.yaml
 ```
@@ -70,12 +71,12 @@ checks every referenced feature artifact digest, and writes the complete 416-can
 plan without loading feature arrays, training, creating checkpoints, or issuing final-test
 access. `run` executes or continues the exact 3-seed tuning, top-three confirmation, and
 10-seed final lifecycle. Both `plan` and `run` require a real Git commit and a clean
-worktree before they write or train. `status` is deliberately different: it requires the
-existing authored/resolved/plan triplet, verifies it against the supplied YAML, and reads
-canonical run and selection state without replanning or writing, so it remains usable from
-a dirty development tree.
+worktree before they write or train. `pilot-candidates` and `status` are deliberately
+different: both require the existing authored/resolved/plan triplet and are read-only, so
+they remain usable from a dirty development tree. The former presents two canonical pilot
+tasks; the latter verifies and reports canonical run and selection state.
 
-All three operations take the same authored production YAML. The output root must be a
+All four operations take the same authored production YAML. The output root must be a
 dedicated nonexistent, empty, or exactly compatible prior-search directory, disjoint from
 the repository root and prepared inputs. If it is inside the source repository, it must be
 Git-ignored so generated output cannot change the recorded code dirty-state.
@@ -85,6 +86,11 @@ scientific grid was executed: this repository has run only hermetic smoke workfl
 manifest-only plan tests. Real reportable execution still requires verified server assets
 and an approved server environment. W&B mirroring, conditional/nearest pairing, and later
 algorithms remain deferred.
+
+For first execution on a real server, follow the
+[server-execution runbook](docs/server-execution.md). Bounded `run` controls can execute
+canonical tuning tasks from the full plan before the unrestricted lifecycle; they do not
+alter scientific identities or make an incomplete pilot reportable.
 
 ## Inherited setup
 

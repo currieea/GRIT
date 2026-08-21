@@ -376,6 +376,56 @@ class WaterbirdsFeatureCache:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class WaterbirdsTuningFeatureCache:
+    """Training/validation cache whose public surface has no final-test access."""
+
+    manifest: WaterbirdsFeatureCacheManifest
+    features: torch.Tensor
+    root: Path
+
+    def training_table(self) -> WaterbirdsTrainingFeatureTable:
+        rows = tuple(
+            record
+            for record in self.manifest.records
+            if record.split_role == "training"
+        )
+        indices = torch.tensor([record.row_index for record in rows], dtype=torch.int64)
+        return WaterbirdsTrainingFeatureTable(
+            dataset_manifest_digest=self.manifest.dataset_manifest_digest,
+            feature_cache_manifest_digest=self.manifest.canonical_digest(),
+            normalization=self.manifest.normalization,
+            record_ids=tuple(record.record_id for record in rows),
+            features=self.features[indices].clone(),
+            labels=torch.tensor(
+                [record.bird_label for record in rows], dtype=torch.int64
+            ),
+        )
+
+    def validation_table(self) -> WaterbirdsEvaluationFeatureTable:
+        rows = tuple(
+            record
+            for record in self.manifest.records
+            if record.split_role == "validation"
+        )
+        indices = torch.tensor([record.row_index for record in rows], dtype=torch.int64)
+        return WaterbirdsEvaluationFeatureTable(
+            dataset_manifest_digest=self.manifest.dataset_manifest_digest,
+            feature_cache_manifest_digest=self.manifest.canonical_digest(),
+            normalization=self.manifest.normalization,
+            split_role="validation",
+            record_ids=tuple(record.record_id for record in rows),
+            features=self.features[indices].clone(),
+            labels=torch.tensor(
+                [record.bird_label for record in rows], dtype=torch.int64
+            ),
+            backgrounds=torch.tensor(
+                [record.background for record in rows], dtype=torch.int64
+            ),
+            group_ids=tuple(record.group_id for record in rows),
+        )
+
+
 def prepare_waterbirds_feature_cache(
     construction: WaterbirdsConstruction,
     encoder: PilImageEncoder,
@@ -462,6 +512,57 @@ def load_waterbirds_feature_cache(
     expected_dataset_manifest_digest: str | None = None,
     expected_normalization: Normalization | None = None,
 ) -> WaterbirdsFeatureCache:
+    manifest, feature_path = _load_waterbirds_feature_manifest(
+        root,
+        expected_dataset_manifest_digest=expected_dataset_manifest_digest,
+        expected_normalization=expected_normalization,
+    )
+    array = _load_waterbirds_feature_array(feature_path, manifest)
+    copied = array.copy()
+    features = _torch_from_numpy(copied).to(torch.float32)
+    _validate_features(features, len(manifest.records))
+    return WaterbirdsFeatureCache(manifest=manifest, features=features, root=root)
+
+
+def load_waterbirds_tuning_feature_cache(
+    root: Path,
+    *,
+    expected_dataset_manifest_digest: str | None = None,
+    expected_normalization: Normalization | None = None,
+) -> WaterbirdsTuningFeatureCache:
+    """Load only training/validation rows for bounded tuning execution."""
+
+    manifest, feature_path = _load_waterbirds_feature_manifest(
+        root,
+        expected_dataset_manifest_digest=expected_dataset_manifest_digest,
+        expected_normalization=expected_normalization,
+    )
+    array = _load_waterbirds_feature_array(
+        feature_path, manifest, memory_mapped=True
+    )
+    selected_rows = tuple(
+        record.row_index
+        for record in manifest.records
+        if record.split_role != "final_test"
+    )
+    selected = np.array(array[list(selected_rows)], copy=True)
+    selected_tensor = _torch_from_numpy(selected).to(torch.float32)
+    _validate_features(selected_tensor, len(selected_rows))
+    features = torch.zeros(
+        (len(manifest.records), FEATURE_DIMENSION), dtype=torch.float32
+    )
+    features[torch.tensor(selected_rows, dtype=torch.int64)] = selected_tensor
+    return WaterbirdsTuningFeatureCache(
+        manifest=manifest, features=features, root=root
+    )
+
+
+def _load_waterbirds_feature_manifest(
+    root: Path,
+    *,
+    expected_dataset_manifest_digest: str | None,
+    expected_normalization: Normalization | None,
+) -> tuple[WaterbirdsFeatureCacheManifest, Path]:
     manifest_path = root / "manifest.json"
     if not manifest_path.is_file():
         raise WaterbirdsFeatureCacheError(
@@ -492,19 +593,29 @@ def load_waterbirds_feature_cache(
         manifest.feature_file.sha256
     ):
         raise WaterbirdsFeatureCacheError("Waterbirds feature array digest is invalid")
-    array = np.load(feature_path, allow_pickle=False)
+    return manifest, feature_path
+
+
+def _load_waterbirds_feature_array(
+    path: Path,
+    manifest: WaterbirdsFeatureCacheManifest,
+    *,
+    memory_mapped: bool = False,
+) -> NDArray[np.generic]:
+    array = np.load(
+        path,
+        allow_pickle=False,
+        mmap_mode="r" if memory_mapped else None,
+    )
     if tuple(int(value) for value in array.shape) != manifest.feature_file.shape:
         raise WaterbirdsFeatureCacheError("Waterbirds feature array shape is invalid")
     if str(array.dtype) != manifest.feature_file.dtype:
         raise WaterbirdsFeatureCacheError("Waterbirds feature array dtype is invalid")
-    copied = cast(NDArray[np.generic], array.copy())
-    features = _torch_from_numpy(copied).to(torch.float32)
-    _validate_features(features, len(manifest.records))
-    return WaterbirdsFeatureCache(manifest=manifest, features=features, root=root)
+    return cast(NDArray[np.generic], array)
 
 
 def waterbirds_oracle_pair_features(
-    cache: WaterbirdsFeatureCache,
+    cache: WaterbirdsFeatureCache | WaterbirdsTuningFeatureCache,
     pairs: WaterbirdsOraclePairSet,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Resolve canonical land-minus-water rows from validated training endpoints."""
@@ -548,7 +659,7 @@ def waterbirds_oracle_pair_features(
 
 
 def fit_waterbirds_oracle_projection(
-    cache: WaterbirdsFeatureCache,
+    cache: WaterbirdsFeatureCache | WaterbirdsTuningFeatureCache,
     pairs: WaterbirdsOraclePairSet,
     *,
     requested_rank: int,

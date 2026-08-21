@@ -462,6 +462,38 @@ class LocalRunScheduler:
             results.append(completed)
         return tuple(results)
 
+    def run_tasks_bounded(
+        self,
+        tasks: Sequence[SearchRunTask],
+        execute: StageExecutor,
+        *,
+        max_new_runs: int,
+    ) -> tuple[tuple[CompletedStageRun, ...], int]:
+        """Reuse completed tasks and execute at most ``max_new_runs`` missing tasks.
+
+        The bound is operational: task identities and stored results are identical to an
+        unrestricted run. A zero bound is useful internally after a shared invocation
+        budget has been exhausted; the public CLI rejects nonpositive user values.
+        """
+
+        if max_new_runs < 0:
+            raise ValueError("max_new_runs must not be negative")
+        inspected = tuple(
+            (validated, self._load_completed(validated))
+            for task in tasks
+            for validated in (self._validate_task(task),)
+        )
+        results: list[CompletedStageRun] = []
+        newly_executed = 0
+        for validated_task, completed in inspected:
+            if completed is None:
+                if newly_executed >= max_new_runs:
+                    continue
+                completed = self._execute_one(validated_task, execute)
+                newly_executed += 1
+            results.append(completed)
+        return tuple(results), newly_executed
+
     def status(self, tasks: Sequence[SearchRunTask]) -> SearchStatus:
         """Inspect canonical run state without invoking training or final access."""
 

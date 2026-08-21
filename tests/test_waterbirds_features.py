@@ -27,6 +27,7 @@ from grit.waterbirds_features import (
     WaterbirdsFinalTestView,
     fit_waterbirds_oracle_projection,
     load_waterbirds_feature_cache,
+    load_waterbirds_tuning_feature_cache,
     prepare_waterbirds_feature_cache,
     waterbirds_oracle_pair_features,
 )
@@ -108,6 +109,21 @@ def test_feature_cache_is_canonical_role_scoped_and_non_reportable(
         "waterbird_land",
         "waterbird_water",
     }
+
+
+def test_tuning_cache_exposes_no_waterbirds_final_capability(tmp_path: Path) -> None:
+    construction, pairs, cache = _prepared(tmp_path)
+    tuning = load_waterbirds_tuning_feature_cache(
+        cache.root,
+        expected_dataset_manifest_digest=construction.manifest.canonical_digest(),
+        expected_normalization="none",
+    )
+    assert tuning.training_table().record_ids == cache.training_table().record_ids
+    assert tuning.validation_table().record_ids == cache.validation_table().record_ids
+    left, right = waterbirds_oracle_pair_features(tuning, pairs)
+    assert left.shape == right.shape == (len(pairs.manifest.records), 512)
+    assert not hasattr(tuning, "issue_final_handle")
+    assert not hasattr(tuning, "verify_final_view")
 
 
 def test_cache_rejects_digest_tampering_and_normalization_mixing(

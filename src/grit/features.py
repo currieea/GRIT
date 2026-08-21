@@ -431,6 +431,30 @@ class CmnistFeatureCache:
         return self._test_ood
 
 
+@dataclass(frozen=True, slots=True)
+class CmnistTuningFeatureCache:
+    """Verified training, validation, and pair tables with no final-test capability."""
+
+    train_e01: FeatureTable
+    train_e02: FeatureTable
+    val_e01: FeatureTable
+    val_e02: FeatureTable
+    val_e05: FeatureTable
+    oracle_pair_red: FeatureTable
+    oracle_pair_green: FeatureTable
+    manifest: CmnistFeatureCacheManifest
+    root: Path
+
+    def training_tables(self) -> tuple[FeatureTable, FeatureTable]:
+        return self.train_e01, self.train_e02
+
+    def validation_tables(self) -> tuple[FeatureTable, FeatureTable, FeatureTable]:
+        return self.val_e01, self.val_e02, self.val_e05
+
+    def pair_tables(self) -> tuple[FeatureTable, FeatureTable]:
+        return self.oracle_pair_red, self.oracle_pair_green
+
+
 def prepare_cmnist_feature_cache(
     construction: CmnistConstruction,
     pairs: CmnistOraclePairSet,
@@ -628,6 +652,67 @@ def load_cmnist_feature_cache(
 ) -> CmnistFeatureCache:
     """Load a verified CMNIST cache and fail helpfully on absent/mixed artifacts."""
 
+    manifest = _load_cmnist_feature_manifest(
+        root,
+        expected_source_manifest_digest=expected_source_manifest_digest,
+        expected_pair_manifest_digest=expected_pair_manifest_digest,
+        expected_normalization=expected_normalization,
+    )
+    loaded = tuple(_load_feature_table(root, table) for table in manifest.tables)
+    return CmnistFeatureCache(
+        train_e01=loaded[0],
+        train_e02=loaded[1],
+        val_e01=loaded[2],
+        val_e02=loaded[3],
+        val_e05=loaded[4],
+        _test_ood=loaded[5],
+        oracle_pair_red=loaded[6],
+        oracle_pair_green=loaded[7],
+        manifest=manifest,
+        root=root,
+    )
+
+
+def load_cmnist_tuning_feature_cache(
+    root: Path,
+    *,
+    expected_source_manifest_digest: str | None = None,
+    expected_pair_manifest_digest: str | None = None,
+    expected_normalization: Normalization | None = None,
+) -> CmnistTuningFeatureCache:
+    """Load only training, validation, and pair tables for bounded tuning."""
+
+    manifest = _load_cmnist_feature_manifest(
+        root,
+        expected_source_manifest_digest=expected_source_manifest_digest,
+        expected_pair_manifest_digest=expected_pair_manifest_digest,
+        expected_normalization=expected_normalization,
+    )
+    selected = tuple(
+        _load_feature_table(root, table)
+        for table in manifest.tables
+        if table.role != "final_test"
+    )
+    return CmnistTuningFeatureCache(
+        train_e01=selected[0],
+        train_e02=selected[1],
+        val_e01=selected[2],
+        val_e02=selected[3],
+        val_e05=selected[4],
+        oracle_pair_red=selected[5],
+        oracle_pair_green=selected[6],
+        manifest=manifest,
+        root=root,
+    )
+
+
+def _load_cmnist_feature_manifest(
+    root: Path,
+    *,
+    expected_source_manifest_digest: str | None,
+    expected_pair_manifest_digest: str | None,
+    expected_normalization: Normalization | None,
+) -> CmnistFeatureCacheManifest:
     manifest_path = root / "manifest.json"
     if not manifest_path.is_file():
         raise FeatureCacheValidationError(
@@ -658,19 +743,7 @@ def load_cmnist_feature_cache(
         and manifest.normalization != expected_normalization
     ):
         raise FeatureCacheValidationError("feature cache normalization does not match")
-    loaded = tuple(_load_feature_table(root, table) for table in manifest.tables)
-    return CmnistFeatureCache(
-        train_e01=loaded[0],
-        train_e02=loaded[1],
-        val_e01=loaded[2],
-        val_e02=loaded[3],
-        val_e05=loaded[4],
-        _test_ood=loaded[5],
-        oracle_pair_red=loaded[6],
-        oracle_pair_green=loaded[7],
-        manifest=manifest,
-        root=root,
-    )
+    return manifest
 
 
 def load_torchvision_mnist_pools(

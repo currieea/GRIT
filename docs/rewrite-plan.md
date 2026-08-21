@@ -194,8 +194,11 @@ Status: **Implemented and verified without executing a real scientific grid**
   strict completed-run reuse, and run-level continuation.
 - Dataset-specific finalist, confirmation, freeze, final-gate, result, and ten-seed summary
   paths, including CMNIST's dual-selector union and Waterbirds lineage.
-- `grit-search plan|run|status`, canonical experiment indexes, and placeholder-path
-  production examples.
+- `grit-search plan|pilot-candidates|run|status`, canonical experiment indexes, and
+  placeholder-path production examples.
+- Bounded canonical-task execution plus deterministic pilot-candidate inspection and a
+  real-server runbook; operational limits do not change scientific identity or completion
+  rules.
 
 ### Exit criteria
 
@@ -212,11 +215,13 @@ Status: **Implemented and verified without executing a real scientific grid**
   service is needed to run or select.
 - Hermetic tests and plan-only manifest fixtures pass; a real 1,248-run tuning grid is not
   an exit criterion and is not claimed.
+- A two-task real-artifact pilot can run through the full plan without final-test access;
+  no real server pilot or timing claim is part of repository verification.
 
 ## Milestone 6B: Pairing variants and optional mirroring
 
-Status: **Deferred pending scientific definitions and a reviewed real-server execution
-procedure**
+Status: **Deferred pending scientific definitions and evidence from the documented
+real-server pilot procedure**
 
 ### Work
 

@@ -6,11 +6,11 @@ boundaries and after material decisions; do not use it as a raw command transcri
 ## Current state
 
 - Branch: `rewrite`
-- Active milestone: Production-capable local ERM/oracle-GRIT search review (Milestone 6A)
+- Active milestone: Real-server operational readiness for the reviewed Milestone 6A search
 - Legacy implementation: Preserved and statically characterized; runtime reproduction deferred
 - New implementation: Reviewed CMNIST and Waterbirds-CF vertical slices plus an
   implemented, hermetically verified local production-search path; no real scientific
-  grid has been executed
+  pilot or grid has been executed
 
 ## Completed checkpoints
 
@@ -681,9 +681,48 @@ Verification:
 - No real dataset, reportable search, W&B operation, estimated pairing, new algorithm,
   generalized artifact storage, or inherited implementation was touched or run.
 
+### Milestone 6A real-server operational readiness
+
+- Added operational limits to the existing `grit-search run` command. Tuning-only
+  method/candidate/seed filters select canonical tasks already present in the full plan;
+  `--max-new-runs` counts only missing tasks and stops between atomic runs. Limits are not
+  serialized into scientific configuration, candidate identity, or ranking inputs.
+- Added a read-only `pilot-candidates` presentation that selects one deterministic ERM
+  candidate and one nonzero-rank GRIT candidate plus their shared first tuning seed from
+  the saved plan. It does not replan or write.
+- Added dataset-specific tuning cache views that materialize only training, validation,
+  and pair rows and expose no final-test handle/table. Bounded tuning therefore exercises
+  real projection, training, validation, checkpoint selection, and atomic publication
+  without issuing final-test access.
+- Bounded runs return canonical progress and never create production/paired summaries or
+  the experiment index. `--stop-after tuning` also stops before finalist, confirmation,
+  winner, or final-result production. A later unrestricted run validates and reuses the
+  same task results byte-for-byte.
+- Added the real-server runbook covering environment setup, explicit preparation paths and
+  download boundaries, plan validation, the two-task pilot, status, continuation,
+  interruption semantics, and preservation of authoritative local outputs.
+- Hermetic coverage exercises both dataset dispatch paths, canonical candidate filtering,
+  a real nonzero-rank projection fit, budget/reuse/continuation behavior, tuning-only final
+  isolation, invalid pre-execution limits, and unchanged no-flag CLI dispatch.
+
+Verification:
+
+- `UV_CACHE_DIR=/tmp/grit-uv-cache uv lock --check` — passed (41 packages resolved).
+- `UV_CACHE_DIR=/tmp/grit-uv-cache uv run --frozen ruff check .` — passed.
+- `UV_CACHE_DIR=/tmp/grit-uv-cache uv run --frozen basedpyright` — 0 errors,
+  warnings, or notes.
+- `UV_CACHE_DIR=/tmp/grit-uv-cache uv run --frozen pytest` — 144 passed on
+  Python 3.10.20.
+- Both required non-reportable smoke commands passed. Pre-existing ignored smoke output
+  directories were preserved and restored; verification outputs remain under `/tmp`.
+- Relative-link validation checked all 11 Markdown files under the repository root,
+  `docs/`, and `configs/` with no missing local target; `git diff --check` passed.
+- No server asset, real pilot, full grid, final result, timing measurement, or scientific
+  performance claim was produced.
+
 ## Next proposed checkpoint
 
-Review Milestone 6A, then prepare the explicit real-server execution procedure or resolve
-the scientific definitions needed for Milestone 6B. Do not start estimated pairs,
-GroupDRO, production W&B, or a real reportable grid without that review and the required
-server artifacts.
+Review the Milestone 6A server procedure, then run the documented two-task pilot with
+approved real server assets. Use its timing and memory evidence before deciding on GPU or
+cluster integration. Do not start Milestone 6B estimated pairs, GroupDRO, production W&B,
+or a reportable full grid without that review.

@@ -351,7 +351,8 @@ Preparation accepts explicit server paths and never downloads Waterbirds, CUB, m
 Places; only a separately requested pinned CLIP-weight download is possible. The run
 command consumes the strict offline smoke profile and cannot produce a reportable result.
 
-Milestone 6A implements `grit-search plan|run|status`. The shared command dispatches only
+Milestone 6A implements `grit-search plan|pilot-candidates|run|status`. The shared command
+dispatches only
 after strict dataset discrimination. `plan` is final-data- and training-free; `run`
 continues the saved local lifecycle. Both require an exact committed Git revision and a
 clean worktree before any write or training. `status` never replans: it requires and
@@ -361,6 +362,14 @@ results without writing, loading feature arrays, or running a trainer. It theref
 usable while the development worktree is dirty. The checked-in production examples contain
 required placeholder paths. There is no implicit smoke fallback, dataset acquisition,
 W&B call, or automatic full-grid launch.
+
+The same `run` command accepts bounded operational controls for canonical plan tasks.
+Candidate/method/seed filtering is tuning-only, and a shared new-run allowance counts only
+missing tasks. A bounded invocation returns progress and never emits completion summaries
+or the experiment index. Tuning-only dataset adapters expose training, validation, and pair
+features but have no final-test capability; the unrestricted path retains the original full
+lifecycle. These controls do not enter plan, candidate, or scientific-configuration
+identity.
 
 Production output uses a dedicated tree. Filesystem roots, the repository root, prepared
 artifact directories or descendants, roots containing prepared inputs, and unrelated

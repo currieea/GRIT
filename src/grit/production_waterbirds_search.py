@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 from grit.config import LinearProbeTrainingConfig
 from grit.projection import FittedLinearProjection
@@ -24,6 +24,7 @@ from grit.search_scheduler import (
     CompletedStageRun,
     LocalRunScheduler,
     SearchRunTask,
+    StageExecutor,
     WaterbirdsCompletedStageRun,
     make_final_search_task,
     make_search_task,
@@ -40,8 +41,10 @@ from grit.waterbirds import (
 )
 from grit.waterbirds_features import (
     WaterbirdsFeatureCache,
+    WaterbirdsTuningFeatureCache,
     fit_waterbirds_oracle_projection,
     load_waterbirds_feature_cache,
+    load_waterbirds_tuning_feature_cache,
 )
 from grit.waterbirds_pairs import (
     WaterbirdsOraclePairManifest,
@@ -74,6 +77,12 @@ from grit.waterbirds_training import (
     train_waterbirds_linear_probe,
 )
 
+if TYPE_CHECKING:
+    from grit.production_search import (
+        ProductionExecutionLimits,
+        ProductionSearchStatus,
+    )
+
 
 @dataclass(frozen=True, slots=True)
 class _RuntimeCandidate:
@@ -82,11 +91,16 @@ class _RuntimeCandidate:
     projection: FittedLinearProjection | None
 
 
-def run_waterbirds_production_search(plan: SearchPlan) -> WaterbirdsProductionSummary:
+def run_waterbirds_production_search(
+    plan: SearchPlan,
+    limits: ProductionExecutionLimits | None = None,
+) -> WaterbirdsProductionSummary | ProductionSearchStatus:
     """Run or continue the approved Waterbirds ERM/oracle-GRIT search."""
 
     from grit.production_search import (
+        limited_tuning_candidates,
         persist_canonical_artifact,
+        waterbirds_status_from_plan,
         write_experiment_index,
     )
 
@@ -94,7 +108,9 @@ def run_waterbirds_production_search(plan: SearchPlan) -> WaterbirdsProductionSu
     output_root = Path(plan.resolved_config.output_root)
     dataset = _dataset_manifest(plan)
     pairs = WaterbirdsOraclePairSet(manifest=_pair_manifest(plan))
-    cache = _load_cache(plan)
+    cache = _load_cache(
+        plan, tuning_only=limits is not None and limits.stop_after == "tuning"
+    )
     weights = mint_waterbirds_adjusted_weight_spec(dataset)
     if weights.canonical_digest() != (
         plan.resolved_config.lineage.adjusted_weight_spec_digest
@@ -102,6 +118,22 @@ def run_waterbirds_production_search(plan: SearchPlan) -> WaterbirdsProductionSu
         raise ValueError("Waterbirds adjusted weights changed after planning")
     projections: dict[int, FittedLinearProjection] = {}
     scheduler = LocalRunScheduler(output_root, plan)
+    remaining = None if limits is None else limits.max_new_runs
+
+    def run_stage(
+        tasks: tuple[SearchRunTask, ...],
+        execute: StageExecutor,
+    ) -> tuple[CompletedStageRun, ...]:
+        nonlocal remaining
+        if limits is None:
+            return scheduler.run_tasks(tasks, execute)
+        allowance = len(tasks) if remaining is None else remaining
+        results, newly_executed = scheduler.run_tasks_bounded(
+            tasks, execute, max_new_runs=allowance
+        )
+        if remaining is not None:
+            remaining -= newly_executed
+        return results
 
     def runtime_candidate(candidate: SearchCandidate) -> _RuntimeCandidate:
         projection: FittedLinearProjection | None = None
@@ -143,15 +175,25 @@ def run_waterbirds_production_search(plan: SearchPlan) -> WaterbirdsProductionSu
             checkpoint_decision=decision,
         )
 
+    tuning_candidates = limited_tuning_candidates(plan, limits)
+    tuning_seeds = (
+        config.seeds.stages.tuning
+        if limits is None or limits.tuning_seed is None
+        else (limits.tuning_seed,)
+    )
     tuning_tasks = tuple(
         make_search_task(plan, candidate, SeedStage.TUNING, seed)
-        for candidate in plan.candidates
-        for seed in config.seeds.stages.tuning
+        for candidate in tuning_candidates
+        for seed in tuning_seeds
     )
     tuning_runs = cast(
         tuple[WaterbirdsCompletedStageRun, ...],
-        scheduler.run_tasks(tuning_tasks, execute_pre_final),
+        run_stage(tuning_tasks, execute_pre_final),
     )
+    if limits is not None and (
+        limits.stop_after == "tuning" or len(tuning_runs) != len(tuning_tasks)
+    ):
+        return waterbirds_status_from_plan(plan)
     finalists = _finalists(plan, tuning_runs, output_root)
     candidates_by_id = {item.candidate_id: item for item in plan.candidates}
     confirmation_tasks = tuple(
@@ -167,11 +209,15 @@ def run_waterbirds_production_search(plan: SearchPlan) -> WaterbirdsProductionSu
     )
     confirmation_runs = cast(
         tuple[WaterbirdsCompletedStageRun, ...],
-        scheduler.run_tasks(confirmation_tasks, execute_pre_final),
+        run_stage(confirmation_tasks, execute_pre_final),
     )
+    if limits is not None and len(confirmation_runs) != len(confirmation_tasks):
+        return waterbirds_status_from_plan(plan)
     winners = _freeze_winners(
         plan, finalists, confirmation_runs, output_root
     )
+    if isinstance(cache, WaterbirdsTuningFeatureCache):
+        raise AssertionError("tuning-only Waterbirds execution reached final stage")
 
     def execute_final(task: SearchRunTask, run_root: Path) -> CompletedStageRun:
         frozen = winners[task.candidate.method_id]
@@ -261,8 +307,10 @@ def run_waterbirds_production_search(plan: SearchPlan) -> WaterbirdsProductionSu
     )
     final_runs = cast(
         tuple[WaterbirdsCompletedStageRun, ...],
-        scheduler.run_tasks(final_tasks, execute_final),
+        run_stage(final_tasks, execute_final),
     )
+    if limits is not None:
+        return waterbirds_status_from_plan(plan)
     summary = _summary(plan, finalists, winners, final_runs)
     persist_canonical_artifact(
         output_root / "summaries" / "waterbirds-summary.json", summary
@@ -404,7 +452,7 @@ def materialize_waterbirds_candidate_config(
 
 
 def _train_task(
-    cache: WaterbirdsFeatureCache,
+    cache: WaterbirdsFeatureCache | WaterbirdsTuningFeatureCache,
     weights: WaterbirdsAdjustedWeightSpec,
     runtime: _RuntimeCandidate,
     task: SearchRunTask,
@@ -604,8 +652,17 @@ def _pair_manifest(plan: SearchPlan) -> WaterbirdsOraclePairManifest:
     return manifest
 
 
-def _load_cache(plan: SearchPlan) -> WaterbirdsFeatureCache:
-    cache = load_waterbirds_feature_cache(
+def _load_cache(
+    plan: SearchPlan,
+    *,
+    tuning_only: bool = False,
+) -> WaterbirdsFeatureCache | WaterbirdsTuningFeatureCache:
+    loader = (
+        load_waterbirds_tuning_feature_cache
+        if tuning_only
+        else load_waterbirds_feature_cache
+    )
+    cache = loader(
         _input_path(plan, "feature_manifest").parent,
         expected_dataset_manifest_digest=(
             plan.resolved_config.lineage.dataset_manifest_digest

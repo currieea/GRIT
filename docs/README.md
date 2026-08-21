@@ -17,6 +17,8 @@ deferred.
   guidance, deferred extensions, leakage boundaries, and synthetic-test evidence.
 - [`rewrite-progress.md`](rewrite-progress.md): checkpoint log for completed work and
   unresolved decisions.
+- [`server-execution.md`](server-execution.md): real-artifact preparation, bounded pilot,
+  continuation, and canonical-output preservation procedure.
 - [`legacy-baseline.md`](legacy-baseline.md): exact inherited revision, representative
   commands, static behavior characterization, and deferred runtime checks.
 - [`experiments/cmnist.md`](experiments/cmnist.md): approved ColoredMNIST core protocol,

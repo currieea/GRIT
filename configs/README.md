@@ -15,6 +15,9 @@ replace them with explicit real manifest/output paths, then use `grit-search pla
 seed stages, and unnormalized primary representation. An L2 sensitivity run must use a
 separate configuration named `l2_normalized_sensitivity` and an L2 cache; changing only a
 path or normalization field is rejected by lineage validation.
+Use the [real-server execution runbook](../docs/server-execution.md) to prepare assets,
+copy a placeholder configuration to a server-owned path, inspect canonical pilot
+candidates, execute two bounded tuning tasks, and resume the unchanged full search.
 
 [`waterbirds/smoke.yaml`](waterbirds/smoke.yaml) is the implemented, explicitly
 non-reportable and fully offline Milestone 5 profile consumed by `grit-waterbirds-run`.
@@ -38,3 +41,5 @@ clean committed Git worktree. Use a dedicated output directory disjoint from pre
 artifacts (a
 repository-local directory must also be Git-ignored); `status` requires the previously
 written planning triplet and is read-only, so it may inspect that plan from a dirty tree.
+Operational `run` limits are intentionally absent from these YAML files: they are CLI-only
+controls and never enter the resolved scientific configuration or candidate digests.

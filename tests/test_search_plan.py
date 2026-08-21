@@ -6,6 +6,7 @@ import hashlib
 import json
 from collections.abc import Sequence
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Literal, cast
 
 import pytest
@@ -28,23 +29,29 @@ from grit.features import (
     ArrayFileManifest,
     CmnistFeatureCacheManifest,
     EncoderIdentity,
+    FeatureTable,
     FeatureTableManifest,
 )
 from grit.production_search import (
+    ProductionExecutionLimits,
+    ProductionSearchStatus,
     compute_cmnist_finalists,
     compute_cmnist_winners,
+    limited_tuning_candidates,
     materialize_cmnist_candidate_config,
     persist_canonical_artifact,
     plan_production_search,
+    production_pilot_candidates,
     production_search_status,
     run_production_search,
+    validate_execution_limits,
 )
 from grit.production_waterbirds_search import (
     compute_waterbirds_finalists,
     compute_waterbirds_winners,
     materialize_waterbirds_candidate_config,
 )
-from grit.projection import fit_linear_projection
+from grit.projection import FittedLinearProjection, fit_linear_projection
 from grit.results import CodeProvenance, EnvironmentProvenance
 from grit.schemas import CmnistSelector, SeedStage, canonical_digest_value
 from grit.search import (
@@ -1643,3 +1650,442 @@ def test_completed_staging_result_is_promoted_without_reexecution(
     recovered = scheduler.run_tasks((task,), _cmnist_executor(plan, calls))
     assert len(recovered) == 1
     assert not calls
+
+
+def test_bounded_scheduler_counts_only_new_runs_and_reuses_exact_results(
+    tmp_path: Path,
+) -> None:
+    plan = build_search_plan(resolved_search_fixture())
+    tasks = tuple(
+        make_search_task(
+            plan,
+            plan.candidates[index],
+            SeedStage.TUNING,
+            plan.seeds.stages.tuning[0],
+        )
+        for index in range(3)
+    )
+    scheduler = LocalRunScheduler(tmp_path, plan)
+    calls: list[str] = []
+    first = scheduler.run_tasks((tasks[0],), _cmnist_executor(plan, calls))
+    first_payload = (
+        tmp_path / tasks[0].relative_directory / "result.json"
+    ).read_bytes()
+
+    available, new_count = scheduler.run_tasks_bounded(
+        tasks[:2], _cmnist_executor(plan, calls), max_new_runs=1
+    )
+    assert available[0] == first[0]
+    assert len(available) == 2
+    assert new_count == 1
+    assert calls == [tasks[0].task_id, tasks[1].task_id]
+    repeated, repeated_new = scheduler.run_tasks_bounded(
+        tasks[:2], _cmnist_executor(plan, calls), max_new_runs=1
+    )
+    assert repeated == available
+    assert repeated_new == 0
+    assert calls == [tasks[0].task_id, tasks[1].task_id]
+
+    continued, continued_new = scheduler.run_tasks_bounded(
+        tasks, _cmnist_executor(plan, calls), max_new_runs=2
+    )
+    assert len(continued) == 3
+    assert continued_new == 1
+    assert scheduler.run_tasks(tasks, _cmnist_executor(plan, calls)) == continued
+    assert (
+        tmp_path / tasks[0].relative_directory / "result.json"
+    ).read_bytes() == first_payload
+
+
+def test_bounded_scheduler_rejects_bad_prior_state_before_new_training(
+    tmp_path: Path,
+) -> None:
+    plan = build_search_plan(resolved_search_fixture())
+    tasks = tuple(
+        make_search_task(
+            plan,
+            plan.candidates[index],
+            SeedStage.TUNING,
+            plan.seeds.stages.tuning[0],
+        )
+        for index in range(2)
+    )
+    scheduler = LocalRunScheduler(tmp_path, plan)
+    _ = scheduler.run_tasks((tasks[1],), _cmnist_executor(plan, []))
+    (tmp_path / tasks[1].relative_directory / "result.json").write_text(
+        "{corrupt", encoding="utf-8"
+    )
+    calls: list[str] = []
+    with pytest.raises(ValueError, match="corrupted"):
+        scheduler.run_tasks_bounded(
+            tasks, _cmnist_executor(plan, calls), max_new_runs=1
+        )
+    assert not calls
+
+
+@pytest.mark.parametrize("dataset", ("cmnist", "waterbirds_cf"))
+def test_tuning_filters_select_only_canonical_tasks_for_each_dataset(
+    dataset: Literal["cmnist", "waterbirds_cf"],
+) -> None:
+    plan = build_search_plan(resolved_search_fixture(dataset))
+    erm = next(item for item in plan.candidates if item.method_id == "erm")
+    grit = next(
+        item
+        for item in plan.candidates
+        if item.method_id == "grit" and item.requested_rank == 1
+    )
+    for candidate in (erm, grit):
+        limits = validate_execution_limits(
+            plan,
+            ProductionExecutionLimits(
+                stop_after="tuning",
+                method=candidate.method_id,
+                candidate_ids=(candidate.candidate_id,),
+                tuning_seed=plan.seeds.stages.tuning[0],
+                max_new_runs=1,
+            ),
+        )
+        assert limits is not None
+        assert limited_tuning_candidates(plan, limits) == (candidate,)
+
+
+@pytest.mark.parametrize(
+    ("limits", "message"),
+    (
+        (ProductionExecutionLimits(max_new_runs=0), "positive"),
+        (
+            ProductionExecutionLimits(method="erm"),
+            "require stop_after=tuning",
+        ),
+        (
+            ProductionExecutionLimits(
+                stop_after="tuning", candidate_ids=("candidate:unknown",)
+            ),
+            "not present",
+        ),
+        (
+            ProductionExecutionLimits(stop_after="tuning", tuning_seed=999),
+            "configured tuning seeds",
+        ),
+    ),
+)
+def test_invalid_execution_limits_fail_before_any_executor(
+    limits: ProductionExecutionLimits,
+    message: str,
+) -> None:
+    plan = build_search_plan(resolved_search_fixture())
+    calls: list[str] = []
+    with pytest.raises(ValueError, match=message):
+        _ = validate_execution_limits(plan, limits)
+    assert not calls
+
+
+def test_cmnist_real_plan_pilot_runs_two_canonical_tuning_tasks_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path, plan = _write_stored_plan_fixture(tmp_path)
+    output_root = Path(plan.resolved_config.output_root)
+    before_candidate_inspection = _filesystem_snapshot(output_root)
+    pilot = production_pilot_candidates(config_path)
+    assert _filesystem_snapshot(output_root) == before_candidate_inspection
+    assert pilot.tuning_seed == plan.seeds.stages.tuning[0]
+    assert pilot.erm.method_id == "erm"
+    assert pilot.grit_nonzero_rank.method_id == "grit"
+    assert pilot.grit_nonzero_rank.requested_rank is not None
+    assert pilot.grit_nonzero_rank.requested_rank > 0
+
+    class _ManifestIdentity:
+        def canonical_digest(self) -> str:
+            return plan.resolved_config.lineage.feature_cache_manifest_digest
+
+    features = torch.arange(4 * 512, dtype=torch.float32).reshape(4, 512)
+    labels = torch.tensor((0, 1, 0, 1), dtype=torch.int64)
+
+    def table(name: str) -> FeatureTable:
+        return FeatureTable(
+            name=name,
+            role="pair_projection",
+            source_ids=tuple(f"source:{index}" for index in range(4)),
+            features=features + (1.0 if name.endswith("green") else 0.0),
+            digits=labels,
+            clean_labels=labels,
+            targets=labels,
+            colors=labels,
+        )
+
+    class _TuningOnlyCache:
+        manifest = _ManifestIdentity()
+
+        def pair_tables(self) -> tuple[FeatureTable, FeatureTable]:
+            return table("oracle_pair_red"), table("oracle_pair_green")
+
+    class _PairIdentity:
+        def canonical_digest(self) -> str:
+            return plan.resolved_config.lineage.pair_manifest_digest
+
+    cache_loads: list[bool] = []
+
+    def fake_cache_loader(
+        _plan: SearchPlan, *, tuning_only: bool = False
+    ) -> _TuningOnlyCache:
+        cache_loads.append(tuning_only)
+        return _TuningOnlyCache()
+
+    train_calls: list[str] = []
+
+    def fake_train(
+        _cache: object, _runtime: object, task: SearchRunTask
+    ) -> SimpleNamespace:
+        train_calls.append(task.task_id)
+        completed = _cmnist_executor(plan, [])(task, tmp_path)
+        assert isinstance(completed, CmnistCompletedStageRun)
+        return SimpleNamespace(validation_metrics=completed.validation_metrics)
+
+    def fake_plan(_path: Path) -> SearchPlan:
+        return plan
+
+    def fake_pair_manifest(_plan: SearchPlan) -> _PairIdentity:
+        return _PairIdentity()
+
+    monkeypatch.setattr("grit.production_search.plan_production_search", fake_plan)
+    monkeypatch.setattr("grit.production_search._load_cmnist_cache", fake_cache_loader)
+    monkeypatch.setattr(
+        "grit.production_search._cmnist_pair_manifest", fake_pair_manifest
+    )
+    monkeypatch.setattr("grit.production_search._train_cmnist_task", fake_train)
+
+    for candidate in (pilot.erm, pilot.grit_nonzero_rank):
+        result = run_production_search(
+            config_path,
+            ProductionExecutionLimits(
+                stop_after="tuning",
+                method=candidate.method_id,
+                candidate_ids=(candidate.candidate_id,),
+                tuning_seed=pilot.tuning_seed,
+                max_new_runs=1,
+            ),
+        )
+        assert isinstance(result, ProductionSearchStatus)
+        assert result.phase == "tuning"
+
+    assert len(train_calls) == 2
+    assert cache_loads == [True, True]
+    projection_path = (
+        Path(plan.resolved_config.output_root)
+        / "projections"
+        / f"grit-rank-{pilot.grit_nonzero_rank.requested_rank}.json"
+    )
+    assert projection_path.is_file()
+
+    repeated = run_production_search(
+        config_path,
+        ProductionExecutionLimits(
+            stop_after="tuning",
+            method="grit",
+            candidate_ids=(pilot.grit_nonzero_rank.candidate_id,),
+            tuning_seed=pilot.tuning_seed,
+            max_new_runs=1,
+        ),
+    )
+    assert isinstance(repeated, ProductionSearchStatus)
+    assert len(train_calls) == 2
+    assert not (output_root / "selection").exists()
+    assert not (output_root / "summaries").exists()
+    assert not (output_root / "experiment-index.json").exists()
+    assert not tuple(output_root.rglob("final-result.json"))
+
+
+def test_waterbirds_real_plan_pilot_uses_same_bounded_lifecycle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    weights = _waterbirds_weight_spec()
+    config_path, plan = _write_stored_plan_fixture(
+        tmp_path,
+        "waterbirds_cf",
+        adjusted_weight_spec_digest=weights.canonical_digest(),
+    )
+    pilot = production_pilot_candidates(config_path)
+
+    class _ManifestIdentity:
+        def canonical_digest(self) -> str:
+            return plan.resolved_config.lineage.feature_cache_manifest_digest
+
+    class _TuningOnlyCache:
+        manifest = _ManifestIdentity()
+
+    class _PairIdentity:
+        def canonical_digest(self) -> str:
+            return plan.resolved_config.lineage.pair_manifest_digest
+
+    pair_identity = _PairIdentity()
+    projection_calls: list[int] = []
+    train_calls: list[str] = []
+
+    def fake_plan(_path: Path) -> SearchPlan:
+        return plan
+
+    def fake_cache(
+        _plan: SearchPlan, *, tuning_only: bool = False
+    ) -> _TuningOnlyCache:
+        assert tuning_only is True
+        return _TuningOnlyCache()
+
+    def fake_projection(
+        _cache: object,
+        _pairs: object,
+        *,
+        requested_rank: int,
+        relative_singular_value_tolerance: float,
+    ) -> FittedLinearProjection:
+        projection_calls.append(requested_rank)
+        return fit_linear_projection(
+            torch.eye(4, 512, dtype=torch.float64),
+            torch.zeros((4, 512), dtype=torch.float64),
+            requested_rank=requested_rank,
+            pair_manifest_digest=plan.resolved_config.lineage.pair_manifest_digest,
+            feature_cache_manifest_digest=(
+                plan.resolved_config.lineage.feature_cache_manifest_digest
+            ),
+            relative_singular_value_tolerance=(
+                relative_singular_value_tolerance
+            ),
+        )
+
+    def fake_train(
+        _cache: object,
+        _weights: object,
+        _runtime: object,
+        task: SearchRunTask,
+    ) -> SimpleNamespace:
+        train_calls.append(task.task_id)
+        completed = _waterbirds_stage_run(task, weights)
+        return SimpleNamespace(validation_metrics=completed.validation_metrics)
+
+    def fake_dataset(_plan: SearchPlan) -> object:
+        return object()
+
+    def fake_pair(_plan: SearchPlan) -> _PairIdentity:
+        return pair_identity
+
+    def fake_weights(_dataset: object) -> WaterbirdsAdjustedWeightSpec:
+        return weights
+
+    monkeypatch.setattr("grit.production_search.plan_production_search", fake_plan)
+    monkeypatch.setattr(
+        "grit.production_waterbirds_search._dataset_manifest", fake_dataset
+    )
+    monkeypatch.setattr(
+        "grit.production_waterbirds_search._pair_manifest", fake_pair
+    )
+    monkeypatch.setattr("grit.production_waterbirds_search._load_cache", fake_cache)
+    monkeypatch.setattr(
+        "grit.production_waterbirds_search.mint_waterbirds_adjusted_weight_spec",
+        fake_weights,
+    )
+    monkeypatch.setattr(
+        "grit.production_waterbirds_search.fit_waterbirds_oracle_projection",
+        fake_projection,
+    )
+    monkeypatch.setattr("grit.production_waterbirds_search._train_task", fake_train)
+
+    for candidate in (pilot.erm, pilot.grit_nonzero_rank):
+        result = run_production_search(
+            config_path,
+            ProductionExecutionLimits(
+                stop_after="tuning",
+                method=candidate.method_id,
+                candidate_ids=(candidate.candidate_id,),
+                tuning_seed=pilot.tuning_seed,
+                max_new_runs=1,
+            ),
+        )
+        assert isinstance(result, ProductionSearchStatus)
+        assert result.phase == "tuning"
+
+    assert len(train_calls) == 2
+    assert projection_calls == [pilot.grit_nonzero_rank.requested_rank]
+    output_root = Path(plan.resolved_config.output_root)
+    assert not (output_root / "selection").exists()
+    assert not (output_root / "summaries").exists()
+    assert not (output_root / "experiment-index.json").exists()
+
+
+def test_search_cli_passes_no_limits_for_unrestricted_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from grit.cli.search import main
+
+    observed: list[ProductionExecutionLimits | None] = []
+
+    class _Summary:
+        schema_version = "summary/v1"
+        plan_digest = "sha256:plan"
+
+    def fake_run(
+        _path: Path,
+        limits: ProductionExecutionLimits | None = None,
+    ) -> _Summary:
+        observed.append(limits)
+        return _Summary()
+
+    monkeypatch.setattr("grit.cli.search.run_production_search", fake_run)
+    assert main(("run", "config.yaml")) == 0
+    assert observed == [None]
+
+
+def test_search_cli_constructs_bounded_tuning_controls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from grit.cli.search import main
+
+    observed: list[ProductionExecutionLimits | None] = []
+
+    def fake_run(
+        _path: Path,
+        limits: ProductionExecutionLimits | None = None,
+    ) -> ProductionSearchStatus:
+        observed.append(limits)
+        return ProductionSearchStatus(
+            schema_version="grit.production-search-status/v1",
+            dataset="cmnist",
+            plan_digest="sha256:plan",
+            phase="tuning",
+            tuning_expected=1248,
+            tuning_complete=2,
+            confirmation_expected=0,
+            confirmation_complete=0,
+            frozen_winner_count=0,
+            final_expected=0,
+            final_complete=0,
+        )
+
+    monkeypatch.setattr("grit.cli.search.run_production_search", fake_run)
+    assert (
+        main(
+            (
+                "run",
+                "config.yaml",
+                "--stop-after",
+                "tuning",
+                "--candidate-id",
+                "candidate:erm",
+                "--candidate-id",
+                "candidate:grit",
+                "--tuning-seed",
+                "101",
+                "--max-new-runs",
+                "2",
+            )
+        )
+        == 0
+    )
+    assert observed == [
+        ProductionExecutionLimits(
+            stop_after="tuning",
+            candidate_ids=("candidate:erm", "candidate:grit"),
+            tuning_seed=101,
+            max_new_runs=2,
+        )
+    ]

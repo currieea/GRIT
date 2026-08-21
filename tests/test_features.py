@@ -24,6 +24,7 @@ from grit.features import (
     FeatureCacheValidationError,
     OfficialOpenAiClipEncoder,
     load_cmnist_feature_cache,
+    load_cmnist_tuning_feature_cache,
     prepare_cmnist_feature_cache,
 )
 
@@ -180,6 +181,31 @@ def test_fake_feature_cache_is_canonical_validated_and_offline(tmp_path: Path) -
     red, green = cache.pair_tables()
     assert red.source_ids == green.source_ids
     assert not torch.equal(red.features, green.features)
+
+
+def test_tuning_cache_does_not_materialize_or_expose_final_table(
+    tmp_path: Path,
+) -> None:
+    construction, pairs = _construction_and_pairs()
+    root = tmp_path / "tuning"
+    manifest = prepare_cmnist_feature_cache(
+        construction,
+        pairs,
+        DeterministicFakeEncoder(seed=13),
+        root,
+        normalization="none",
+    )
+    tuning = load_cmnist_tuning_feature_cache(
+        root,
+        expected_source_manifest_digest=manifest.source_manifest_digest,
+        expected_pair_manifest_digest=manifest.pair_manifest_digest,
+        expected_normalization="none",
+    )
+    assert len(tuning.training_tables()) == 2
+    assert len(tuning.validation_tables()) == 3
+    assert len(tuning.pair_tables()) == 2
+    assert not hasattr(tuning, "issue_final_handle")
+    assert not hasattr(tuning, "open_final_table")
 
 
 def test_l2_cache_is_explicit_and_cannot_mix_with_primary(tmp_path: Path) -> None:

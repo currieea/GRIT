@@ -32,7 +32,12 @@ from grit.config import (
     OrdinaryExperimentConfig,
     OrdinarySelectionConfig,
 )
-from grit.features import CmnistFeatureCache, load_cmnist_feature_cache
+from grit.features import (
+    CmnistFeatureCache,
+    CmnistTuningFeatureCache,
+    load_cmnist_feature_cache,
+    load_cmnist_tuning_feature_cache,
+)
 from grit.lifecycle import open_final_test, record_final_accuracy
 from grit.projection import FittedLinearProjection, fit_linear_projection
 from grit.results import ArtifactReference, OrdinaryRunResult, SucceededStatus
@@ -64,6 +69,7 @@ from grit.search_scheduler import (
     CompletedStageRun,
     LocalRunScheduler,
     SearchRunTask,
+    StageExecutor,
     WaterbirdsCompletedStageRun,
     make_final_search_task,
     make_search_task,
@@ -125,6 +131,28 @@ class ProductionSearchStatus(StrictBoundaryModel):
 
 
 @dataclass(frozen=True, slots=True)
+class ProductionExecutionLimits:
+    """Operational task limits that never participate in scientific identity."""
+
+    stop_after: Literal["tuning"] | None = None
+    method: Literal["erm", "grit", "all"] = "all"
+    candidate_ids: tuple[str, ...] = ()
+    tuning_seed: int | None = None
+    max_new_runs: int | None = None
+
+
+class PilotCandidateSelection(StrictBoundaryModel):
+    """Read-only deterministic presentation of the two recommended pilot tasks."""
+
+    schema_version: Literal["grit.production-pilot-candidates/v1"]
+    dataset: Literal["cmnist", "waterbirds_cf"]
+    plan_digest: StrictStr = Field(min_length=1)
+    tuning_seed: StrictInt
+    erm: SearchCandidate
+    grit_nonzero_rank: SearchCandidate
+
+
+@dataclass(frozen=True, slots=True)
 class _CmnistRuntimeCandidate:
     planned: SearchCandidate
     config: OrdinaryExperimentConfig
@@ -140,15 +168,41 @@ def plan_production_search(config_path: Path) -> SearchPlan:
 
 def run_production_search(
     config_path: Path,
-) -> CmnistProductionSummary | WaterbirdsProductionSummary:
+    limits: ProductionExecutionLimits | None = None,
+) -> CmnistProductionSummary | WaterbirdsProductionSummary | ProductionSearchStatus:
     """Run or continue the dataset-specific search selected by strict YAML."""
 
     plan = plan_production_search(config_path)
+    checked_limits = validate_execution_limits(plan, limits)
     if isinstance(plan.resolved_config.config, CmnistProductionSearchConfig):
-        return _run_cmnist_search(plan)
+        return _run_cmnist_search(plan, checked_limits)
     from grit.production_waterbirds_search import run_waterbirds_production_search
 
-    return run_waterbirds_production_search(plan)
+    return run_waterbirds_production_search(plan, checked_limits)
+
+
+def production_pilot_candidates(config_path: Path) -> PilotCandidateSelection:
+    """Present canonical ERM/nonzero-GRIT pilot candidates from an existing plan."""
+
+    plan = _load_existing_search_plan(config_path)
+    erm = next(
+        candidate for candidate in plan.candidates if candidate.method_id == "erm"
+    )
+    grit = next(
+        candidate
+        for candidate in plan.candidates
+        if candidate.method_id == "grit"
+        and candidate.requested_rank is not None
+        and candidate.requested_rank > 0
+    )
+    return PilotCandidateSelection(
+        schema_version="grit.production-pilot-candidates/v1",
+        dataset=plan.dataset,
+        plan_digest=plan.canonical_digest(),
+        tuning_seed=plan.seeds.stages.tuning[0],
+        erm=erm,
+        grit_nonzero_rank=grit,
+    )
 
 
 def production_search_status(config_path: Path) -> ProductionSearchStatus:
@@ -157,7 +211,7 @@ def production_search_status(config_path: Path) -> ProductionSearchStatus:
     plan = _load_existing_search_plan(config_path)
     if isinstance(plan.resolved_config.config, CmnistProductionSearchConfig):
         return _cmnist_status(plan)
-    return _waterbirds_status(plan)
+    return waterbirds_status_from_plan(plan)
 
 
 def _load_existing_search_plan(config_path: Path) -> SearchPlan:
@@ -204,13 +258,115 @@ def _load_existing_search_plan(config_path: Path) -> SearchPlan:
     return stored_plan
 
 
-def _run_cmnist_search(plan: SearchPlan) -> CmnistProductionSummary:
+def validate_execution_limits(
+    plan: SearchPlan,
+    limits: ProductionExecutionLimits | None,
+) -> ProductionExecutionLimits | None:
+    if limits is None or limits == ProductionExecutionLimits():
+        return None
+    if limits.stop_after not in {None, "tuning"}:
+        raise ValueError("stop_after supports only the tuning boundary")
+    if limits.method not in {"erm", "grit", "all"}:
+        raise ValueError("method must be erm, grit, or all")
+    if limits.max_new_runs is not None and (
+        isinstance(limits.max_new_runs, bool)
+    ):
+        raise ValueError("max_new_runs must be an integer")
+    if limits.max_new_runs is not None and limits.max_new_runs <= 0:
+        raise ValueError("max_new_runs must be positive")
+    if len(limits.candidate_ids) != len(set(limits.candidate_ids)):
+        raise ValueError("candidate_id filters must be unique")
+    uses_tuning_filter = (
+        limits.method != "all"
+        or bool(limits.candidate_ids)
+        or limits.tuning_seed is not None
+    )
+    if uses_tuning_filter and limits.stop_after != "tuning":
+        raise ValueError(
+            "method, candidate, and tuning-seed filters require stop_after=tuning"
+        )
+    by_id = {candidate.candidate_id: candidate for candidate in plan.candidates}
+    unknown = tuple(
+        candidate_id
+        for candidate_id in limits.candidate_ids
+        if candidate_id not in by_id
+    )
+    if unknown:
+        raise ValueError(f"candidate IDs are not present in the plan: {unknown}")
+    if limits.method != "all":
+        wrong_method = tuple(
+            candidate_id
+            for candidate_id in limits.candidate_ids
+            if by_id[candidate_id].method_id != limits.method
+        )
+        if wrong_method:
+            raise ValueError(
+                "candidate IDs do not agree with the method filter: "
+                f"{wrong_method}"
+            )
+    if (
+        limits.tuning_seed is not None
+        and (
+            isinstance(limits.tuning_seed, bool)
+        )
+    ):
+        raise ValueError("tuning_seed must be an integer")
+    if (
+        limits.tuning_seed is not None
+        and limits.tuning_seed not in plan.seeds.stages.tuning
+    ):
+        raise ValueError("tuning_seed is not one of the configured tuning seeds")
+    return limits
+
+
+def limited_tuning_candidates(
+    plan: SearchPlan,
+    limits: ProductionExecutionLimits | None,
+) -> tuple[SearchCandidate, ...]:
+    if limits is None or limits.stop_after is None:
+        return plan.candidates
+    selected_ids = set(limits.candidate_ids)
+    candidates = tuple(
+        candidate
+        for candidate in plan.candidates
+        if (limits.method == "all" or candidate.method_id == limits.method)
+        and (not selected_ids or candidate.candidate_id in selected_ids)
+    )
+    if not candidates:
+        raise ValueError("tuning filters select no canonical plan candidates")
+    return candidates
+
+
+def _run_cmnist_search(
+    plan: SearchPlan,
+    limits: ProductionExecutionLimits | None = None,
+) -> CmnistProductionSummary | ProductionSearchStatus:
     config = _cmnist_search_config(plan)
     output_root = Path(plan.resolved_config.output_root)
-    cache = _load_cmnist_cache(plan)
+    cache = _load_cmnist_cache(
+        plan, tuning_only=limits is not None and limits.stop_after == "tuning"
+    )
     pair_manifest = _cmnist_pair_manifest(plan)
     projections: dict[int, FittedLinearProjection] = {}
     scheduler = LocalRunScheduler(output_root, plan)
+    remaining = None if limits is None else limits.max_new_runs
+
+    def run_stage(
+        tasks: tuple[SearchRunTask, ...],
+        execute: StageExecutor,
+    ) -> tuple[CompletedStageRun, ...]:
+        nonlocal remaining
+        if limits is None:
+            return scheduler.run_tasks(tasks, execute)
+        allowance = len(tasks) if remaining is None else remaining
+        results, newly_executed = scheduler.run_tasks_bounded(
+            tasks,
+            execute,
+            max_new_runs=allowance,
+        )
+        if remaining is not None:
+            remaining -= newly_executed
+        return results
 
     def runtime_candidate(candidate: SearchCandidate) -> _CmnistRuntimeCandidate:
         projection: FittedLinearProjection | None = None
@@ -264,15 +420,25 @@ def _run_cmnist_search(plan: SearchPlan) -> CmnistProductionSummary:
             checkpoint_decisions=decisions,
         )
 
+    tuning_candidates = limited_tuning_candidates(plan, limits)
+    tuning_seeds = (
+        config.seeds.stages.tuning
+        if limits is None or limits.tuning_seed is None
+        else (limits.tuning_seed,)
+    )
     tuning_tasks = tuple(
         make_search_task(plan, candidate, SeedStage.TUNING, seed)
-        for candidate in plan.candidates
-        for seed in config.seeds.stages.tuning
+        for candidate in tuning_candidates
+        for seed in tuning_seeds
     )
     tuning_runs = cast(
         tuple[CmnistCompletedStageRun, ...],
-        scheduler.run_tasks(tuning_tasks, execute_pre_final),
+        run_stage(tuning_tasks, execute_pre_final),
     )
+    if limits is not None and (
+        limits.stop_after == "tuning" or len(tuning_runs) != len(tuning_tasks)
+    ):
+        return _cmnist_status(plan)
     finalists, unions = _cmnist_finalists(plan, tuning_runs, output_root)
     candidates_by_id = {item.candidate_id: item for item in plan.candidates}
     confirmation_ids = {
@@ -291,11 +457,15 @@ def _run_cmnist_search(plan: SearchPlan) -> CmnistProductionSummary:
     )
     confirmation_runs = cast(
         tuple[CmnistCompletedStageRun, ...],
-        scheduler.run_tasks(confirmation_tasks, execute_pre_final),
+        run_stage(confirmation_tasks, execute_pre_final),
     )
+    if limits is not None and len(confirmation_runs) != len(confirmation_tasks):
+        return _cmnist_status(plan)
     winners = _freeze_cmnist_winners(
         plan, finalists, confirmation_runs, output_root
     )
+    if isinstance(cache, CmnistTuningFeatureCache):
+        raise AssertionError("tuning-only CMNIST execution reached final stage")
 
     def execute_final(task: SearchRunTask, run_root: Path) -> CompletedStageRun:
         selector = CmnistSelector(task.selector)
@@ -389,8 +559,10 @@ def _run_cmnist_search(plan: SearchPlan) -> CmnistProductionSummary:
     )
     final_runs = cast(
         tuple[CmnistCompletedStageRun, ...],
-        scheduler.run_tasks(final_tasks, execute_final),
+        run_stage(final_tasks, execute_final),
     )
+    if limits is not None:
+        return _cmnist_status(plan)
     summary = _cmnist_summary(plan, finalists, winners, final_runs)
     persist_canonical_artifact(
         output_root / "summaries" / "cmnist-summary.json", summary
@@ -600,7 +772,7 @@ def materialize_cmnist_candidate_config(
 
 
 def _train_cmnist_task(
-    cache: CmnistFeatureCache,
+    cache: CmnistFeatureCache | CmnistTuningFeatureCache,
     runtime: _CmnistRuntimeCandidate,
     task: SearchRunTask,
 ) -> TrainedLinearProbeRun:
@@ -786,12 +958,21 @@ def _cmnist_summary(
     )
 
 
-def _load_cmnist_cache(plan: SearchPlan) -> CmnistFeatureCache:
+def _load_cmnist_cache(
+    plan: SearchPlan,
+    *,
+    tuning_only: bool = False,
+) -> CmnistFeatureCache | CmnistTuningFeatureCache:
     paths = {
         item.kind: Path(item.path)
         for item in plan.resolved_config.input_artifacts
     }
-    cache = load_cmnist_feature_cache(
+    loader = (
+        load_cmnist_tuning_feature_cache
+        if tuning_only
+        else load_cmnist_feature_cache
+    )
+    cache = loader(
         paths["feature_manifest"].parent,
         expected_source_manifest_digest=(
             plan.resolved_config.lineage.dataset_manifest_digest
@@ -1013,7 +1194,7 @@ def _cmnist_status(plan: SearchPlan) -> ProductionSearchStatus:
     )
 
 
-def _waterbirds_status(plan: SearchPlan) -> ProductionSearchStatus:
+def waterbirds_status_from_plan(plan: SearchPlan) -> ProductionSearchStatus:
     config = plan.resolved_config.config
     if not isinstance(config, WaterbirdsProductionSearchConfig):
         raise TypeError("Waterbirds status received another dataset")
