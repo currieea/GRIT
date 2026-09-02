@@ -10,7 +10,8 @@ boundaries and after material decisions; do not use it as a raw command transcri
 - Legacy implementation: Preserved and statically characterized; runtime reproduction deferred
 - New implementation: Reviewed CMNIST and Waterbirds-CF vertical slices, an implemented
   hermetically verified local production-search path, and explicit single-GPU CUDA 12.8
-  feature preparation; no real scientific pilot or grid has been executed
+  feature preparation verified on a fleet RTX 3090; no real scientific pilot or grid has
+  been executed
 
 ## Completed checkpoints
 
@@ -782,14 +783,17 @@ Verification:
   162 passed; the one real-CUDA adapter test skipped on the CPU-only development host.
 - Both required non-reportable smoke commands passed from temporary configurations and
   outputs under `/tmp`; pre-existing ignored smoke outputs were untouched.
-- The fleet driver/GPU audit succeeded, but the real-CUDA test remains pending because the
-  current uncommitted source was not transferred to the remote server. No dataset, official
-  CLIP weight, reportable feature cache, training pilot, or grid was produced.
+- On `avocado`, `CUDA_VISIBLE_DEVICES=0` exposed exactly one NVIDIA GeForce RTX 3090 to
+  PyTorch 2.11.0+cu128 with CUDA runtime 12.8. The locked `cu128` environment completed the
+  full rewrite suite with 163 passing tests in 63.54 seconds, including the real-CUDA
+  adapter test that moves float32 inputs to CUDA and returns canonical CPU features.
+- The server CUDA verification uses a test-double CLIP model and does not constitute an
+  official-weight or dataset preparation run. No dataset, official CLIP weight, reportable
+  feature cache, training pilot, or grid was produced.
 
 ## Next proposed checkpoint
 
-Run the focused CUDA adapter check in the locked `cu128` environment on one fleet GPU,
-then prepare approved real artifacts and run the documented two-task CPU training pilot.
-Use its timing and memory evidence before deciding on GPU training or cluster scheduling.
-Do not start Milestone 6B estimated pairs, GroupDRO, production W&B, or a reportable full
-grid without that review.
+Prepare approved real artifacts, then run the documented two-task CPU training pilot. Use
+its timing and memory evidence before deciding on GPU training or cluster scheduling. Do
+not start Milestone 6B estimated pairs, GroupDRO, production W&B, or a reportable full grid
+without that review.
