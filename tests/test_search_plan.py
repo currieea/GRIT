@@ -29,6 +29,7 @@ from grit.features import (
     ArrayFileManifest,
     CmnistFeatureCacheManifest,
     EncoderIdentity,
+    FeatureExtractionRuntime,
     FeatureTable,
     FeatureTableManifest,
 )
@@ -258,13 +259,13 @@ def resolved_search_fixture(
     schema_versions = (
         (
             "grit.cmnist-dataset/v1",
-            "grit.cmnist-features/v1",
+            "grit.cmnist-features/v2",
             "grit.cmnist-oracle-pairs/v2",
         )
         if dataset == "cmnist"
         else (
             "grit.waterbirds-cf-dataset/v2",
-            "grit.waterbirds-features/v1",
+            "grit.waterbirds-features/v2",
             "grit.waterbirds-oracle-pairs/v2",
         )
     )
@@ -582,7 +583,7 @@ def _write_manifest_only_cmnist_production(
             )
         )
     feature = CmnistFeatureCacheManifest(
-        schema_version="grit.cmnist-features/v1",
+        schema_version="grit.cmnist-features/v2",
         dataset_id="cmnist",
         source_manifest_digest=dataset_digest,
         pair_manifest_digest=pairs.canonical_digest(),
@@ -601,6 +602,19 @@ def _write_manifest_only_cmnist_production(
                 "d05afc436d78f1c48dc0dbf8e5980a9d471f35f6"
             ),
             raw_output_dimension=512,
+        ),
+        extraction_runtime=FeatureExtractionRuntime(
+            requested_device="cpu",
+            resolved_device="cpu",
+            computation_dtype="torch.float32",
+            deterministic_algorithms=True,
+            tf32_enabled=False,
+            mixed_precision=False,
+            batch_size=256,
+            torch_version=str(torch.__version__),
+            cuda_runtime_version=None,
+            device_name="cpu",
+            compute_capability=None,
         ),
         normalization="none",
         feature_dimension=512,
@@ -796,6 +810,23 @@ def test_plan_only_verifies_official_manifest_lineage_without_training(
     dataset_path, feature_path, pair_path = (
         _write_manifest_only_cmnist_production(tmp_path / "prepared")
     )
+    cuda_feature_payload = cast(
+        dict[str, object], json.loads(feature_path.read_text(encoding="utf-8"))
+    )
+    cuda_feature_payload["extraction_runtime"] = {
+        "requested_device": "cuda",
+        "resolved_device": "cuda:0",
+        "computation_dtype": "torch.float32",
+        "deterministic_algorithms": True,
+        "tf32_enabled": False,
+        "mixed_precision": False,
+        "batch_size": 128,
+        "torch_version": "2.11.0+cu128",
+        "cuda_runtime_version": "12.8",
+        "device_name": "NVIDIA RTX A5000",
+        "compute_capability": [8, 6],
+    }
+    feature_path.write_text(json.dumps(cuda_feature_payload), encoding="utf-8")
     config = _config()
     payload = config.model_dump(mode="json")
     payload["artifacts"] = {
@@ -813,6 +844,7 @@ def test_plan_only_verifies_official_manifest_lineage_without_training(
     )
     plan = plan_production_search(config_path)
     assert len(plan.candidates) == 416
+    assert plan.resolved_config.lineage.feature_cache_manifest_digest
     assert plan_production_search(config_path) == plan
     assert not (tmp_path / "planned" / "runs").exists()
     assert not tuple((tmp_path / "planned").rglob("*checkpoint*"))

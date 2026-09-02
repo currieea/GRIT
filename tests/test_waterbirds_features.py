@@ -10,7 +10,7 @@ import torch
 from PIL import Image
 from pydantic import ValidationError
 
-from grit.features import EncoderIdentity
+from grit.features import EncoderIdentity, FeatureExtractionRuntime
 from grit.projection import ProjectionDiagnostics
 from grit.waterbirds import (
     WaterbirdsConstruction,
@@ -159,6 +159,10 @@ def test_feature_preparation_writes_nothing_after_encoder_failure(
         @property
         def identity(self) -> EncoderIdentity:
             return DeterministicFakeWaterbirdsEncoder().identity
+
+        @property
+        def extraction_runtime(self) -> FeatureExtractionRuntime:
+            return DeterministicFakeWaterbirdsEncoder().extraction_runtime
 
         def encode_pil(self, images: tuple[Image.Image, ...]) -> torch.Tensor:
             return torch.zeros((len(images), 2), dtype=torch.float32)

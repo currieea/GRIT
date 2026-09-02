@@ -336,8 +336,11 @@ Raw-image/end-to-end training is deferred. It requires a separate future protoco
 must not be aggregated with frozen-feature results.
 
 The feature manifest records encoder package and version, model/checkpoint identity and
-hash, preprocessing, normalization mode, source image manifest hash, output shape,
-dtype, device/precision details, and feature-file hash.
+hash, preprocessing, normalization mode, source image manifest hash, output shape, dtype,
+device/precision details, batch size, PyTorch/CUDA runtime, GPU identity/capability, and
+feature-file hash. The initial supported CUDA preparation profile uses deterministic
+single-GPU float32 computation with TF32 and mixed precision disabled. Training remains
+CPU-only; CPU and CUDA feature caches are distinct attributable artifacts.
 
 ## Projection
 
@@ -637,7 +640,8 @@ are not valid ordinary selections and numerical parity is not an exit requiremen
 - Approve the conditional/random sampling algorithm and nearest-neighbor distance/reuse
   policy.
 - Set method-specific search ranges for GroupDRO and the estimated-pair variants.
-- Pin supported Python, PyTorch, CLIP, CUDA, and deterministic-operation versions.
+- Pin any upper Python and training-accelerator versions beyond the initial PyTorch
+  2.11.0/CUDA 12.8 feature-preparation profile.
 
 ## Approval checklist
 

@@ -23,6 +23,13 @@ def _parser() -> argparse.ArgumentParser:
     _ = parser.add_argument("--construction-seed", type=int, default=0)
     _ = parser.add_argument("--normalization", choices=("none", "l2"), default="none")
     _ = parser.add_argument(
+        "--feature-device",
+        choices=("cpu", "cuda"),
+        default="cpu",
+        help="Device used only for frozen CLIP feature extraction.",
+    )
+    _ = parser.add_argument("--clip-batch-size", type=int, default=256)
+    _ = parser.add_argument(
         "--allow-clip-download",
         action="store_true",
         help="Explicitly permit only the pinned official CLIP weight download.",
@@ -42,6 +49,8 @@ def main() -> None:
         construction_seed=args.construction_seed,
         normalization=args.normalization,
         allow_clip_download=args.allow_clip_download,
+        feature_device=args.feature_device,
+        clip_batch_size=args.clip_batch_size,
     )
 
 

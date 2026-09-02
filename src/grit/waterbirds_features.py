@@ -13,7 +13,11 @@ from numpy.typing import NDArray
 from PIL import Image
 from pydantic import Field, StrictBool, StrictInt, StrictStr, model_validator
 
-from grit.features import EncoderIdentity, PilImageEncoder
+from grit.features import (
+    EncoderIdentity,
+    FeatureExtractionRuntime,
+    PilImageEncoder,
+)
 from grit.projection import FittedLinearProjection, fit_linear_projection
 from grit.schemas import StrictBoundaryModel, canonical_digest_value
 from grit.waterbirds import (
@@ -73,6 +77,22 @@ class DeterministicFakeWaterbirdsEncoder:
             raw_output_dimension=FEATURE_DIMENSION,
         )
 
+    @property
+    def extraction_runtime(self) -> FeatureExtractionRuntime:
+        return FeatureExtractionRuntime(
+            requested_device="cpu",
+            resolved_device="cpu",
+            computation_dtype="torch.float32",
+            deterministic_algorithms=True,
+            tf32_enabled=False,
+            mixed_precision=False,
+            batch_size=None,
+            torch_version=str(torch.__version__),
+            cuda_runtime_version=None,
+            device_name="cpu",
+            compute_capability=None,
+        )
+
     def encode_pil(self, images: tuple[Image.Image, ...]) -> torch.Tensor:
         if not images:
             raise ValueError("fake Waterbirds encoder input must not be empty")
@@ -118,11 +138,12 @@ class WaterbirdsFeatureFile(StrictBoundaryModel):
 
 
 class WaterbirdsFeatureCacheManifest(StrictBoundaryModel):
-    schema_version: Literal["grit.waterbirds-features/v1"]
+    schema_version: Literal["grit.waterbirds-features/v2"]
     dataset_id: Literal["waterbirds_cf"]
     dataset_manifest_digest: NonEmptyStr
     non_reportable: StrictBool
     encoder: EncoderIdentity
+    extraction_runtime: FeatureExtractionRuntime
     normalization: Normalization
     feature_dimension: Literal[512]
     feature_dtype: Literal["float32"]
@@ -147,6 +168,11 @@ class WaterbirdsFeatureCacheManifest(StrictBoundaryModel):
         roles = {record.split_role for record in self.records}
         if roles != {"training", "validation", "final_test"}:
             raise ValueError("Waterbirds feature cache must contain all split roles")
+        if (
+            self.encoder.implementation == "openai/CLIP"
+            and self.extraction_runtime.batch_size is None
+        ):
+            raise ValueError("official CLIP feature caches require a batch size")
         return self
 
 
@@ -479,13 +505,14 @@ def prepare_waterbirds_feature_cache(
         for row, record in enumerate(ordered)
     )
     manifest = WaterbirdsFeatureCacheManifest(
-        schema_version="grit.waterbirds-features/v1",
+        schema_version="grit.waterbirds-features/v2",
         dataset_id="waterbirds_cf",
         dataset_manifest_digest=dataset.canonical_digest(),
         non_reportable=(
             dataset.non_reportable or identity.implementation == "grit.synthetic"
         ),
         encoder=identity,
+        extraction_runtime=encoder.extraction_runtime,
         normalization=normalization,
         feature_dimension=FEATURE_DIMENSION,
         feature_dtype="float32",

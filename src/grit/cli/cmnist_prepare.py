@@ -21,6 +21,13 @@ def _parser() -> argparse.ArgumentParser:
         "--normalization", choices=("none", "l2"), default="none"
     )
     _ = parser.add_argument(
+        "--feature-device",
+        choices=("cpu", "cuda"),
+        default="cpu",
+        help="Device used only for frozen CLIP feature extraction.",
+    )
+    _ = parser.add_argument("--clip-batch-size", type=int, default=256)
+    _ = parser.add_argument(
         "--allow-download",
         action="store_true",
         help="Explicitly permit torchvision MNIST and official CLIP downloads.",
@@ -38,6 +45,8 @@ def main() -> None:
         pair_seed=args.pair_seed,
         normalization=args.normalization,
         allow_download=args.allow_download,
+        feature_device=args.feature_device,
+        clip_batch_size=args.clip_batch_size,
     )
 
 

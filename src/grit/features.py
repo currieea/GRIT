@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Literal, Protocol, TypeAlias, cast
@@ -43,7 +44,9 @@ FEATURE_DIMENSION = 512
 
 NonEmptyStr: TypeAlias = Annotated[StrictStr, Field(min_length=1)]
 NonNegativeInt: TypeAlias = Annotated[StrictInt, Field(ge=0)]
+PositiveStrictInt: TypeAlias = Annotated[StrictInt, Field(gt=0)]
 Normalization: TypeAlias = Literal["none", "l2"]
+FeatureDevice: TypeAlias = Literal["cpu", "cuda"]
 TableRole: TypeAlias = Literal[
     "training", "validation", "final_test", "pair_projection"
 ]
@@ -65,9 +68,47 @@ class EncoderIdentity(StrictBoundaryModel):
     raw_output_dimension: NonNegativeInt
 
 
+class FeatureExtractionRuntime(StrictBoundaryModel):
+    """Resolved execution provenance for one frozen-feature cache."""
+
+    requested_device: FeatureDevice
+    resolved_device: NonEmptyStr
+    computation_dtype: Literal["torch.float32"]
+    deterministic_algorithms: Literal[True]
+    tf32_enabled: Literal[False]
+    mixed_precision: Literal[False]
+    batch_size: PositiveStrictInt | None
+    torch_version: NonEmptyStr
+    cuda_runtime_version: NonEmptyStr | None
+    device_name: NonEmptyStr
+    compute_capability: tuple[NonNegativeInt, NonNegativeInt] | None
+
+    @model_validator(mode="after")
+    def _validate_device_details(self) -> FeatureExtractionRuntime:
+        if self.requested_device == "cpu":
+            if (
+                self.resolved_device != "cpu"
+                or self.cuda_runtime_version is not None
+                or self.compute_capability is not None
+                or self.device_name != "cpu"
+            ):
+                raise ValueError("CPU feature runtime contains CUDA details")
+        elif (
+            not self.resolved_device.removeprefix("cuda:").isdigit()
+            or self.cuda_runtime_version is None
+            or self.compute_capability is None
+            or self.device_name == "cpu"
+        ):
+            raise ValueError("CUDA feature runtime is missing resolved CUDA details")
+        return self
+
+
 class ImageEncoder(Protocol):
     @property
     def identity(self) -> EncoderIdentity: ...
+
+    @property
+    def extraction_runtime(self) -> FeatureExtractionRuntime: ...
 
     def encode(self, images: torch.Tensor) -> torch.Tensor: ...
 
@@ -76,11 +117,16 @@ class PilImageEncoder(Protocol):
     @property
     def identity(self) -> EncoderIdentity: ...
 
+    @property
+    def extraction_runtime(self) -> FeatureExtractionRuntime: ...
+
     def encode_pil(self, images: tuple[Image.Image, ...]) -> torch.Tensor: ...
 
 
 class _ClipModel(Protocol):
     def eval(self) -> object: ...
+
+    def float(self) -> object: ...
 
     def encode_image(self, images: torch.Tensor) -> torch.Tensor: ...
 
@@ -144,9 +190,11 @@ class OfficialOpenAiClipEncoder:
 
     weights_root: Path
     allow_download: bool
+    device: FeatureDevice = "cpu"
     batch_size: int = 256
     _model: _ClipModel | None = None
     _preprocess: _ClipPreprocess | None = None
+    _runtime: FeatureExtractionRuntime | None = None
 
     @property
     def identity(self) -> EncoderIdentity:
@@ -158,6 +206,20 @@ class OfficialOpenAiClipEncoder:
             preprocessing_identity=OPENAI_CLIP_PREPROCESSING_ID,
             raw_output_dimension=FEATURE_DIMENSION,
         )
+
+    @property
+    def extraction_runtime(self) -> FeatureExtractionRuntime:
+        _ = self._resolved_model()
+        if self._runtime is None:
+            raise AssertionError("resolved CLIP runtime disappeared")
+        return FeatureExtractionRuntime.model_validate_json(
+            self._runtime.canonical_json()
+        )
+
+    def preflight(self) -> None:
+        """Resolve the backend and weights before dataset output is written."""
+
+        _ = self._resolved_model()
 
     def encode(self, images: torch.Tensor) -> torch.Tensor:
         if images.ndim != 4 or int(images.shape[1]) != 3:
@@ -179,13 +241,16 @@ class OfficialOpenAiClipEncoder:
         if self.batch_size <= 0:
             raise ValueError("CLIP batch_size must be positive")
         model, preprocess = self._resolved_model()
+        runtime = self._runtime
+        if runtime is None:
+            raise AssertionError("resolved CLIP runtime disappeared")
         batches: list[torch.Tensor] = []
         with torch.inference_mode():
             for start in range(0, len(images), self.batch_size):
                 stop = min(start + self.batch_size, len(images))
                 inputs = torch.stack(
                     [preprocess(image.convert("RGB")) for image in images[start:stop]]
-                )
+                ).to(device=runtime.resolved_device, dtype=torch.float32)
                 batches.append(
                     model.encode_image(inputs).detach().cpu().to(torch.float32)
                 )
@@ -196,6 +261,7 @@ class OfficialOpenAiClipEncoder:
     def _resolved_model(self) -> tuple[_ClipModel, _ClipPreprocess]:
         if self._model is not None and self._preprocess is not None:
             return self._model, self._preprocess
+        resolved_device, runtime = self._resolve_runtime()
         self.weights_root.mkdir(parents=True, exist_ok=True)
         weights_path = self.weights_root / "ViT-B-32.pt"
         if not self.allow_download and not weights_path.is_file():
@@ -206,7 +272,7 @@ class OfficialOpenAiClipEncoder:
         module = cast(_ClipModule, importlib.import_module("clip"))
         model, preprocess = module.load(
             OPENAI_CLIP_MODEL,
-            device="cpu",
+            device=resolved_device,
             jit=False,
             download_root=str(self.weights_root),
         )
@@ -214,10 +280,54 @@ class OfficialOpenAiClipEncoder:
             raise FeatureCacheValidationError(
                 "official OpenAI CLIP ViT-B/32 weight digest does not match"
             )
+        _ = model.float()
         _ = model.eval()
         self._model = model
         self._preprocess = preprocess
+        self._runtime = runtime
         return model, preprocess
+
+    def _resolve_runtime(self) -> tuple[str, FeatureExtractionRuntime]:
+        if self.batch_size <= 0:
+            raise ValueError("CLIP batch_size must be positive")
+        torch.use_deterministic_algorithms(True)
+        torch.set_float32_matmul_precision("highest")
+        if self.device == "cpu":
+            return "cpu", _cpu_feature_runtime(batch_size=self.batch_size)
+
+        os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+        if not torch.cuda.is_available():
+            raise RuntimeError(
+                "CUDA feature preparation was requested but CUDA is unavailable"
+            )
+        if torch.cuda.device_count() != 1:
+            raise RuntimeError(
+                "CUDA feature preparation requires exactly one visible GPU; "
+                "set CUDA_VISIBLE_DEVICES"
+            )
+        torch.backends.cuda.matmul.allow_tf32 = False
+        torch.backends.cudnn.allow_tf32 = False
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
+        device_index = torch.cuda.current_device()
+        cuda_runtime = cast(str | None, getattr(torch.version, "cuda", None))
+        if not cuda_runtime:
+            raise RuntimeError("CUDA PyTorch build does not report a CUDA runtime")
+        capability = torch.cuda.get_device_capability(device_index)
+        resolved = f"cuda:{device_index}"
+        return resolved, FeatureExtractionRuntime(
+            requested_device="cuda",
+            resolved_device=resolved,
+            computation_dtype="torch.float32",
+            deterministic_algorithms=True,
+            tf32_enabled=False,
+            mixed_precision=False,
+            batch_size=self.batch_size,
+            torch_version=str(torch.__version__),
+            cuda_runtime_version=cuda_runtime,
+            device_name=torch.cuda.get_device_name(device_index),
+            compute_capability=(int(capability[0]), int(capability[1])),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -236,6 +346,10 @@ class DeterministicFakeEncoder:
             preprocessing_identity="identity-rgb",
             raw_output_dimension=FEATURE_DIMENSION,
         )
+
+    @property
+    def extraction_runtime(self) -> FeatureExtractionRuntime:
+        return _cpu_feature_runtime(batch_size=None)
 
     def encode(self, images: torch.Tensor) -> torch.Tensor:
         if images.ndim != 4 or int(images.shape[1]) != 3:
@@ -295,11 +409,12 @@ class FeatureTableManifest(StrictBoundaryModel):
 
 
 class CmnistFeatureCacheManifest(StrictBoundaryModel):
-    schema_version: Literal["grit.cmnist-features/v1"]
+    schema_version: Literal["grit.cmnist-features/v2"]
     dataset_id: Literal["cmnist"]
     source_manifest_digest: NonEmptyStr
     pair_manifest_digest: NonEmptyStr
     encoder: EncoderIdentity
+    extraction_runtime: FeatureExtractionRuntime
     normalization: Normalization
     feature_dimension: Literal[512]
     feature_dtype: Literal["float32"]
@@ -343,6 +458,11 @@ class CmnistFeatureCacheManifest(StrictBoundaryModel):
         )
         if not set(self.tables[6].source_ids) <= training_sources:
             raise ValueError("CMNIST cached oracle pairs must use training sources")
+        if (
+            self.encoder.implementation == "openai/CLIP"
+            and self.extraction_runtime.batch_size is None
+        ):
+            raise ValueError("official CLIP feature caches require a batch size")
         return self
 
 
@@ -484,11 +604,12 @@ def prepare_cmnist_feature_cache(
         features = _normalized_features(raw_features, normalization)
         manifests.append(_write_feature_table(output_dir, table, features))
     manifest = CmnistFeatureCacheManifest(
-        schema_version="grit.cmnist-features/v1",
+        schema_version="grit.cmnist-features/v2",
         dataset_id="cmnist",
         source_manifest_digest=construction.manifest.canonical_digest(),
         pair_manifest_digest=pairs.manifest.canonical_digest(),
         encoder=encoder.identity,
+        extraction_runtime=encoder.extraction_runtime,
         normalization=normalization,
         feature_dimension=FEATURE_DIMENSION,
         feature_dtype="float32",
@@ -498,6 +619,22 @@ def prepare_cmnist_feature_cache(
         manifest.canonical_json() + "\n", encoding="utf-8"
     )
     return manifest
+
+
+def _cpu_feature_runtime(*, batch_size: int | None) -> FeatureExtractionRuntime:
+    return FeatureExtractionRuntime(
+        requested_device="cpu",
+        resolved_device="cpu",
+        computation_dtype="torch.float32",
+        deterministic_algorithms=True,
+        tf32_enabled=False,
+        mixed_precision=False,
+        batch_size=batch_size,
+        torch_version=str(torch.__version__),
+        cuda_runtime_version=None,
+        device_name="cpu",
+        compute_capability=None,
+    )
 
 
 def _validate_pairs_for_feature_preparation(

@@ -7,7 +7,10 @@ from pathlib import Path
 
 import pytest
 import torch
+from PIL import Image
+from pydantic import ValidationError
 
+import grit.features as feature_module
 from grit.cmnist import (
     CmnistConstruction,
     CmnistOraclePairSet,
@@ -22,6 +25,7 @@ from grit.features import (
     CmnistFeatureCacheManifest,
     DeterministicFakeEncoder,
     FeatureCacheValidationError,
+    FeatureExtractionRuntime,
     OfficialOpenAiClipEncoder,
     load_cmnist_feature_cache,
     load_cmnist_tuning_feature_cache,
@@ -314,3 +318,194 @@ def test_official_clip_adapter_requires_explicit_download_permission(
     )
     with pytest.raises(FileNotFoundError, match="--allow-download"):
         encoder.encode(torch.zeros((1, 3, 4, 4), dtype=torch.float32))
+
+
+def test_cuda_preflight_fails_before_writing_when_cuda_is_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    weights_root = tmp_path / "weights"
+    encoder = OfficialOpenAiClipEncoder(
+        weights_root=weights_root,
+        allow_download=False,
+        device="cuda",
+        batch_size=2,
+    )
+
+    with pytest.raises(RuntimeError, match="CUDA is unavailable"):
+        encoder.preflight()
+    assert not weights_root.exists()
+
+
+def test_cuda_preflight_requires_one_visible_gpu(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 2)
+    weights_root = tmp_path / "weights"
+    encoder = OfficialOpenAiClipEncoder(
+        weights_root=weights_root,
+        allow_download=False,
+        device="cuda",
+        batch_size=2,
+    )
+
+    with pytest.raises(RuntimeError, match="exactly one visible GPU"):
+        encoder.preflight()
+    assert not weights_root.exists()
+
+
+def test_feature_runtime_rejects_cross_backend_details() -> None:
+    with pytest.raises(ValidationError, match="CPU feature runtime contains CUDA"):
+        FeatureExtractionRuntime(
+            requested_device="cpu",
+            resolved_device="cpu",
+            computation_dtype="torch.float32",
+            deterministic_algorithms=True,
+            tf32_enabled=False,
+            mixed_precision=False,
+            batch_size=2,
+            torch_version="2.test",
+            cuda_runtime_version="12.8",
+            device_name="unexpected-gpu",
+            compute_capability=(8, 6),
+        )
+
+
+def test_official_clip_cpu_adapter_batches_and_records_runtime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    weights_root = tmp_path / "weights"
+    weights_root.mkdir()
+    (weights_root / "ViT-B-32.pt").write_bytes(b"pinned-fixture")
+    batch_shapes: list[tuple[int, ...]] = []
+    load_devices: list[str] = []
+
+    class FakeModel:
+        def eval(self) -> object:
+            return self
+
+        def float(self) -> object:
+            return self
+
+        def encode_image(self, images: torch.Tensor) -> torch.Tensor:
+            assert images.device.type == "cpu"
+            assert images.dtype == torch.float32
+            batch_shapes.append(tuple(int(value) for value in images.shape))
+            return torch.ones((len(images), 512), dtype=torch.float32)
+
+    class FakeClip:
+        def load(
+            self, name: str, device: str, jit: bool, download_root: str
+        ) -> tuple[FakeModel, object]:
+            assert name == "ViT-B/32"
+            assert jit is False
+            assert download_root == str(weights_root)
+            load_devices.append(device)
+
+            def preprocess(_image: Image.Image) -> torch.Tensor:
+                return torch.zeros((3, 4, 4), dtype=torch.float32)
+
+            return FakeModel(), preprocess
+
+    real_import = feature_module.importlib.import_module
+
+    def fake_import(name: str) -> object:
+        return FakeClip() if name == "clip" else real_import(name)
+
+    def fake_hash(_path: Path) -> str:
+        return f"sha256:{feature_module.OPENAI_CLIP_WEIGHTS_SHA256}"
+
+    monkeypatch.setattr(
+        feature_module.importlib,
+        "import_module",
+        fake_import,
+    )
+    monkeypatch.setattr(feature_module, "_file_sha256", fake_hash)
+    encoder = OfficialOpenAiClipEncoder(
+        weights_root=weights_root,
+        allow_download=False,
+        device="cpu",
+        batch_size=2,
+    )
+    images = tuple(Image.new("RGB", (4, 4)) for _ in range(3))
+
+    features = encoder.encode_pil(images)
+
+    assert load_devices == ["cpu"]
+    assert batch_shapes == [(2, 3, 4, 4), (1, 3, 4, 4)]
+    assert features.shape == (3, 512)
+    assert features.device.type == "cpu"
+    runtime = encoder.extraction_runtime
+    assert runtime.requested_device == "cpu"
+    assert runtime.batch_size == 2
+    assert runtime.cuda_runtime_version is None
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is unavailable")
+def test_official_clip_cuda_adapter_uses_cuda_and_returns_cpu_features(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    weights_root = tmp_path / "weights"
+    weights_root.mkdir()
+    (weights_root / "ViT-B-32.pt").write_bytes(b"pinned-fixture")
+
+    class FakeCudaModel:
+        def eval(self) -> object:
+            return self
+
+        def float(self) -> object:
+            return self
+
+        def encode_image(self, images: torch.Tensor) -> torch.Tensor:
+            assert images.device.type == "cuda"
+            assert images.dtype == torch.float32
+            return torch.ones(
+                (len(images), 512), dtype=torch.float32, device=images.device
+            )
+
+    class FakeCudaClip:
+        def load(
+            self, name: str, device: str, jit: bool, download_root: str
+        ) -> tuple[FakeCudaModel, object]:
+            assert name == "ViT-B/32"
+            assert device.startswith("cuda:")
+            assert jit is False
+            assert download_root == str(weights_root)
+
+            def preprocess(_image: Image.Image) -> torch.Tensor:
+                return torch.zeros((3, 4, 4), dtype=torch.float32)
+
+            return FakeCudaModel(), preprocess
+
+    real_import = feature_module.importlib.import_module
+
+    def fake_import(name: str) -> object:
+        return FakeCudaClip() if name == "clip" else real_import(name)
+
+    def fake_hash(_path: Path) -> str:
+        return f"sha256:{feature_module.OPENAI_CLIP_WEIGHTS_SHA256}"
+
+    monkeypatch.setattr(
+        feature_module.importlib,
+        "import_module",
+        fake_import,
+    )
+    monkeypatch.setattr(feature_module, "_file_sha256", fake_hash)
+    encoder = OfficialOpenAiClipEncoder(
+        weights_root=weights_root,
+        allow_download=False,
+        device="cuda",
+        batch_size=2,
+    )
+
+    features = encoder.encode_pil((Image.new("RGB", (4, 4)),) * 2)
+
+    assert features.device.type == "cpu"
+    runtime = encoder.extraction_runtime
+    assert runtime.requested_device == "cuda"
+    assert runtime.resolved_device.startswith("cuda:")
+    assert runtime.cuda_runtime_version is not None
+    assert runtime.compute_capability is not None
+    assert runtime.tf32_enabled is False
+    assert runtime.mixed_precision is False

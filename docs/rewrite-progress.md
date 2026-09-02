@@ -8,9 +8,9 @@ boundaries and after material decisions; do not use it as a raw command transcri
 - Branch: `rewrite`
 - Active milestone: Real-server operational readiness for the reviewed Milestone 6A search
 - Legacy implementation: Preserved and statically characterized; runtime reproduction deferred
-- New implementation: Reviewed CMNIST and Waterbirds-CF vertical slices plus an
-  implemented, hermetically verified local production-search path; no real scientific
-  pilot or grid has been executed
+- New implementation: Reviewed CMNIST and Waterbirds-CF vertical slices, an implemented
+  hermetically verified local production-search path, and explicit single-GPU CUDA 12.8
+  feature preparation; no real scientific pilot or grid has been executed
 
 ## Completed checkpoints
 
@@ -344,7 +344,8 @@ Verification:
 - Waterbirds source acquisition and reconstruction implementation
 - Waterbirds conditional/random and nearest-pair definitions
 - Method-specific search spaces for GroupDRO and later methods
-- Experimental PyTorch, CLIP, CUDA, deterministic-operation, and upper Python versions
+- Upper Python and any training/multi-device accelerator matrix beyond the initial locked
+  PyTorch 2.11.0/CUDA 12.8 feature-preparation profile
 - Exact internal type names, fields, and module boundaries pending CMNIST and Waterbirds
 - Safe numerical/checkpoint artifact format, retention policy, and runtime conversion
   details
@@ -749,9 +750,46 @@ Verification:
   were preserved and restored.
 - `git diff --check` passed. No real asset, pilot, grid, or reportable result was produced.
 
+### Milestone 6A CUDA feature preparation
+
+- Added mutually exclusive locked `cpu` and `cu128` dependency profiles using the same
+  PyTorch 2.11.0 and torchvision 0.26.0 versions. The CUDA 12.8 choice is compatible with
+  the fleet's observed NVIDIA driver 595.71.05 and Ampere compute capability 8.6.
+- Made the shared official OpenAI CLIP adapter select `cpu` or one logical `cuda` device
+  explicitly. CUDA preparation uses float32, deterministic algorithms, disabled TF32,
+  no mixed precision, and no silent fallback; `CUDA_VISIBLE_DEVICES` owns physical GPU
+  selection.
+- Added preflight before dataset construction/output publication, explicit CLIP batch-size
+  controls to both preparation commands, and effective Waterbirds GPU batching instead of
+  the prior hard-coded four-image outer batches.
+- Advanced both feature-cache manifests to v2 with requested/resolved device, batch size,
+  PyTorch/CUDA runtime, device identity, and compute-capability provenance. Cached arrays
+  remain canonical CPU float32 artifacts, and production planning accepts either CPU- or
+  CUDA-prepared official caches while binding that exact cache digest into candidate
+  lineage.
+- Kept linear-probe training, deterministic CPU-float64 projection fitting, search
+  scheduling, selection, final gating, and reporting unchanged and CPU-only.
+
+Verification:
+
+- `UV_CACHE_DIR=/tmp/grit-uv-cache uv lock --python 3.10` — passed (62 packages resolved).
+- `UV_CACHE_DIR=/tmp/grit-uv-cache uv sync --frozen --extra cpu --group dev --python 3.10`
+  — passed.
+- `UV_CACHE_DIR=/tmp/grit-uv-cache uv run --frozen --extra cpu ruff check .` — passed.
+- `UV_CACHE_DIR=/tmp/grit-uv-cache uv run --frozen --extra cpu basedpyright` — 0 errors,
+  warnings, or notes.
+- `UV_CACHE_DIR=/tmp/grit-uv-cache uv run --offline --frozen --extra cpu pytest -q` —
+  162 passed; the one real-CUDA adapter test skipped on the CPU-only development host.
+- Both required non-reportable smoke commands passed from temporary configurations and
+  outputs under `/tmp`; pre-existing ignored smoke outputs were untouched.
+- The fleet driver/GPU audit succeeded, but the real-CUDA test remains pending because the
+  current uncommitted source was not transferred to the remote server. No dataset, official
+  CLIP weight, reportable feature cache, training pilot, or grid was produced.
+
 ## Next proposed checkpoint
 
-Review the Milestone 6A server procedure, then run the documented two-task pilot with
-approved real server assets. Use its timing and memory evidence before deciding on GPU or
-cluster integration. Do not start Milestone 6B estimated pairs, GroupDRO, production W&B,
-or a reportable full grid without that review.
+Run the focused CUDA adapter check in the locked `cu128` environment on one fleet GPU,
+then prepare approved real artifacts and run the documented two-task CPU training pilot.
+Use its timing and memory evidence before deciding on GPU training or cluster scheduling.
+Do not start Milestone 6B estimated pairs, GroupDRO, production W&B, or a reportable full
+grid without that review.

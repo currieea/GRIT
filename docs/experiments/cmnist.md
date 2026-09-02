@@ -169,7 +169,10 @@ and must not be aggregated with frozen-feature results.
 
 The feature manifest records encoder package and version, checkpoint identity and hash,
 preprocessing, normalization mode, source manifest hash, output shape, dtype,
-device/precision details, and feature-file hash.
+device/precision details, batch size, PyTorch/CUDA runtime, GPU identity/capability, and
+feature-file hash. The initial supported CUDA preparation profile uses deterministic
+single-GPU float32 computation with TF32 and mixed precision disabled. Training remains
+CPU-only; CPU and CUDA feature caches are distinct attributable artifacts.
 
 ## Invariant pairs
 
@@ -519,7 +522,8 @@ Primary references:
 - Conditional/random and nearest-neighbor pair definitions
 - Additional baseline methods required for the first complete study
 - Whether a reporting-only paired ID rendering of final test sources is useful
-- Supported Python, PyTorch, CLIP, CUDA, and deterministic-operation versions
+- Upper supported Python and future training-accelerator versions beyond the initial
+  PyTorch 2.11.0/CUDA 12.8 feature-preparation profile
 
 ## Approval checklist
 

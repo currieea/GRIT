@@ -244,7 +244,7 @@ class ResolvedProductionSearchConfig(StrictBoundaryModel):
         if isinstance(self.config, CmnistProductionSearchConfig):
             expected_versions = (
                 "grit.cmnist-dataset/v1",
-                "grit.cmnist-features/v1",
+                "grit.cmnist-features/v2",
                 "grit.cmnist-oracle-pairs/v2",
             )
             if self.lineage.adjusted_weight_spec_digest is not None:
@@ -252,7 +252,7 @@ class ResolvedProductionSearchConfig(StrictBoundaryModel):
         else:
             expected_versions = (
                 "grit.waterbirds-cf-dataset/v2",
-                "grit.waterbirds-features/v1",
+                "grit.waterbirds-features/v2",
                 "grit.waterbirds-oracle-pairs/v2",
             )
             if self.lineage.adjusted_weight_spec_digest is None:

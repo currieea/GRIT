@@ -14,11 +14,27 @@ Use the repository's pinned Python 3.10.20 interpreter and locked environment:
 
 ```bash
 uv python install 3.10.20
-uv sync --frozen
-uv run --frozen python --version
+uv sync --frozen --extra cpu
+uv run --frozen --extra cpu python --version
 git status --short
 git rev-parse HEAD
 ```
+
+The locked CUDA feature-preparation environment is separate so it cannot silently replace
+the CPU training environment:
+
+```bash
+UV_PROJECT_ENVIRONMENT=.venv-cu128 uv sync --frozen --extra cu128
+CUDA_VISIBLE_DEVICES=0 UV_PROJECT_ENVIRONMENT=.venv-cu128 \
+  uv run --frozen --extra cu128 python -c \
+  'import torch; print(torch.__version__, torch.version.cuda, torch.cuda.get_device_name())'
+```
+
+The reviewed initial matrix is PyTorch 2.11.0, torchvision 0.26.0, CUDA 12.8, float32
+CLIP computation, deterministic algorithms, disabled TF32, and no mixed precision. The
+preparation command fails rather than falling back to CPU when CUDA is requested but
+unavailable. `CUDA_VISIBLE_DEVICES` selects exactly one physical GPU; the manifest records
+the resolved logical device and runtime details.
 
 `grit-search plan` and `grit-search run` fail before writing or training unless `HEAD`
 resolves to a real commit and the worktree is clean. Keep generated search output outside
@@ -35,13 +51,16 @@ CMNIST preparation needs a writable MNIST data root, an explicit CLIP weight-cac
 and a new or empty preparation output root:
 
 ```bash
-uv run --frozen grit-cmnist-prepare \
+CUDA_VISIBLE_DEVICES=0 UV_PROJECT_ENVIRONMENT=.venv-cu128 \
+uv run --frozen --extra cu128 grit-cmnist-prepare \
   --data-root /ABSOLUTE/PATH/TO/MNIST \
   --clip-weights-root /ABSOLUTE/PATH/TO/CLIP-WEIGHTS \
   --output-root /ABSOLUTE/PATH/TO/PREPARED/CMNIST \
   --construction-seed 1729 \
   --pair-seed 2718 \
-  --normalization none
+  --normalization none \
+  --feature-device cuda \
+  --clip-batch-size 128
 ```
 
 Without `--allow-download`, both MNIST and the pinned official OpenAI CLIP weights must
@@ -58,7 +77,8 @@ Waterbirds-CF preparation requires already acquired released Waterbirds metadata
 source CUB images, segmentation masks, and the approved Places background assets:
 
 ```bash
-uv run --frozen grit-waterbirds-prepare \
+CUDA_VISIBLE_DEVICES=0 UV_PROJECT_ENVIRONMENT=.venv-cu128 \
+uv run --frozen --extra cu128 grit-waterbirds-prepare \
   --released-root /ABSOLUTE/PATH/TO/RELEASED-WATERBIRDS \
   --cub-root /ABSOLUTE/PATH/TO/CUB \
   --masks-root /ABSOLUTE/PATH/TO/MASKS \
@@ -66,7 +86,9 @@ uv run --frozen grit-waterbirds-prepare \
   --clip-weights-root /ABSOLUTE/PATH/TO/CLIP-WEIGHTS \
   --output-root /ABSOLUTE/PATH/TO/PREPARED/WATERBIRDS \
   --construction-seed 1729 \
-  --normalization none
+  --normalization none \
+  --feature-device cuda \
+  --clip-batch-size 128
 ```
 
 That command never downloads Waterbirds, CUB, masks, or Places. The pinned CLIP weights
@@ -100,7 +122,7 @@ CLIP identity; normalization; cross-artifact lineage; and referenced file hashes
 the authored configuration copy, resolved configuration, and full 416-candidate plan:
 
 ```bash
-uv run --frozen grit-search plan /ABSOLUTE/PATH/TO/cmnist-search.yaml
+uv run --frozen --extra cpu grit-search plan /ABSOLUTE/PATH/TO/cmnist-search.yaml
 ```
 
 `plan` does not deserialize feature arrays, train, make checkpoints, or issue final-test
@@ -111,7 +133,7 @@ access. It does read referenced files as bytes to verify their declared hashes.
 Inspect the existing plan with the read-only presentation command:
 
 ```bash
-uv run --frozen grit-search pilot-candidates /ABSOLUTE/PATH/TO/cmnist-search.yaml
+uv run --frozen --extra cpu grit-search pilot-candidates /ABSOLUTE/PATH/TO/cmnist-search.yaml
 ```
 
 The canonical JSON reports the first configured tuning seed, one deterministic ERM
@@ -121,7 +143,7 @@ writes. Copy the reported `tuning_seed`, `erm.candidate_id`, and
 `grit_nonzero_rank.candidate_id` values into the following command:
 
 ```bash
-uv run --frozen grit-search run /ABSOLUTE/PATH/TO/cmnist-search.yaml \
+uv run --frozen --extra cpu grit-search run /ABSOLUTE/PATH/TO/cmnist-search.yaml \
   --stop-after tuning \
   --candidate-id 'CANDIDATE_ID_FROM_ERM_FIELD' \
   --candidate-id 'CANDIDATE_ID_FROM_GRIT_NONZERO_RANK_FIELD' \
@@ -144,7 +166,7 @@ metrics are operational evidence, not scientific results.
 The JSON printed by bounded `run` is canonical progress. Confirm it independently:
 
 ```bash
-uv run --frozen grit-search status /ABSOLUTE/PATH/TO/cmnist-search.yaml
+uv run --frozen --extra cpu grit-search status /ABSOLUTE/PATH/TO/cmnist-search.yaml
 ```
 
 Repeating the exact pilot command validates and reuses both completed tasks without new
@@ -158,7 +180,7 @@ After reviewing pilot timing, memory, validation records, projection diagnostics
 status, remove all operational limits:
 
 ```bash
-uv run --frozen grit-search run /ABSOLUTE/PATH/TO/cmnist-search.yaml
+uv run --frozen --extra cpu grit-search run /ABSOLUTE/PATH/TO/cmnist-search.yaml
 ```
 
 An unrestricted invocation retains the original full-search behavior. It reuses the two
@@ -170,8 +192,8 @@ Interruption is safe only at run granularity. A completed task directory is reus
 strict validation. An interrupted staging directory is preserved/archived and that whole
 task restarts; optimizer or partial-epoch resume is not promised. `tmux`, `screen`, or a
 site scheduler can keep the local command alive, but this repository provides no
-scheduler-specific integration and no GPU path. Decide whether either is needed only after
-observing real pilot timings.
+scheduler-specific integration or GPU training path. Decide whether either is needed only
+after observing real pilot timings.
 
 ## 6. Preserve the authoritative outputs
 

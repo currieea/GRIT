@@ -9,13 +9,22 @@ description = "Rigorous invariant feature projection experiments"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "clip @ git+https://github.com/openai/CLIP.git@d05afc436d78f1c48dc0dbf8e5980a9d471f35f6",
     "numpy>=1.26,<3",
     "pillow>=10,<13",
     "pydantic>=2.11,<3",
     "pyyaml>=6,<7",
-    "torch>=2.2,<3",
-    "torchvision>=0.17,<1",
+]
+
+[project.optional-dependencies]
+cpu = [
+    "clip @ git+https://github.com/openai/CLIP.git@d05afc436d78f1c48dc0dbf8e5980a9d471f35f6",
+    "torch==2.11.0",
+    "torchvision==0.26.0",
+]
+cu128 = [
+    "clip @ git+https://github.com/openai/CLIP.git@d05afc436d78f1c48dc0dbf8e5980a9d471f35f6",
+    "torch==2.11.0",
+    "torchvision==0.26.0",
 ]
 
 [project.scripts]
@@ -44,9 +53,28 @@ name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv]
+conflicts = [
+    [
+        { extra = "cpu" },
+        { extra = "cu128" },
+    ],
+]
+
 [tool.uv.sources]
-torch = { index = "pytorch-cpu" }
-torchvision = { index = "pytorch-cpu" }
+torch = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cu128", extra = "cu128" },
+]
+torchvision = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cu128", extra = "cu128" },
+]
 
 [tool.pytest.ini_options]
 addopts = "-ra"

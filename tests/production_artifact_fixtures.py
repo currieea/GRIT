@@ -5,12 +5,14 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
+import torch
+
 from grit.config import (
     OPENAI_CLIP_PREPROCESSING_ID,
     OPENAI_CLIP_REVISION,
     OPENAI_CLIP_WEIGHTS_IDENTITY,
 )
-from grit.features import EncoderIdentity
+from grit.features import EncoderIdentity, FeatureExtractionRuntime
 from grit.schemas import canonical_digest_value
 from grit.waterbirds import (
     BASE_ARTIFACT_NAME,
@@ -280,7 +282,7 @@ def write_manifest_only_waterbirds_production(
     feature_bytes = b"manifest-only-waterbirds-features"
     (feature_root / "features.npy").write_bytes(feature_bytes)
     features = WaterbirdsFeatureCacheManifest(
-        schema_version="grit.waterbirds-features/v1",
+        schema_version="grit.waterbirds-features/v2",
         dataset_id="waterbirds_cf",
         dataset_manifest_digest=dataset_digest,
         non_reportable=False,
@@ -291,6 +293,19 @@ def write_manifest_only_waterbirds_production(
             weights_identity=OPENAI_CLIP_WEIGHTS_IDENTITY,
             preprocessing_identity=OPENAI_CLIP_PREPROCESSING_ID,
             raw_output_dimension=512,
+        ),
+        extraction_runtime=FeatureExtractionRuntime(
+            requested_device="cpu",
+            resolved_device="cpu",
+            computation_dtype="torch.float32",
+            deterministic_algorithms=True,
+            tf32_enabled=False,
+            mixed_precision=False,
+            batch_size=256,
+            torch_version=str(torch.__version__),
+            cuda_runtime_version=None,
+            device_name="cpu",
+            compute_capability=None,
         ),
         normalization="none",
         feature_dimension=512,

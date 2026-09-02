@@ -1447,8 +1447,8 @@ inventory only until a vertical slice demands them.
   sources.
 - Search spaces and protocol details for Fish, SWAD, GroupDRO, IRM, REx, MatchDG, LISA, and
   other later algorithms.
-- Final PyTorch, CUDA, and CLIP compatibility versions, including the upper supported
-  Python bound.
+- The upper supported Python bound and any training/multi-device accelerator matrix beyond
+  the initial PyTorch 2.11.0/CUDA 12.8 single-GPU feature-preparation profile.
 
 These must become explicit protocol decisions before their configurations can resolve.
 

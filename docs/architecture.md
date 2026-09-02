@@ -198,8 +198,9 @@ declared reduced strata, while the production pair manifest rejects any count ot
 
 ### Frozen features
 
-Status: **Pinned OpenAI CLIP boundary and dataset-specific CMNIST/Waterbirds caches
-implemented; production weights and Waterbirds assets remain server inputs.**
+Status: **Pinned OpenAI CLIP boundary, explicit CPU/CUDA-12.8 float32 preparation, and
+dataset-specific CMNIST/Waterbirds caches implemented; production weights and Waterbirds
+assets remain server inputs.**
 
 Waterbirds feature preparation accepts the validated construction and a path-capable
 encoder, processes variable-sized images through the pinned OpenAI CLIP preprocessing,
@@ -208,6 +209,13 @@ dataset, encoder revision, weights, preprocessing, normalization, row/image iden
 and array digest. Training tables redact background metadata; validation tables expose
 the approved group fields. The deterministic fake encoder marks every cache
 non-reportable and exists only for offline lifecycle tests.
+
+Real preparation selects `cpu` or one logical `cuda` device explicitly. CUDA preparation
+uses deterministic float32 CLIP computation with TF32 and mixed precision disabled, moves
+only preprocessing batches to the GPU, and stores canonical float32 arrays on CPU. The
+feature manifest records requested/resolved device, batch size, PyTorch/CUDA versions, GPU
+identity, and compute capability. CPU and CUDA caches are distinct attributable artifacts;
+there is no silent device fallback. Training and projection fitting remain CPU-only.
 
 ### Projection
 
@@ -430,10 +438,12 @@ entry points.
 - Exact internal type names, field sets, and module boundaries
 - Which provisional boundaries survive both CMNIST and Waterbirds unchanged
 - Exact safe numerical artifact format and checkpoint retention policy
-- Upper supported Python version and the compatible PyTorch/CLIP/CUDA matrix
+- Upper supported Python version and any accelerator matrix beyond the initial locked
+  PyTorch 2.11.0/CUDA 12.8 single-GPU feature-preparation profile
 
 Scientific construction and estimated-pair choices remain in their protocol documents.
 The smallest contract spine and both vertical slices are implemented and hermetically
 verified. Milestone 6A reuses their demonstrated lifecycle without declaring the internal
 names a supported public API. Generalized artifacts, full resume, production W&B,
-later-method hooks, and raw-image/accelerator abstractions remain explicitly deferred.
+later-method hooks, raw-image acceleration, and training/multi-device abstractions remain
+explicitly deferred.

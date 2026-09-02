@@ -14,23 +14,24 @@ compatibility and historical references during migration.
 Create the locked development environment and run its checks with:
 
 ```bash
-uv sync --frozen --group dev
-uv run python --version
-uv run ruff check .
-uv run basedpyright
-uv run pytest
+uv sync --frozen --extra cpu --group dev
+uv run --extra cpu python --version
+uv run --extra cpu ruff check .
+uv run --extra cpu basedpyright
+uv run --extra cpu pytest
 ```
 
 The tracked `.python-version` selects Python 3.10.20 as the current reproducible rewrite
-development interpreter. `pyproject.toml` retains a Python 3.10 minimum. The CMNIST slice
-locks CPU PyTorch/torchvision plus official OpenAI CLIP at revision
-`d05afc436d78f1c48dc0dbf8e5980a9d471f35f6`; the eventual upper Python bound and supported
-CUDA matrix remain unresolved.
+development interpreter. `pyproject.toml` retains a Python 3.10 minimum and mutually
+exclusive CPU and CUDA 12.8 profiles using PyTorch 2.11.0 and torchvision 0.26.0. Official
+OpenAI CLIP remains pinned at revision
+`d05afc436d78f1c48dc0dbf8e5980a9d471f35f6`. CUDA is currently available only for
+single-GPU float32 feature preparation; training and projection fitting remain CPU-only.
 
 Run the explicitly non-reportable, offline CMNIST ERM/oracle-GRIT smoke profile with:
 
 ```bash
-uv run --frozen grit-cmnist-run configs/cmnist/smoke.yaml
+uv run --frozen --extra cpu grit-cmnist-run configs/cmnist/smoke.yaml
 ```
 
 The command uses deterministic synthetic MNIST-like sources and a fake 512-dimensional
@@ -41,20 +42,26 @@ local results. Generated output is written under the ignored `artifacts/` direct
 Prepare real official MNIST and unnormalized OpenAI CLIP ViT-B/32 features explicitly:
 
 ```bash
-uv run --frozen grit-cmnist-prepare \
+uv run --frozen --extra cpu grit-cmnist-prepare \
   --data-root /path/to/mnist \
   --clip-weights-root /path/to/clip-weights \
   --output-root /path/to/cmnist-cache \
   --construction-seed 1729 \
   --pair-seed 2718 \
   --normalization none \
+  --feature-device cpu \
+  --clip-batch-size 256 \
   --allow-download
 ```
 
 Omit `--allow-download` to require that both source data and weights already exist.
 These seeds match the checked production-search example; preparation seeds must match the
-configuration that consumes the artifacts. Preparation does not run the full scientific
-hyperparameter sweep.
+configuration that consumes the artifacts. For GPU extraction, create a separate locked
+environment with `UV_PROJECT_ENVIRONMENT=.venv-cu128 uv sync --frozen --extra cu128`, then
+run the same command from that environment with `--extra cu128 --feature-device cuda` and
+an explicit `CUDA_VISIBLE_DEVICES`. Preparation records the resolved device, precision,
+batch size, PyTorch/CUDA versions, GPU identity, and compute capability in the feature
+manifest. It does not run the full scientific hyperparameter sweep.
 
 ### Production-capable local search
 
@@ -64,11 +71,11 @@ artifacts. The checked-in examples contain conspicuous placeholder paths and the
 cannot accidentally fall back to smoke data:
 
 ```bash
-uv run --frozen grit-search plan configs/cmnist/production-search.yaml
-uv run --frozen grit-search plan configs/waterbirds/production-search.yaml
-uv run --frozen grit-search pilot-candidates /path/to/production-search.yaml
-uv run --frozen grit-search status /path/to/production-search.yaml
-uv run --frozen grit-search run /path/to/production-search.yaml
+uv run --frozen --extra cpu grit-search plan configs/cmnist/production-search.yaml
+uv run --frozen --extra cpu grit-search plan configs/waterbirds/production-search.yaml
+uv run --frozen --extra cpu grit-search pilot-candidates /path/to/production-search.yaml
+uv run --frozen --extra cpu grit-search status /path/to/production-search.yaml
+uv run --frozen --extra cpu grit-search run /path/to/production-search.yaml
 ```
 
 `plan` parses and cross-validates the dataset, feature-cache, and oracle-pair manifests,

@@ -22,7 +22,7 @@ from pydantic import (
 )
 
 from grit.config import LinearProbeTrainingConfig, SeedSets
-from grit.features import OfficialOpenAiClipEncoder
+from grit.features import FeatureDevice, OfficialOpenAiClipEncoder
 from grit.projection import FittedLinearProjection
 from grit.results import CodeProvenance, EnvironmentProvenance
 from grit.schemas import SeedStage, StrictBoundaryModel
@@ -148,11 +148,20 @@ def prepare_server_waterbirds(
     construction_seed: int,
     normalization: Normalization,
     allow_clip_download: bool,
+    feature_device: FeatureDevice,
+    clip_batch_size: int,
 ) -> None:
     """Prepare production assets supplied by the server; never acquire datasets."""
 
     if output_root.exists() and any(output_root.iterdir()):
         raise FileExistsError(f"Waterbirds output is not empty: {output_root}")
+    encoder = OfficialOpenAiClipEncoder(
+        weights_root=clip_weights_root,
+        allow_download=allow_clip_download,
+        device=feature_device,
+        batch_size=clip_batch_size,
+    )
+    encoder.preflight()
     assets = load_waterbirds_assets(
         released_root=released_root,
         cub_root=cub_root,
@@ -176,12 +185,10 @@ def prepare_server_waterbirds(
     )
     _ = prepare_waterbirds_feature_cache(
         construction,
-        OfficialOpenAiClipEncoder(
-            weights_root=clip_weights_root,
-            allow_download=allow_clip_download,
-        ),
+        encoder,
         output_root / WATERBIRDS_FEATURE_CACHE_RELATIVE_ROOT,
         normalization=normalization,
+        encode_batch_size=clip_batch_size,
     )
 
 

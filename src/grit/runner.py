@@ -51,6 +51,7 @@ from grit.config import (
 from grit.features import (
     CmnistFeatureCache,
     DeterministicFakeEncoder,
+    FeatureDevice,
     Normalization,
     OfficialOpenAiClipEncoder,
     load_cmnist_feature_cache,
@@ -243,6 +244,8 @@ def prepare_official_cmnist(
     pair_seed: int,
     normalization: Normalization,
     allow_download: bool,
+    feature_device: FeatureDevice,
+    clip_batch_size: int,
 ) -> None:
     """Explicit real-data/official-CLIP preparation command implementation."""
 
@@ -250,6 +253,13 @@ def prepare_official_cmnist(
         raise FileExistsError(
             f"preparation output directory is not empty: {output_root}"
         )
+    encoder = OfficialOpenAiClipEncoder(
+        weights_root=clip_weights_root,
+        allow_download=allow_download,
+        device=feature_device,
+        batch_size=clip_batch_size,
+    )
+    encoder.preflight()
     train_pool, test_pool = load_torchvision_mnist_pools(
         data_root,
         allow_download=allow_download,
@@ -270,10 +280,7 @@ def prepare_official_cmnist(
     _ = prepare_cmnist_feature_cache(
         construction,
         pairs,
-        OfficialOpenAiClipEncoder(
-            weights_root=clip_weights_root,
-            allow_download=allow_download,
-        ),
+        encoder,
         output_root / CMNIST_FEATURE_CACHE_RELATIVE_ROOT,
         normalization=normalization,
     )
