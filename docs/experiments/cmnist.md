@@ -1,8 +1,7 @@
 # ColoredMNIST experiment protocol
 
-Status: **Core construction, deterministic partition, representation, projection,
-selection, and production-capable local ERM/oracle-GRIT search implemented; no real grid
-executed and estimated-pair details remain unresolved**
+Status: **Implemented for ERM and oracle GRIT. Conditional and nearest-neighbor pair
+definitions are still open.**
 
 ## Purpose
 

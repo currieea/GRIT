@@ -1,4 +1,5 @@
-# Production-capable example. Replace every __REQUIRED_* path before planning.
+# Primary unnormalized study. Paths resolve from $PROJECT_SCRATCH (run `scratch-project`
+# first) or set GRIT_SCRATCH. Override by copying this file and editing the paths.
 schema_version: grit.production-search/v1
 dataset: waterbirds_cf
 protocol_id: waterbirds_cf/v1
@@ -6,9 +7,9 @@ experiment_name: waterbirds-cf-primary-openai-clip
 experiment_variant: primary_unnormalized
 normalization: none
 artifacts:
-  dataset_manifest: __REQUIRED_WATERBIRDS_ARTIFACT_ROOT__/construction/dataset-manifest.json
-  feature_cache_manifest: __REQUIRED_WATERBIRDS_ARTIFACT_ROOT__/feature-cache/manifest.json
-  oracle_pair_manifest: __REQUIRED_WATERBIRDS_ARTIFACT_ROOT__/pair-manifest.json
+  dataset_manifest: ${PROJECT_SCRATCH}/artifacts/waterbirds-none/construction/dataset-manifest.json
+  feature_cache_manifest: ${PROJECT_SCRATCH}/artifacts/waterbirds-none/feature-cache/manifest.json
+  oracle_pair_manifest: ${PROJECT_SCRATCH}/artifacts/waterbirds-none/pair-manifest.json
 seeds:
   construction: 1729
   pairs: 2718
@@ -25,7 +26,7 @@ selectors: [waterbirds_validation_worst_group]
 pair_count: 240
 batch_size: 256
 max_epochs: 100
-output_root: __REQUIRED_OUTPUT_ROOT__/waterbirds-primary
+output_root: ${PROJECT_SCRATCH}/outputs/waterbirds-primary
 runtime:
   device: cpu
   deterministic_algorithms: true

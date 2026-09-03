@@ -1,8 +1,7 @@
 # Waterbirds experiment protocol
 
-Status: **Core protocol, reviewed ERM/oracle-GRIT vertical slice, and production-capable
-local search implemented; server source acquisition, real reportable execution, and
-estimated-pair details remain**
+Status: **Implemented for ERM and oracle GRIT. Source assets (Waterbirds, CUB, masks,
+Places) still need to be acquired; estimated-pair definitions are still open.**
 
 ## Purpose
 

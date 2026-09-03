@@ -1,77 +1,42 @@
-# AGENTS.md
+# Working in this repository
 
-This branch contains a staged rewrite of the GRIT research codebase. The checked-in
-top-level `datasets/`, `models/`, `solver/`, `experiments/`, and `main.py` files are the
-inherited implementation. Preserve them as a behavioral and historical reference until
-the rewrite plan explicitly reaches the compatibility and cutover phase.
+GRIT (called ECMP in the inherited code) projects frozen CLIP features onto the null
+space of nuisance directions estimated from counterfactual pairs. The new implementation
+is `src/grit/`; the top-level `main.py`, `datasets/`, `models/`, `solver/`,
+`experiments/`, and `scripts/` are the inherited code, kept only as a reference.
 
-## Read before making changes
+This is a research codebase. Prefer running experiments over adding infrastructure.
+Before adding a schema, a manifest field, a CLI flag, or a document, ask whether it
+changes a number in the paper or prevents a real leak. If not, leave it out.
 
-Read these documents in order:
+## Scientific rules that must hold
 
-1. `docs/rewrite-plan.md`
-2. `docs/architecture.md`
-3. The protocol document for the dataset being changed:
-   - `docs/experiments/cmnist.md`
-   - `docs/experiments/waterbirds.md`
-4. `docs/rewrite-progress.md`
+- Hyperparameter, checkpoint, and rank selection use validation metrics only. Test
+  metrics are computed once, after selection is frozen.
+- Oracle pairs come from training sources only, never validation or test.
+- Every reported result records its seed, config, commit, and input artifact hashes.
+- Protocol details live in `docs/experiments/cmnist.md` and
+  `docs/experiments/waterbirds.md`. Change the protocol there first, then the code.
 
-If an implementation request conflicts with an unresolved scientific decision in a
-protocol document, stop and ask for a decision instead of silently choosing a protocol.
+## Layout and conventions
 
-## Rewrite principles
+- One command, `grit` (`src/grit/cli/main.py`): `prepare`, `run`, `status`, `smoke`.
+- Configs are YAML under `configs/`. Paths may use `${PROJECT_SCRATCH}`; that variable is
+  exported by `scratch-project` from the user's dotfiles on the ECN servers. Large data,
+  prepared artifacts, and outputs go under `$PROJECT_SCRATCH`, never the NFS home.
+- `uv` with `--extra cu128` on GPU machines and `--extra cpu` elsewhere. One
+  environment per machine is enough; CUDA torch runs the CPU training path fine.
+- Checks: `uv run ruff check .`, `uv run basedpyright`, `uv run pytest`. Add a test
+  when a change affects selection, leakage, or data construction. Do not add tests for
+  serialization round-trips or hash bookkeeping.
 
-- Correct experimental semantics and reproducibility take priority over reproducing a
-  historical table value.
-- Keep oracle information, model selection, and final test evaluation distinct.
-- Ordinary model and hyperparameter selection must not use test metrics.
-- Keep pair construction and nuisance projection independent of classifiers and training
-  loops.
-- Keep all new reusable and executable Python code in `src/grit/`. Implement new commands
-  under `src/grit/cli/` and expose them through `[project.scripts]` only when the command
-  exists. The top-level `scripts/` files are inherited references, not a destination for
-  rewrite logic. Put experiment settings in `configs/`.
-- Prefer composition over the inherited pattern in which every method inherits dataset,
-  training, evaluation, selection, and logging behavior from `ERM`.
-- Use explicit registries and typed configuration instead of dynamic `eval(...)` lookup.
-- A run must be attributable to a resolved configuration, seed, dataset manifest, code
-  revision, and dependency environment.
+## Things not to do
 
-## Migration safety
+- Do not refuse to run because the worktree is dirty; record it and continue.
+- Do not add new entry points, milestone documents, or progress logs. Summarize
+  decisions in the commit message or the relevant protocol doc.
+- Do not spawn subagents for routine edits.
+- Do not touch the inherited top-level code unless porting a baseline from it.
 
-- Do not delete or broadly rewrite the legacy path until the new vertical slices have
-  passed their documented exit criteria.
-- Separate mechanical moves from behavioral changes.
-- Label intentional corrections to inherited behavior in tests and documentation.
-- Do not treat legacy numerical parity as a requirement when the old path leaked test
-  information or contained a known correctness bug.
-- Preserve unrelated and untracked user files.
-
-## Verification
-
-Every core change must include proportionate tests. The rewrite will standardize on
-commands of this form once its tooling milestone is complete:
-
-```bash
-uv run ruff check .
-uv run basedpyright
-uv run pytest
-```
-
-Until that tooling exists on this branch, record the commands that were actually
-available and run in `docs/rewrite-progress.md`; do not claim unavailable checks passed.
-
-Ruff and BasedPyright intentionally check the new `src/grit/` package and `tests/`, not
-the inherited top-level implementation. Place implementation under `src/grit/` and its
-tests under `tests/` rather than expanding an unchecked legacy directory.
-
-## Working with Codex goals and subagents
-
-- Work on one milestone-sized goal at a time.
-- The primary agent owns shared interfaces and integration.
-- Use subagents for bounded read-only audits, test-gap reviews, or independent work whose
-  interfaces are already stable.
-- Do not have multiple agents edit shared architecture files concurrently in one
-  worktree.
-- End each milestone with a concise progress entry containing changes, verification,
-  unresolved decisions, and the next safe step.
+`docs/history/` holds the original rewrite plan, contracts, and progress log. They are
+context, not instructions.

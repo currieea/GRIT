@@ -5,8 +5,10 @@ from __future__ import annotations
 import hashlib
 import importlib
 import json
+import os
 import platform
 import subprocess
+import sys
 from pathlib import Path
 from typing import Annotated, Literal, Protocol, TypeAlias, cast
 
@@ -336,23 +338,34 @@ class SearchPlan(StrictBoundaryModel):
             raise ValueError("search plan run counts are inconsistent")
         if self.output_schemas != _expected_output_schemas(config):
             raise ValueError("search plan output schema inventory is inconsistent")
-        revision = self.code.git_revision
-        if (
-            self.code.git_dirty
-            or len(revision) not in {40, 64}
-            or any(character not in "0123456789abcdef" for character in revision)
-        ):
-            raise ValueError(
-                "reportable search plans require a clean, exact Git commit"
-            )
         return self
 
 
 def load_production_search_config(path: Path) -> ProductionSearchConfig:
     """Parse an authored production YAML through the strict discriminated boundary."""
 
-    authored = _yaml.safe_load(path.read_text(encoding="utf-8"))
+    authored = _expand_environment(_yaml.safe_load(path.read_text(encoding="utf-8")))
     return _SEARCH_CONFIG_ADAPTER.validate_json(json.dumps(authored, allow_nan=False))
+
+
+def _expand_environment(value: object) -> object:
+    """Expand `${VAR}` references in YAML strings so configs are server-portable."""
+
+    if isinstance(value, str):
+        expanded = os.path.expandvars(value)
+        if "${" in expanded:
+            raise ValueError(
+                f"config references an unset environment variable: {value}"
+            )
+        return expanded
+    if isinstance(value, dict):
+        return {
+            str(key): _expand_environment(item)
+            for key, item in cast(dict[object, object], value).items()
+        }
+    if isinstance(value, list):
+        return [_expand_environment(item) for item in cast(list[object], value)]
+    return value
 
 
 def resolve_production_search_config(
@@ -575,12 +588,18 @@ def write_search_plan(
         stored_plan = SearchPlan.model_validate_json(
             plan_target.read_text(encoding="utf-8")
         )
-        if (
-            stored_config != config
-            or stored_resolved != resolved
-            or stored_plan != plan
-        ):
+        if stored_config != config or stored_resolved != resolved:
             raise ValueError("existing search plan is incompatible with configuration")
+        if stored_plan.candidates != plan.candidates:
+            raise ValueError("existing search plan is incompatible with configuration")
+        if stored_plan.code != plan.code:
+            print(
+                "note: continuing a plan created at commit "
+                f"{stored_plan.code.git_revision[:12]} "
+                f"(dirty={stored_plan.code.git_dirty}); current code is "
+                f"{plan.code.git_revision[:12]} (dirty={plan.code.git_dirty})",
+                file=sys.stderr,
+            )
         return stored_plan
     _atomic_write_text(authored_target, config_path.read_text(encoding="utf-8"))
     _atomic_write_text(resolved_target, resolved.canonical_json() + "\n")
@@ -1070,9 +1089,13 @@ def _require_safe_output_root(
     resolved_output = output_root.resolve()
     if resolved_output == Path(resolved_output.anchor):
         raise ValueError("production output_root cannot be a filesystem root")
-    repository_root = _git_repository_root()
-    if resolved_output == repository_root or repository_root.is_relative_to(
-        resolved_output
+    try:
+        repository_root: Path | None = _git_repository_root()
+    except ValueError:
+        repository_root = None
+    if repository_root is not None and (
+        resolved_output == repository_root
+        or repository_root.is_relative_to(resolved_output)
     ):
         raise ValueError("production output_root cannot be the repository root")
     for manifest_path in input_manifest_paths:
@@ -1088,6 +1111,8 @@ def _require_safe_output_root(
             raise ValueError(
                 "production output_root cannot contain prepared input artifacts"
             )
+    if repository_root is None:
+        return
     try:
         relative = resolved_output.relative_to(repository_root)
     except ValueError:
@@ -1166,8 +1191,10 @@ def _atomic_write_text(path: Path, payload: str) -> None:
 
 
 def _code_provenance() -> CodeProvenance:
-    repository_root = _git_repository_root()
+    """Record the commit and dirty state; never refuse to run because of them."""
+
     try:
+        repository_root = _git_repository_root()
         revision = subprocess.run(
             ["git", "rev-parse", "--verify", "HEAD^{commit}"],
             cwd=repository_root,
@@ -1182,18 +1209,16 @@ def _code_provenance() -> CodeProvenance:
             capture_output=True,
             text=True,
         ).stdout.strip()
-    except (OSError, subprocess.CalledProcessError) as error:
-        raise ValueError(
-            "reportable search requires an available Git commit and clean worktree"
-        ) from error
-    if (
-        len(revision) not in {40, 64}
-        or any(character not in "0123456789abcdef" for character in revision)
-    ):
-        raise ValueError("reportable search could not resolve an exact Git commit")
-    if dirty_output:
-        raise ValueError("reportable search requires a clean Git worktree")
-    return CodeProvenance(git_revision=revision, git_dirty=False)
+    except (OSError, subprocess.CalledProcessError, ValueError):
+        return CodeProvenance(git_revision="unavailable", git_dirty=True)
+    dirty = bool(dirty_output)
+    if dirty:
+        print(
+            "warning: worktree has uncommitted changes; the plan records "
+            f"{revision[:12]} as dirty",
+            file=sys.stderr,
+        )
+    return CodeProvenance(git_revision=revision or "unavailable", git_dirty=dirty)
 
 
 def _git_repository_root() -> Path:

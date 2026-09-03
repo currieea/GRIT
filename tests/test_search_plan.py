@@ -147,8 +147,13 @@ def _seeds() -> SearchSeedConfig:
     )
 
 
-def test_checked_production_examples_match_preparation_layout_and_seeds() -> None:
+def test_checked_production_examples_match_preparation_layout_and_seeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from grit.cli.main import DEFAULT_CONSTRUCTION_SEED, DEFAULT_PAIR_SEED
+
     repository = Path(__file__).resolve().parents[1]
+    monkeypatch.setenv("PROJECT_SCRATCH", "/scratch")
     cmnist = load_production_search_config(
         repository / "configs/cmnist/production-search.yaml"
     )
@@ -157,44 +162,41 @@ def test_checked_production_examples_match_preparation_layout_and_seeds() -> Non
     )
     assert isinstance(cmnist, CmnistProductionSearchConfig)
     assert isinstance(waterbirds, WaterbirdsProductionSearchConfig)
-    assert cmnist.seeds.construction == 1729
-    assert cmnist.seeds.pairs == 2718
+    # Preparation defaults and the checked configs must agree on seeds and layout.
+    assert cmnist.seeds.construction == DEFAULT_CONSTRUCTION_SEED
+    assert cmnist.seeds.pairs == DEFAULT_PAIR_SEED
+    cmnist_root = "/scratch/artifacts/cmnist-none/"
     assert cmnist.artifacts.dataset_manifest == (
-        "__REQUIRED_CMNIST_ARTIFACT_ROOT__/"
-        f"{CMNIST_DATASET_MANIFEST_RELATIVE_PATH.as_posix()}"
+        cmnist_root + CMNIST_DATASET_MANIFEST_RELATIVE_PATH.as_posix()
     )
     assert cmnist.artifacts.feature_cache_manifest == (
-        "__REQUIRED_CMNIST_ARTIFACT_ROOT__/"
-        f"{(CMNIST_FEATURE_CACHE_RELATIVE_ROOT / 'manifest.json').as_posix()}"
+        cmnist_root + (CMNIST_FEATURE_CACHE_RELATIVE_ROOT / "manifest.json").as_posix()
     )
     assert cmnist.artifacts.oracle_pair_manifest == (
-        "__REQUIRED_CMNIST_ARTIFACT_ROOT__/"
-        f"{CMNIST_PAIR_MANIFEST_RELATIVE_PATH.as_posix()}"
+        cmnist_root + CMNIST_PAIR_MANIFEST_RELATIVE_PATH.as_posix()
     )
+    assert cmnist.output_root == "/scratch/outputs/cmnist-primary"
 
-    assert waterbirds.seeds.construction == 1729
-    waterbirds_dataset_manifest = (
-        WATERBIRDS_CONSTRUCTION_RELATIVE_ROOT / "dataset-manifest.json"
-    )
+    assert waterbirds.seeds.construction == DEFAULT_CONSTRUCTION_SEED
+    waterbirds_root = "/scratch/artifacts/waterbirds-none/"
     assert waterbirds.artifacts.dataset_manifest == (
-        "__REQUIRED_WATERBIRDS_ARTIFACT_ROOT__/"
-        f"{waterbirds_dataset_manifest.as_posix()}"
+        waterbirds_root
+        + (WATERBIRDS_CONSTRUCTION_RELATIVE_ROOT / "dataset-manifest.json").as_posix()
     )
     assert waterbirds.artifacts.feature_cache_manifest == (
-        "__REQUIRED_WATERBIRDS_ARTIFACT_ROOT__/"
-        f"{(WATERBIRDS_FEATURE_CACHE_RELATIVE_ROOT / 'manifest.json').as_posix()}"
+        waterbirds_root
+        + (WATERBIRDS_FEATURE_CACHE_RELATIVE_ROOT / "manifest.json").as_posix()
     )
     assert waterbirds.artifacts.oracle_pair_manifest == (
-        "__REQUIRED_WATERBIRDS_ARTIFACT_ROOT__/"
-        f"{WATERBIRDS_PAIR_MANIFEST_RELATIVE_PATH.as_posix()}"
+        waterbirds_root + WATERBIRDS_PAIR_MANIFEST_RELATIVE_PATH.as_posix()
     )
 
-    runbook = (repository / "docs/server-execution.md").read_text(encoding="utf-8")
-    assert runbook.count("--construction-seed 1729") == 2
-    assert "--pair-seed 2718" in runbook
-    readme = (repository / "README.md").read_text(encoding="utf-8")
-    assert "--construction-seed 1729" in readme
-    assert "--pair-seed 2718" in readme
+    monkeypatch.delenv("PROJECT_SCRATCH")
+    monkeypatch.delenv("GRIT_SCRATCH", raising=False)
+    with pytest.raises(ValueError, match="unset environment variable"):
+        load_production_search_config(
+            repository / "configs/cmnist/production-search.yaml"
+        )
 
 
 def _space() -> SearchSpaceConfig:
@@ -1032,38 +1034,22 @@ def test_waterbirds_plan_only_accepts_verified_production_manifests(
         plan_production_search(mixed_path)
 
 
-@pytest.mark.parametrize(
-    ("operation", "provenance"),
-    (
-        ("plan", CodeProvenance(git_revision="unavailable", git_dirty=True)),
-        ("plan", CodeProvenance(git_revision="2" * 40, git_dirty=True)),
-        ("run", CodeProvenance(git_revision="3" * 40, git_dirty=True)),
-    ),
-)
-def test_reportable_plan_and_run_reject_unusable_code_provenance_before_writes(
+def test_dirty_worktree_is_recorded_not_rejected(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    operation: Literal["plan", "run"],
-    provenance: CodeProvenance,
 ) -> None:
     output_root = tmp_path / "output"
     config_path, _ = _write_cmnist_production_config(
         tmp_path, output_root=output_root
     )
-    monkeypatch.setattr("grit.search._code_provenance", lambda: provenance)
-
-    def forbidden_training(*_args: object, **_kwargs: object) -> None:
-        raise AssertionError("dirty production execution reached training")
-
-    monkeypatch.setattr(
-        "grit.production_search._run_cmnist_search", forbidden_training
-    )
-    with pytest.raises(ValueError, match="clean, exact Git commit"):
-        if operation == "plan":
-            plan_production_search(config_path)
-        else:
-            run_production_search(config_path)
-    assert not output_root.exists()
+    dirty = CodeProvenance(git_revision="2" * 40, git_dirty=True)
+    monkeypatch.setattr("grit.search._code_provenance", lambda: dirty)
+    plan = plan_production_search(config_path)
+    assert plan.code == dirty
+    # A later commit continues the same plan instead of rejecting it.
+    clean = CodeProvenance(git_revision="3" * 40, git_dirty=False)
+    monkeypatch.setattr("grit.search._code_provenance", lambda: clean)
+    assert plan_production_search(config_path).code == dirty
 
 
 def test_ignored_repository_output_remains_an_allowed_isolated_root(
@@ -1159,7 +1145,7 @@ def test_status_requires_existing_matching_triplet_and_never_creates_it(
     config_path.write_text(
         _yaml_compatible_json(config_payload), encoding="utf-8"
     )
-    with pytest.raises(ValueError, match="run `grit-search plan` first"):
+    with pytest.raises(ValueError, match="run `grit run` first"):
         production_search_status(config_path)
     assert not output_root.exists()
 
@@ -1186,7 +1172,9 @@ def test_status_is_read_only_and_uses_saved_clean_provenance_from_dirty_tree(
     assert before == after
 
     config_path.write_text(
-        config_path.read_text(encoding="utf-8") + "\n",
+        config_path.read_text(encoding="utf-8").replace(
+            "cmnist-primary", "cmnist-renamed"
+        ),
         encoding="utf-8",
     )
     with pytest.raises(ValueError, match="does not match the supplied YAML"):
@@ -2192,10 +2180,10 @@ def test_waterbirds_real_plan_pilot_uses_same_bounded_lifecycle(
     assert not (output_root / "experiment-index.json").exists()
 
 
-def test_search_cli_passes_no_limits_for_unrestricted_run(
+def test_cli_run_passes_no_limits_for_unrestricted_run(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from grit.cli.search import main
+    from grit.cli.main import main
 
     observed: list[ProductionExecutionLimits | None] = []
 
@@ -2210,15 +2198,28 @@ def test_search_cli_passes_no_limits_for_unrestricted_run(
         observed.append(limits)
         return _Summary()
 
-    monkeypatch.setattr("grit.cli.search.run_production_search", fake_run)
+    monkeypatch.setattr("grit.production_search.plan_production_search", _fake_plan)
+    monkeypatch.setattr("grit.production_search.run_production_search", fake_run)
     assert main(("run", "config.yaml")) == 0
     assert observed == [None]
 
 
-def test_search_cli_constructs_bounded_tuning_controls(
+class _FakePlan:
+    dataset = "cmnist"
+    candidates = ()
+
+    class resolved_config:
+        output_root = "/tmp/out"
+
+
+def _fake_plan(_path: Path) -> _FakePlan:
+    return _FakePlan()
+
+
+def test_cli_run_constructs_bounded_tuning_controls(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from grit.cli.search import main
+    from grit.cli.main import main
 
     observed: list[ProductionExecutionLimits | None] = []
 
@@ -2241,21 +2242,20 @@ def test_search_cli_constructs_bounded_tuning_controls(
             final_complete=0,
         )
 
-    monkeypatch.setattr("grit.cli.search.run_production_search", fake_run)
+    monkeypatch.setattr("grit.production_search.plan_production_search", _fake_plan)
+    monkeypatch.setattr("grit.production_search.run_production_search", fake_run)
     assert (
         main(
             (
                 "run",
                 "config.yaml",
-                "--stop-after",
-                "tuning",
                 "--candidate-id",
                 "candidate:erm",
                 "--candidate-id",
                 "candidate:grit",
-                "--tuning-seed",
+                "--seed",
                 "101",
-                "--max-new-runs",
+                "--limit",
                 "2",
             )
         )
@@ -2264,6 +2264,7 @@ def test_search_cli_constructs_bounded_tuning_controls(
     assert observed == [
         ProductionExecutionLimits(
             stop_after="tuning",
+            method="all",
             candidate_ids=("candidate:erm", "candidate:grit"),
             tuning_seed=101,
             max_new_runs=2,

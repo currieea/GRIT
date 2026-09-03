@@ -218,7 +218,6 @@ def _load_existing_search_plan(config_path: Path) -> SearchPlan:
     """Load one compatible planning triplet without resolving inputs or writing."""
 
     supplied_path = config_path.resolve()
-    supplied_payload = supplied_path.read_text(encoding="utf-8")
     supplied = load_production_search_config(supplied_path)
     output_value = Path(supplied.output_root)
     output_root = (
@@ -232,11 +231,8 @@ def _load_existing_search_plan(config_path: Path) -> SearchPlan:
     planning_paths = (authored_path, resolved_path, plan_path)
     if not all(path.is_file() for path in planning_paths):
         raise ValueError(
-            "no complete production search plan exists; run `grit-search plan` first"
+            "no complete production search plan exists; run `grit run` first"
         )
-    stored_payload = authored_path.read_text(encoding="utf-8")
-    if stored_payload != supplied_payload:
-        raise ValueError("saved authored config does not match the supplied YAML")
     stored_authored = load_production_search_config(authored_path)
     stored_resolved = ResolvedProductionSearchConfig.model_validate_json(
         resolved_path.read_text(encoding="utf-8")
@@ -248,7 +244,6 @@ def _load_existing_search_plan(config_path: Path) -> SearchPlan:
         raise ValueError("saved authored config does not match the supplied YAML")
     if (
         stored_resolved.config != supplied
-        or Path(stored_resolved.authored_config_path).resolve() != supplied_path
         or Path(stored_resolved.output_root).resolve() != output_root
         or stored_plan.resolved_config != stored_resolved
     ):

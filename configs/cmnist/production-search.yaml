@@ -1,4 +1,5 @@
-# Production-capable example. Replace every __REQUIRED_* path before planning.
+# Primary unnormalized study. Paths resolve from $PROJECT_SCRATCH (run `scratch-project`
+# first) or set GRIT_SCRATCH. Override by copying this file and editing the paths.
 schema_version: grit.production-search/v1
 dataset: cmnist
 protocol_id: cmnist/v1
@@ -6,9 +7,9 @@ experiment_name: cmnist-primary-openai-clip
 experiment_variant: primary_unnormalized
 normalization: none
 artifacts:
-  dataset_manifest: __REQUIRED_CMNIST_ARTIFACT_ROOT__/dataset-manifest.json
-  feature_cache_manifest: __REQUIRED_CMNIST_ARTIFACT_ROOT__/feature-cache/manifest.json
-  oracle_pair_manifest: __REQUIRED_CMNIST_ARTIFACT_ROOT__/pair-manifest.json
+  dataset_manifest: ${PROJECT_SCRATCH}/artifacts/cmnist-none/dataset-manifest.json
+  feature_cache_manifest: ${PROJECT_SCRATCH}/artifacts/cmnist-none/feature-cache/manifest.json
+  oracle_pair_manifest: ${PROJECT_SCRATCH}/artifacts/cmnist-none/pair-manifest.json
 seeds:
   construction: 1729
   pairs: 2718
@@ -25,7 +26,7 @@ selectors: [primary_robust, secondary_source]
 pair_count: 256
 batch_size: 256
 max_epochs: 40
-output_root: __REQUIRED_OUTPUT_ROOT__/cmnist-primary
+output_root: ${PROJECT_SCRATCH}/outputs/cmnist-primary
 runtime:
   device: cpu
   deterministic_algorithms: true
