@@ -21,17 +21,6 @@ from pydantic import (
     model_validator,
 )
 
-from grit.checkpoints import restore_checkpoint
-from grit.cmnist import (
-    PRODUCTION_PARTITION_TARGETS,
-    CmnistConstruction,
-    CmnistOraclePairSet,
-    CmnistPartitionTargets,
-    MnistPool,
-    build_clean_oracle_pairs,
-    construct_cmnist,
-    pair_source_view,
-)
 from grit.config import (
     CmnistDatasetConfig,
     CmnistSourceCounts,
@@ -48,7 +37,17 @@ from grit.config import (
     OrdinarySelectionConfig,
     SeedSets,
 )
-from grit.features import (
+from grit.data.cmnist import (
+    PRODUCTION_PARTITION_TARGETS,
+    CmnistConstruction,
+    CmnistOraclePairSet,
+    CmnistPartitionTargets,
+    MnistPool,
+    build_clean_oracle_pairs,
+    construct_cmnist,
+    pair_source_view,
+)
+from grit.features.cmnist import (
     CmnistFeatureCache,
     DeterministicFakeEncoder,
     Normalization,
@@ -58,7 +57,17 @@ from grit.features import (
     prepare_cmnist_feature_cache,
 )
 from grit.lifecycle import open_final_test, record_final_accuracy
-from grit.projection import FittedLinearProjection, fit_linear_projection
+from grit.methods.checkpoints import restore_checkpoint
+from grit.methods.projection import FittedLinearProjection, fit_linear_projection
+from grit.methods.training import (
+    MethodId,
+    PersistedLinearCheckpointStore,
+    TrainedLinearProbeRun,
+    evaluate_accuracy,
+    persist_selected_linear_checkpoint,
+    train_linear_probe,
+)
+from grit.paths import REPO_ROOT
 from grit.results import (
     ArtifactReference,
     CodeProvenance,
@@ -67,7 +76,7 @@ from grit.results import (
     SucceededStatus,
 )
 from grit.schemas import CmnistSelector, SeedStage, StrictBoundaryModel
-from grit.selection import (
+from grit.selection.cmnist import (
     FinalistUnion,
     FrozenCandidateSelection,
     TuningFinalistsArtifact,
@@ -78,14 +87,6 @@ from grit.selection import (
     make_tuning_finalists,
     select_checkpoint,
     select_confirmed_candidate,
-)
-from grit.training import (
-    MethodId,
-    PersistedLinearCheckpointStore,
-    TrainedLinearProbeRun,
-    evaluate_accuracy,
-    persist_selected_linear_checkpoint,
-    train_linear_probe,
 )
 
 NonEmptyStr: TypeAlias = Annotated[StrictStr, Field(min_length=1)]
@@ -762,7 +763,7 @@ def _write_selection_artifact(
 
 
 def _code_provenance() -> CodeProvenance:
-    root = Path(__file__).resolve().parents[2]
+    root = REPO_ROOT
     revision = subprocess.run(
         ("git", "rev-parse", "HEAD"),
         cwd=root,
@@ -784,7 +785,7 @@ def _code_provenance() -> CodeProvenance:
 
 def _environment_provenance(output_root: Path) -> EnvironmentProvenance:
     del output_root
-    root = Path(__file__).resolve().parents[2]
+    root = REPO_ROOT
     lock_sha256 = hashlib.sha256((root / "uv.lock").read_bytes()).hexdigest()
     lock_digest = f"sha256:{lock_sha256}"
     return EnvironmentProvenance(

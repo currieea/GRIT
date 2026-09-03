@@ -8,21 +8,47 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
 from grit.config import LinearProbeTrainingConfig
-from grit.projection import FittedLinearProjection
+from grit.data.waterbirds import (
+    WaterbirdsAdjustedWeightSpec,
+    WaterbirdsDatasetManifest,
+    mint_waterbirds_adjusted_weight_spec,
+)
+from grit.data.waterbirds_pairs import (
+    WaterbirdsOraclePairManifest,
+    WaterbirdsOraclePairSet,
+)
+from grit.features.waterbirds import (
+    WaterbirdsFeatureCache,
+    WaterbirdsTuningFeatureCache,
+    fit_waterbirds_oracle_projection,
+    load_waterbirds_feature_cache,
+    load_waterbirds_tuning_feature_cache,
+)
+from grit.methods.projection import FittedLinearProjection
+from grit.methods.training import (
+    PersistedLinearCheckpointStore,
+    persist_selected_linear_checkpoint,
+)
+from grit.methods.waterbirds_training import (
+    TrainedWaterbirdsRun,
+    WaterbirdsMethod,
+    restore_waterbirds_checkpoint,
+    train_waterbirds_linear_probe,
+)
 from grit.schemas import SeedStage
-from grit.search import (
+from grit.search.outputs import (
+    WaterbirdsPairedSummaryArtifact,
+    WaterbirdsProductionMethodSummary,
+    WaterbirdsProductionSummary,
+)
+from grit.search.plan import (
     SearchCandidate,
     SearchPlan,
     WaterbirdsProductionSearchConfig,
     current_code_provenance,
     current_environment_provenance,
 )
-from grit.search_outputs import (
-    WaterbirdsPairedSummaryArtifact,
-    WaterbirdsProductionMethodSummary,
-    WaterbirdsProductionSummary,
-)
-from grit.search_scheduler import (
+from grit.search.scheduler import (
     CompletedStageRun,
     LocalRunScheduler,
     SearchRunTask,
@@ -31,28 +57,7 @@ from grit.search_scheduler import (
     make_final_search_task,
     make_search_task,
 )
-from grit.selection import CheckpointIdentity
-from grit.training import (
-    PersistedLinearCheckpointStore,
-    persist_selected_linear_checkpoint,
-)
-from grit.waterbirds import (
-    WaterbirdsAdjustedWeightSpec,
-    WaterbirdsDatasetManifest,
-    mint_waterbirds_adjusted_weight_spec,
-)
-from grit.waterbirds_features import (
-    WaterbirdsFeatureCache,
-    WaterbirdsTuningFeatureCache,
-    fit_waterbirds_oracle_projection,
-    load_waterbirds_feature_cache,
-    load_waterbirds_tuning_feature_cache,
-)
-from grit.waterbirds_pairs import (
-    WaterbirdsOraclePairManifest,
-    WaterbirdsOraclePairSet,
-)
-from grit.waterbirds_run_contracts import (
+from grit.search.waterbirds_contracts import (
     WaterbirdsArtifactReference,
     WaterbirdsCandidateConfig,
     WaterbirdsCheckpointArtifactReference,
@@ -63,7 +68,8 @@ from grit.waterbirds_run_contracts import (
     WaterbirdsRunResult,
     make_waterbirds_metric_summary,
 )
-from grit.waterbirds_selection import (
+from grit.selection.cmnist import CheckpointIdentity
+from grit.selection.waterbirds import (
     FrozenWaterbirdsCandidate,
     WaterbirdsTuningFinalists,
     freeze_waterbirds_candidate,
@@ -72,15 +78,9 @@ from grit.waterbirds_selection import (
     select_confirmed_waterbirds_candidate,
     select_waterbirds_checkpoint,
 )
-from grit.waterbirds_training import (
-    TrainedWaterbirdsRun,
-    WaterbirdsMethod,
-    restore_waterbirds_checkpoint,
-    train_waterbirds_linear_probe,
-)
 
 if TYPE_CHECKING:
-    from grit.production_search import (
+    from grit.search.cmnist import (
         ProductionExecutionLimits,
         ProductionSearchStatus,
     )
@@ -99,7 +99,7 @@ def run_waterbirds_production_search(
 ) -> WaterbirdsProductionSummary | ProductionSearchStatus:
     """Run or continue the approved Waterbirds ERM/oracle-GRIT search."""
 
-    from grit.production_search import (
+    from grit.search.cmnist import (
         limited_tuning_candidates,
         persist_canonical_artifact,
         waterbirds_status_from_plan,
@@ -249,7 +249,7 @@ def run_waterbirds_production_search(
         final_view = handle.open(frozen, frozen_checkpoint, restoration)
         final_table = cache.verify_final_view(final_view)
         predictions = trained.algorithm.predict(final_table.features)
-        from grit.waterbirds_selection import compute_waterbirds_final_metric
+        from grit.selection.waterbirds import compute_waterbirds_final_metric
 
         final_metric = compute_waterbirds_final_metric(
             final_view,
@@ -339,7 +339,7 @@ def _finalists(
     runs: tuple[WaterbirdsCompletedStageRun, ...],
     output_root: Path,
 ) -> dict[WaterbirdsMethod, WaterbirdsTuningFinalists]:
-    from grit.production_search import persist_canonical_artifact
+    from grit.search.cmnist import persist_canonical_artifact
 
     artifacts = compute_waterbirds_finalists(plan, runs)
     for method, finalists in artifacts.items():
@@ -371,7 +371,7 @@ def _freeze_winners(
     runs: tuple[WaterbirdsCompletedStageRun, ...],
     output_root: Path,
 ) -> dict[WaterbirdsMethod, FrozenWaterbirdsCandidate]:
-    from grit.production_search import persist_canonical_artifact
+    from grit.search.cmnist import persist_canonical_artifact
 
     winners = compute_waterbirds_winners(plan, finalists, runs)
     for method, frozen in winners.items():

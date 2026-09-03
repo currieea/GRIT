@@ -8,22 +8,22 @@ from typing import Literal
 import torch
 from pydantic import Field, StrictStr
 
-from grit.checkpoints import CheckpointStore
 from grit.config import LinearProbeTrainingConfig
-from grit.projection import FittedLinearProjection
-from grit.schemas import SeedStage, StrictBoundaryModel
-from grit.selection import CheckpointIdentity
-from grit.training import (
+from grit.data.waterbirds import WaterbirdsAdjustedWeightSpec
+from grit.features.waterbirds import (
+    WaterbirdsEvaluationFeatureTable,
+    WaterbirdsTrainingFeatureTable,
+)
+from grit.methods.checkpoints import CheckpointStore
+from grit.methods.projection import FittedLinearProjection
+from grit.methods.training import (
     InMemoryLinearCheckpointStore,
     LinearProbeAlgorithm,
     LinearProbeState,
 )
-from grit.waterbirds import WaterbirdsAdjustedWeightSpec
-from grit.waterbirds_features import (
-    WaterbirdsEvaluationFeatureTable,
-    WaterbirdsTrainingFeatureTable,
-)
-from grit.waterbirds_selection import (
+from grit.schemas import SeedStage, StrictBoundaryModel
+from grit.selection.cmnist import CheckpointIdentity
+from grit.selection.waterbirds import (
     FrozenWaterbirdsCheckpoint,
     WaterbirdsValidationMetricRecord,
     compute_waterbirds_validation_metric,

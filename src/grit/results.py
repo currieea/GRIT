@@ -7,14 +7,14 @@ from typing import Annotated, Literal, TypeAlias
 
 from pydantic import Field, StrictStr, TypeAdapter, model_validator
 
-from grit.checkpoints import RestorationReceipt
 from grit.config import (
     CmnistTestOracleExperimentConfig,
     LinearProjectionConfig,
     OrdinaryExperimentConfig,
 )
+from grit.methods.checkpoints import RestorationReceipt
 from grit.schemas import StrictBoundaryModel
-from grit.selection import (
+from grit.selection.cmnist import (
     DiagnosticMetricRecord,
     DiagnosticSelectionDecision,
     FinalTestMetricRecord,

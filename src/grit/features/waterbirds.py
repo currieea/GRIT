@@ -13,30 +13,30 @@ from numpy.typing import NDArray
 from PIL import Image
 from pydantic import Field, StrictBool, StrictInt, StrictStr, model_validator
 
-from grit.features import (
-    EncoderIdentity,
-    FeatureExtractionRuntime,
-    PilImageEncoder,
-)
-from grit.projection import FittedLinearProjection, fit_linear_projection
-from grit.schemas import StrictBoundaryModel, canonical_digest_value
-from grit.waterbirds import (
+from grit.data.waterbirds import (
     GroupId,
     SplitRole,
     WaterbirdsConstruction,
     validate_waterbirds_construction,
 )
-from grit.waterbirds_pairs import (
+from grit.data.waterbirds_pairs import (
     WaterbirdsOraclePairManifest,
     WaterbirdsOraclePairSet,
 )
+from grit.features.cmnist import (
+    EncoderIdentity,
+    FeatureExtractionRuntime,
+    PilImageEncoder,
+)
+from grit.methods.projection import FittedLinearProjection, fit_linear_projection
+from grit.schemas import StrictBoundaryModel, canonical_digest_value
 
 if TYPE_CHECKING:
-    from grit.waterbirds_selection import (
+    from grit.methods.waterbirds_training import WaterbirdsRestorationReceipt
+    from grit.selection.waterbirds import (
         FrozenWaterbirdsCandidate,
         FrozenWaterbirdsCheckpoint,
     )
-    from grit.waterbirds_training import WaterbirdsRestorationReceipt
 
 FEATURE_DIMENSION = 512
 NonEmptyStr: TypeAlias = Annotated[StrictStr, Field(min_length=1)]

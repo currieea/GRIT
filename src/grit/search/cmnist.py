@@ -11,8 +11,6 @@ from typing import Literal, TypeAlias, cast
 
 from pydantic import Field, StrictInt, StrictStr, model_validator
 
-from grit.checkpoints import restore_checkpoint
-from grit.cmnist import CmnistOraclePairManifest
 from grit.config import (
     OPENAI_CLIP_PREPROCESSING_ID,
     OPENAI_CLIP_REVISION,
@@ -32,28 +30,27 @@ from grit.config import (
     OrdinaryExperimentConfig,
     OrdinarySelectionConfig,
 )
-from grit.features import (
+from grit.data.cmnist import CmnistOraclePairManifest
+from grit.features.cmnist import (
     CmnistFeatureCache,
     CmnistTuningFeatureCache,
     load_cmnist_feature_cache,
     load_cmnist_tuning_feature_cache,
 )
 from grit.lifecycle import open_final_test, record_final_accuracy
-from grit.projection import FittedLinearProjection, fit_linear_projection
+from grit.methods.checkpoints import restore_checkpoint
+from grit.methods.projection import FittedLinearProjection, fit_linear_projection
+from grit.methods.training import (
+    MethodId,
+    PersistedLinearCheckpointStore,
+    TrainedLinearProbeRun,
+    evaluate_accuracy,
+    persist_selected_linear_checkpoint,
+    train_linear_probe,
+)
 from grit.results import ArtifactReference, OrdinaryRunResult, SucceededStatus
 from grit.schemas import CmnistSelector, SeedStage, StrictBoundaryModel
-from grit.search import (
-    CmnistProductionSearchConfig,
-    ResolvedProductionSearchConfig,
-    SearchCandidate,
-    SearchPlan,
-    WaterbirdsProductionSearchConfig,
-    current_code_provenance,
-    current_environment_provenance,
-    load_production_search_config,
-    write_search_plan,
-)
-from grit.search_outputs import (
+from grit.search.outputs import (
     CmnistFinalSeedObservation,
     CmnistMethodSelectorSummary,
     CmnistPairedSeedDifference,
@@ -66,7 +63,18 @@ from grit.search_outputs import (
     make_cmnist_accuracy_summary,
     verify_experiment_index,
 )
-from grit.search_scheduler import (
+from grit.search.plan import (
+    CmnistProductionSearchConfig,
+    ResolvedProductionSearchConfig,
+    SearchCandidate,
+    SearchPlan,
+    WaterbirdsProductionSearchConfig,
+    current_code_provenance,
+    current_environment_provenance,
+    load_production_search_config,
+    write_search_plan,
+)
+from grit.search.scheduler import (
     CmnistCompletedStageRun,
     CompletedStageRun,
     LocalRunScheduler,
@@ -76,7 +84,7 @@ from grit.search_scheduler import (
     make_final_search_task,
     make_search_task,
 )
-from grit.selection import (
+from grit.selection.cmnist import (
     FinalistUnion,
     FrozenCandidateSelection,
     TuningFinalistsArtifact,
@@ -87,15 +95,7 @@ from grit.selection import (
     select_checkpoint,
     select_confirmed_candidate,
 )
-from grit.training import (
-    MethodId,
-    PersistedLinearCheckpointStore,
-    TrainedLinearProbeRun,
-    evaluate_accuracy,
-    persist_selected_linear_checkpoint,
-    train_linear_probe,
-)
-from grit.waterbirds_selection import (
+from grit.selection.waterbirds import (
     FrozenWaterbirdsCandidate,
     WaterbirdsTuningFinalists,
 )
@@ -178,7 +178,7 @@ def run_production_search(
     checked_limits = validate_execution_limits(plan, limits)
     if isinstance(plan.resolved_config.config, CmnistProductionSearchConfig):
         return _run_cmnist_search(plan, checked_limits)
-    from grit.production_waterbirds_search import run_waterbirds_production_search
+    from grit.search.waterbirds import run_waterbirds_production_search
 
     return run_waterbirds_production_search(plan, checked_limits)
 
@@ -1242,7 +1242,7 @@ def waterbirds_status_from_plan(plan: SearchPlan) -> ProductionSearchStatus:
     tuning_runs = cast(
         tuple[WaterbirdsCompletedStageRun, ...], tuning_runs_untyped
     )
-    from grit.production_waterbirds_search import (
+    from grit.search.waterbirds import (
         compute_waterbirds_finalists,
         compute_waterbirds_winners,
     )

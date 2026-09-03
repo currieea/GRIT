@@ -9,11 +9,15 @@ from typing import cast
 import pytest
 
 from grit.config import CmnistSourceCounts, SeedSets
-from grit.projection import ProjectionDiagnostics
+from grit.methods.projection import ProjectionDiagnostics
 from grit.results import OrdinaryRunResult
-from grit.runner import CmnistSmokeRunConfig, CmnistSmokeSummary, run_cmnist_smoke
 from grit.schemas import CmnistSelector
-from grit.selection import (
+from grit.search.cmnist_runner import (
+    CmnistSmokeRunConfig,
+    CmnistSmokeSummary,
+    run_cmnist_smoke,
+)
+from grit.selection.cmnist import (
     FinalTestMetricRecord,
     ValidationMetricRecord,
     select_checkpoint,

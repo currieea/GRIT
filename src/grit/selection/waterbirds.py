@@ -18,18 +18,18 @@ from pydantic import (
 )
 
 from grit.config import SeedSets
-from grit.schemas import SeedStage, StrictBoundaryModel
-from grit.selection import CheckpointIdentity
-from grit.waterbirds import (
+from grit.data.waterbirds import (
     WATERBIRDS_GROUP_ORDER,
     GroupId,
     WaterbirdsAdjustedWeightSpec,
 )
-from grit.waterbirds_features import (
+from grit.features.waterbirds import (
     Normalization,
     WaterbirdsEvaluationFeatureTable,
     WaterbirdsFinalTestView,
 )
+from grit.schemas import SeedStage, StrictBoundaryModel
+from grit.selection.cmnist import CheckpointIdentity
 
 NonEmptyStr: TypeAlias = Annotated[StrictStr, Field(min_length=1)]
 NonNegativeInt: TypeAlias = Annotated[StrictInt, Field(ge=0)]

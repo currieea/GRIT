@@ -12,9 +12,7 @@ from grit.config import (
     OPENAI_CLIP_REVISION,
     OPENAI_CLIP_WEIGHTS_IDENTITY,
 )
-from grit.features import EncoderIdentity, FeatureExtractionRuntime
-from grit.schemas import canonical_digest_value
-from grit.waterbirds import (
+from grit.data.waterbirds import (
     BASE_ARTIFACT_NAME,
     PRODUCTION_TRAIN_GROUP_COUNTS,
     GroupDroGeometry,
@@ -23,12 +21,14 @@ from grit.waterbirds import (
     WaterbirdsOracleRelationship,
     WaterbirdsRecord,
 )
-from grit.waterbirds_features import (
+from grit.data.waterbirds_pairs import WaterbirdsOraclePairManifest
+from grit.features.cmnist import EncoderIdentity, FeatureExtractionRuntime
+from grit.features.waterbirds import (
     WaterbirdsFeatureCacheManifest,
     WaterbirdsFeatureFile,
     WaterbirdsFeatureRecord,
 )
-from grit.waterbirds_pairs import WaterbirdsOraclePairManifest
+from grit.schemas import canonical_digest_value
 
 
 def write_manifest_only_waterbirds_production(

@@ -10,8 +10,7 @@ from pydantic import ValidationError
 
 from grit.results import CodeProvenance
 from grit.schemas import CmnistSelector
-from grit.search import SearchLineage, build_search_plan
-from grit.search_outputs import (
+from grit.search.outputs import (
     CmnistFinalSeedObservation,
     CmnistMethodSelectorSummary,
     CmnistPairedSeedDifference,
@@ -22,6 +21,7 @@ from grit.search_outputs import (
     make_cmnist_accuracy_summary,
     verify_experiment_index,
 )
+from grit.search.plan import SearchLineage, build_search_plan
 from tests.test_search_plan import resolved_search_fixture
 
 
@@ -151,7 +151,7 @@ def test_experiment_index_round_trip_and_digest_tampering(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "grit.search._code_provenance",
+        "grit.search.plan._code_provenance",
         lambda: CodeProvenance(git_revision="1" * 40, git_dirty=False),
     )
     plan = build_search_plan(resolved_search_fixture())

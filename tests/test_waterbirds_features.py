@@ -10,14 +10,20 @@ import torch
 from PIL import Image
 from pydantic import ValidationError
 
-from grit.features import EncoderIdentity, FeatureExtractionRuntime
-from grit.projection import ProjectionDiagnostics
-from grit.waterbirds import (
+from grit.data.waterbirds import (
     WaterbirdsConstruction,
     construct_waterbirds_cf,
     waterbirds_oracle_relation_view,
 )
-from grit.waterbirds_features import (
+from grit.data.waterbirds_pairs import (
+    WaterbirdsOraclePairSet,
+    build_waterbirds_oracle_pairs,
+)
+from grit.data.waterbirds_smoke_assets import (
+    make_waterbirds_smoke_assets as make_waterbirds_fixture,
+)
+from grit.features.cmnist import EncoderIdentity, FeatureExtractionRuntime
+from grit.features.waterbirds import (
     DeterministicFakeWaterbirdsEncoder,
     Normalization,
     WaterbirdsEvaluationFeatureTable,
@@ -31,13 +37,7 @@ from grit.waterbirds_features import (
     prepare_waterbirds_feature_cache,
     waterbirds_oracle_pair_features,
 )
-from grit.waterbirds_pairs import (
-    WaterbirdsOraclePairSet,
-    build_waterbirds_oracle_pairs,
-)
-from grit.waterbirds_smoke_assets import (
-    make_waterbirds_smoke_assets as make_waterbirds_fixture,
-)
+from grit.methods.projection import ProjectionDiagnostics
 
 
 def _prepared(

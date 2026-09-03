@@ -9,7 +9,7 @@ from typing import Generic, Protocol, TypeVar
 from pydantic import Field, StrictStr
 
 from grit.schemas import StrictBoundaryModel
-from grit.selection import CheckpointIdentity, FrozenCheckpointSelection
+from grit.selection.cmnist import CheckpointIdentity, FrozenCheckpointSelection
 
 StateT = TypeVar("StateT")
 

@@ -15,7 +15,12 @@ from numpy.typing import NDArray
 from PIL import Image
 from pydantic import Field, StrictInt, StrictStr, model_validator
 
-from grit.cmnist import (
+from grit.config import (
+    OPENAI_CLIP_PREPROCESSING_ID,
+    OPENAI_CLIP_REVISION,
+    OPENAI_CLIP_WEIGHTS_IDENTITY,
+)
+from grit.data.cmnist import (
     CmnistConstruction,
     CmnistDatasetManifest,
     CmnistOraclePairManifest,
@@ -24,12 +29,7 @@ from grit.cmnist import (
     OraclePairRecord,
     RenderedCmnistTable,
 )
-from grit.config import (
-    OPENAI_CLIP_PREPROCESSING_ID,
-    OPENAI_CLIP_REVISION,
-    OPENAI_CLIP_WEIGHTS_IDENTITY,
-)
-from grit.data import (
+from grit.data.views import (
     ExampleIdentity,
     FinalTestHandle,
     FinalTestSplitDescriptor,

@@ -11,14 +11,14 @@ import torch
 from pydantic import ValidationError
 
 from grit.config import SeedSets
-from grit.schemas import SeedStage
-from grit.waterbirds import (
+from grit.data.waterbirds import (
     WATERBIRDS_GROUP_ORDER,
     WaterbirdsAdjustedWeightSpec,
     WaterbirdsGroupCounts,
 )
-from grit.waterbirds_features import WaterbirdsEvaluationFeatureTable
-from grit.waterbirds_selection import (
+from grit.features.waterbirds import WaterbirdsEvaluationFeatureTable
+from grit.schemas import SeedStage
+from grit.selection.waterbirds import (
     GROUP_ORDER,
     WaterbirdsFinalTestMetricRecord,
     WaterbirdsGroupAccuracy,

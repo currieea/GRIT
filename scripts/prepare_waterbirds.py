@@ -19,7 +19,7 @@ from grit.paths import (
     default_clip_weights_root,
     scratch_root,
 )
-from grit.waterbirds_runner import prepare_server_waterbirds
+from grit.search.waterbirds_runner import prepare_server_waterbirds
 
 
 def main() -> None:

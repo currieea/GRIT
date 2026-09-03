@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from pydantic import FiniteFloat, PositiveInt
 
-from grit.checkpoints import RestorationReceipt
-from grit.data import FinalTestHandle, FinalTestView
+from grit.data.views import FinalTestHandle, FinalTestView
+from grit.methods.checkpoints import RestorationReceipt
 from grit.schemas import SeedStage
-from grit.selection import (
+from grit.selection.cmnist import (
     FinalTestMetricRecord,
     FrozenCandidateSelection,
     FrozenCheckpointSelection,

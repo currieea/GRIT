@@ -9,7 +9,7 @@ from typing import Literal, cast
 import pytest
 import torch
 
-from grit.cmnist import (
+from grit.data.cmnist import (
     CMNIST_ENVIRONMENT_SPECS,
     PRODUCTION_PARTITION_TARGETS,
     CmnistDatasetManifest,
@@ -23,7 +23,7 @@ from grit.cmnist import (
     pair_source_view,
     partition_cmnist_sources,
 )
-from grit.data import ValidationView
+from grit.data.views import ValidationView
 from grit.schemas import canonical_digest_value
 
 _TRAIN_DIGIT_COUNTS = (5923, 6742, 5958, 6131, 5842, 5421, 5918, 6265, 5851, 5949)

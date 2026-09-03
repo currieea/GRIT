@@ -13,12 +13,12 @@ import torch
 from numpy.typing import NDArray
 from pydantic import StrictInt, StrictStr
 
-from grit.checkpoints import CheckpointStore, StoredCheckpoint
 from grit.config import LinearProbeTrainingConfig
-from grit.features import FeatureTable
-from grit.projection import FittedLinearProjection
+from grit.features.cmnist import FeatureTable
+from grit.methods.checkpoints import CheckpointStore, StoredCheckpoint
+from grit.methods.projection import FittedLinearProjection
 from grit.schemas import SeedStage, StrictBoundaryModel
-from grit.selection import CheckpointIdentity, ValidationMetricRecord
+from grit.selection.cmnist import CheckpointIdentity, ValidationMetricRecord
 
 MethodId = Literal["erm", "grit"]
 

@@ -22,11 +22,6 @@ from pydantic import (
     model_validator,
 )
 
-from grit.cmnist import (
-    CMNIST_ENVIRONMENT_SPECS,
-    CmnistDatasetManifest,
-    CmnistOraclePairManifest,
-)
 from grit.config import (
     OPENAI_CLIP_PREPROCESSING_ID,
     OPENAI_CLIP_REVISION,
@@ -47,17 +42,22 @@ from grit.config import (
     OrdinarySelectionConfig,
     SeedSets,
 )
-from grit.features import CmnistFeatureCacheManifest, EncoderIdentity
-from grit.paths import expand_config_path
-from grit.results import CodeProvenance, EnvironmentProvenance
-from grit.schemas import CmnistSelector, StrictBoundaryModel, canonical_digest_value
-from grit.waterbirds import (
+from grit.data.cmnist import (
+    CMNIST_ENVIRONMENT_SPECS,
+    CmnistDatasetManifest,
+    CmnistOraclePairManifest,
+)
+from grit.data.waterbirds import (
     WaterbirdsDatasetManifest,
     mint_waterbirds_adjusted_weight_spec,
 )
-from grit.waterbirds_features import WaterbirdsFeatureCacheManifest
-from grit.waterbirds_pairs import WaterbirdsOraclePairManifest
-from grit.waterbirds_run_contracts import WaterbirdsCandidateConfig
+from grit.data.waterbirds_pairs import WaterbirdsOraclePairManifest
+from grit.features.cmnist import CmnistFeatureCacheManifest, EncoderIdentity
+from grit.features.waterbirds import WaterbirdsFeatureCacheManifest
+from grit.paths import REPO_ROOT, expand_config_path
+from grit.results import CodeProvenance, EnvironmentProvenance
+from grit.schemas import CmnistSelector, StrictBoundaryModel, canonical_digest_value
+from grit.search.waterbirds_contracts import WaterbirdsCandidateConfig
 
 NonEmptyStr: TypeAlias = Annotated[StrictStr, Field(min_length=1)]
 Normalization: TypeAlias = Literal["none", "l2"]
@@ -1308,7 +1308,7 @@ def _git_repository_root() -> Path:
     try:
         root = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],
-            cwd=Path(__file__).resolve().parents[2],
+            cwd=REPO_ROOT,
             check=True,
             capture_output=True,
             text=True,
@@ -1321,7 +1321,7 @@ def _git_repository_root() -> Path:
 
 
 def _environment_provenance() -> EnvironmentProvenance:
-    lock_path = Path(__file__).resolve().parents[2] / "uv.lock"
+    lock_path = REPO_ROOT / "uv.lock"
     lock_digest = (
         canonical_digest_value(lock_path.read_text(encoding="utf-8"))
         if lock_path.is_file()

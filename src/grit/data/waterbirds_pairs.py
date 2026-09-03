@@ -8,7 +8,7 @@ from typing import Annotated, Literal, TypeAlias
 from pydantic import Field, StrictBool, StrictInt, StrictStr, model_validator
 
 from grit.schemas import StrictBoundaryModel, canonical_digest_value
-from grit.waterbirds import (
+from grit.data.waterbirds import (
     WaterbirdsOracleRelationship,
     WaterbirdsOracleRelationView,
 )

@@ -10,7 +10,7 @@ import numpy as np
 from numpy.typing import NDArray
 from PIL import Image
 
-from grit.waterbirds import (
+from grit.data.waterbirds import (
     FixtureWaterbirdsProfile,
     ParsedWaterbirdsAssets,
     WaterbirdsGroupCounts,

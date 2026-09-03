@@ -6,20 +6,20 @@ from pathlib import Path
 
 import torch
 
-from grit.checkpoints import restore_checkpoint
 from grit.config import LinearProbeTrainingConfig
-from grit.features import FeatureTable, TableRole
-from grit.projection import fit_linear_projection
-from grit.schemas import CmnistSelector, SeedStage
-from grit.selection import (
-    FrozenCheckpointSelection,
-    select_checkpoint,
-)
-from grit.training import (
+from grit.features.cmnist import FeatureTable, TableRole
+from grit.methods.checkpoints import restore_checkpoint
+from grit.methods.projection import fit_linear_projection
+from grit.methods.training import (
     LinearProbeState,
     PersistedLinearCheckpointStore,
     persist_selected_linear_checkpoint,
     train_linear_probe,
+)
+from grit.schemas import CmnistSelector, SeedStage
+from grit.selection.cmnist import (
+    FrozenCheckpointSelection,
+    select_checkpoint,
 )
 
 

@@ -8,13 +8,7 @@ from typing import Literal
 import pytest
 from pydantic import ValidationError
 
-from grit.checkpoints import (
-    CheckpointStore,
-    RestorationReceipt,
-    StoredCheckpoint,
-    restore_checkpoint,
-)
-from grit.data import (
+from grit.data.views import (
     CmnistTestOracleView,
     ExampleIdentity,
     FinalTestHandle,
@@ -28,6 +22,12 @@ from grit.data import (
     validate_cmnist_repeated_validation_views,
 )
 from grit.lifecycle import open_final_test, record_final_accuracy
+from grit.methods.checkpoints import (
+    CheckpointStore,
+    RestorationReceipt,
+    StoredCheckpoint,
+    restore_checkpoint,
+)
 from grit.results import (
     ArtifactReference,
     CmnistTestOracleDiagnosticResult,
@@ -40,7 +40,7 @@ from grit.results import (
     parse_run_result_json,
 )
 from grit.schemas import CmnistSelector, SeedStage
-from grit.selection import (
+from grit.selection.cmnist import (
     CheckpointIdentity,
     DiagnosticMetricRecord,
     FinalTestMetricRecord,

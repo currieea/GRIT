@@ -9,11 +9,11 @@ import argparse
 import sys
 from pathlib import Path
 
-from grit.production_search import (
+from grit.search.cmnist import (
     completed_task_revisions,
     production_search_status,
 )
-from grit.search import load_production_search_config
+from grit.search.plan import load_production_search_config
 
 
 def main() -> None:

@@ -12,7 +12,7 @@ import pytest
 from PIL import Image
 from pydantic import ValidationError
 
-from grit.waterbirds import (
+from grit.data.waterbirds import (
     BASE_ARTIFACT_NAME,
     ParsedWaterbirdsAssets,
     ProductionWaterbirdsProfile,
@@ -26,11 +26,11 @@ from grit.waterbirds import (
     waterbirds_training_view,
     waterbirds_validation_view,
 )
-from grit.waterbirds_pairs import (
+from grit.data.waterbirds_pairs import (
     WaterbirdsOraclePairManifest,
     build_waterbirds_oracle_pairs,
 )
-from grit.waterbirds_smoke_assets import (
+from grit.data.waterbirds_smoke_assets import (
     make_waterbirds_smoke_assets as make_waterbirds_fixture,
 )
 

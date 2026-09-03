@@ -9,7 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from grit.schemas import CmnistSelector, SeedStage
-from grit.selection import (
+from grit.selection.cmnist import (
     DiagnosticMetricRecord,
     FinalTestMetricRecord,
     TuningFinalistsArtifact,

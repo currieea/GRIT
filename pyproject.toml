@@ -40,7 +40,7 @@ testpaths = ["tests"]
 # implementation belongs under src/grit, with tests under tests.
 [tool.ruff]
 include = ["src/**/*.py", "tests/**/*.py", "scripts/*.py"]
-exclude = ["scripts/legacy"]
+exclude = ["legacy"]
 line-length = 88
 target-version = "py310"
 

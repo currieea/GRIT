@@ -17,16 +17,16 @@ from pydantic import (
 )
 
 from grit.config import LinearProbeTrainingConfig, SeedSets
+from grit.methods.waterbirds_training import WaterbirdsRestorationReceipt
 from grit.results import CodeProvenance, EnvironmentProvenance
 from grit.schemas import StrictBoundaryModel, canonical_digest_value
-from grit.selection import CheckpointIdentity
-from grit.waterbirds_selection import (
+from grit.selection.cmnist import CheckpointIdentity
+from grit.selection.waterbirds import (
     FrozenWaterbirdsCandidate,
     FrozenWaterbirdsCheckpoint,
     WaterbirdsFinalTestMetricRecord,
     WaterbirdsValidationMetricRecord,
 )
-from grit.waterbirds_training import WaterbirdsRestorationReceipt
 
 NonEmptyStr: TypeAlias = Annotated[StrictStr, Field(min_length=1)]
 

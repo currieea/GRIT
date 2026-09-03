@@ -22,16 +22,7 @@ from pydantic import (
 )
 
 from grit.config import LinearProbeTrainingConfig, SeedSets
-from grit.features import OfficialOpenAiClipEncoder
-from grit.projection import FittedLinearProjection
-from grit.results import CodeProvenance, EnvironmentProvenance
-from grit.schemas import SeedStage, StrictBoundaryModel
-from grit.tracking import EventSink, LifecycleEvent, NullEventSink
-from grit.training import (
-    PersistedLinearCheckpointStore,
-    persist_selected_linear_checkpoint,
-)
-from grit.waterbirds import (
+from grit.data.waterbirds import (
     BASE_ARTIFACT_NAME,
     ProductionWaterbirdsProfile,
     WaterbirdsConstruction,
@@ -40,7 +31,13 @@ from grit.waterbirds import (
     mint_waterbirds_adjusted_weight_spec,
     waterbirds_oracle_relation_view,
 )
-from grit.waterbirds_features import (
+from grit.data.waterbirds_pairs import (
+    WaterbirdsOraclePairSet,
+    build_waterbirds_oracle_pairs,
+)
+from grit.data.waterbirds_smoke_assets import make_waterbirds_smoke_assets
+from grit.features.cmnist import OfficialOpenAiClipEncoder
+from grit.features.waterbirds import (
     DeterministicFakeWaterbirdsEncoder,
     Normalization,
     WaterbirdsFeatureCache,
@@ -48,11 +45,21 @@ from grit.waterbirds_features import (
     load_waterbirds_feature_cache,
     prepare_waterbirds_feature_cache,
 )
-from grit.waterbirds_pairs import (
-    WaterbirdsOraclePairSet,
-    build_waterbirds_oracle_pairs,
+from grit.methods.projection import FittedLinearProjection
+from grit.methods.training import (
+    PersistedLinearCheckpointStore,
+    persist_selected_linear_checkpoint,
 )
-from grit.waterbirds_run_contracts import (
+from grit.methods.waterbirds_training import (
+    TrainedWaterbirdsRun,
+    WaterbirdsMethod,
+    restore_waterbirds_checkpoint,
+    train_waterbirds_linear_probe,
+)
+from grit.paths import REPO_ROOT
+from grit.results import CodeProvenance, EnvironmentProvenance
+from grit.schemas import SeedStage, StrictBoundaryModel
+from grit.search.waterbirds_contracts import (
     WaterbirdsArtifactReference,
     WaterbirdsCandidateConfig,
     WaterbirdsCheckpointArtifactReference,
@@ -67,7 +74,7 @@ from grit.waterbirds_run_contracts import (
     WaterbirdsSmokeSummary,
     make_waterbirds_metric_summary,
 )
-from grit.waterbirds_selection import (
+from grit.selection.waterbirds import (
     FrozenWaterbirdsCandidate,
     WaterbirdsValidationMetricRecord,
     compute_waterbirds_final_metric,
@@ -77,13 +84,7 @@ from grit.waterbirds_selection import (
     select_confirmed_waterbirds_candidate,
     select_waterbirds_checkpoint,
 )
-from grit.waterbirds_smoke_assets import make_waterbirds_smoke_assets
-from grit.waterbirds_training import (
-    TrainedWaterbirdsRun,
-    WaterbirdsMethod,
-    restore_waterbirds_checkpoint,
-    train_waterbirds_linear_probe,
-)
+from grit.tracking import EventSink, LifecycleEvent, NullEventSink
 
 NonEmptyStr: TypeAlias = Annotated[StrictStr, Field(min_length=1)]
 WATERBIRDS_CONSTRUCTION_RELATIVE_ROOT = Path("construction")
@@ -622,7 +623,7 @@ def _projection(candidate: _Candidate) -> FittedLinearProjection:
 
 
 def _code_provenance() -> CodeProvenance:
-    root = Path(__file__).resolve().parents[2]
+    root = REPO_ROOT
     revision = subprocess.run(
         ("git", "rev-parse", "HEAD"),
         cwd=root,
@@ -643,7 +644,7 @@ def _code_provenance() -> CodeProvenance:
 
 
 def _environment_provenance() -> EnvironmentProvenance:
-    root = Path(__file__).resolve().parents[2]
+    root = REPO_ROOT
     lock_digest = (
         f"sha256:{hashlib.sha256((root / 'uv.lock').read_bytes()).hexdigest()}"
     )

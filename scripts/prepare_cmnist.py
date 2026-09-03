@@ -19,7 +19,7 @@ from grit.paths import (
     default_clip_weights_root,
     scratch_root,
 )
-from grit.runner import prepare_official_cmnist
+from grit.search.cmnist_runner import prepare_official_cmnist
 
 
 def main() -> None:

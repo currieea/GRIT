@@ -11,7 +11,7 @@ import torch
 from numpy.typing import NDArray
 from pydantic import Field, FiniteFloat, StrictInt, StrictStr, model_validator
 
-from grit.data import (
+from grit.data.views import (
     ExampleIdentity,
     TrainingSplitDescriptor,
     TrainingView,

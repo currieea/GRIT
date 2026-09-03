@@ -5,7 +5,7 @@ nuisance directions, the directions that differ across domains for the same clas
 nuisance directions are estimated from counterfactual pairs (oracle, conditional
 matching, or nearest-neighbor matching).
 
-> The method is called **ECMP** in the inherited code under `solver/`. It was renamed to
+> The method is called **ECMP** in the inherited code under `legacy/`. It was renamed to
 > **GRIT** in the paper. The new implementation lives in `src/grit/`, driven by the
 > scripts in `scripts/`.
 
@@ -79,6 +79,6 @@ uv run scripts/smoke.py cmnist        # hermetic end-to-end with a fake encoder
 uv run scripts/smoke.py waterbirds
 ```
 
-Guidance for contributors and agents is in `AGENTS.md`. The inherited preprocessing
-scripts are under `scripts/legacy/`. The original rewrite plan, contracts, and progress
-log are archived under `docs/history/`.
+Guidance for contributors and agents is in `AGENTS.md`. The inherited implementation,
+including its W&B sweep launchers, is under `legacy/`. The original rewrite plan,
+contracts, and progress log are archived under `docs/history/`.

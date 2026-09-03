@@ -10,11 +10,11 @@ import pytest
 from pydantic import ValidationError
 
 from grit.config import SeedSets
-from grit.projection import ProjectionDiagnostics
-from grit.waterbirds import WaterbirdsAdjustedWeightSpec, WaterbirdsGroupCounts
-from grit.waterbirds_run_contracts import WaterbirdsRunResult, WaterbirdsSmokeSummary
-from grit.waterbirds_runner import WaterbirdsSmokeRunConfig, run_waterbirds_smoke
-from grit.waterbirds_selection import (
+from grit.data.waterbirds import WaterbirdsAdjustedWeightSpec, WaterbirdsGroupCounts
+from grit.methods.projection import ProjectionDiagnostics
+from grit.search.waterbirds_contracts import WaterbirdsRunResult, WaterbirdsSmokeSummary
+from grit.search.waterbirds_runner import WaterbirdsSmokeRunConfig, run_waterbirds_smoke
+from grit.selection.waterbirds import (
     WaterbirdsFinalTestMetricRecord,
     WaterbirdsValidationMetricRecord,
     select_waterbirds_checkpoint,

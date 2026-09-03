@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from grit.projection import (
+from grit.methods.projection import (
     FittedLinearProjection,
     ProjectionDiagnostics,
     fit_linear_projection,

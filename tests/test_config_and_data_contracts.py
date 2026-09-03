@@ -17,7 +17,7 @@ from grit.config import (
     OrdinarySelectionConfig,
     parse_experiment_config_json,
 )
-from grit.data import (
+from grit.data.views import (
     ExampleIdentity,
     FinalTestHandle,
     FinalTestSplitDescriptor,

@@ -19,11 +19,11 @@ def main() -> None:
     args = parser.parse_args()
     config = args.config or REPO_ROOT / "configs" / args.dataset / "smoke.yaml"
     if args.dataset == "cmnist":
-        from grit.runner import load_cmnist_smoke_config, run_cmnist_smoke
+        from grit.search.cmnist_runner import load_cmnist_smoke_config, run_cmnist_smoke
 
         print(run_cmnist_smoke(load_cmnist_smoke_config(config)).canonical_json())
         return
-    from grit.waterbirds_runner import (
+    from grit.search.waterbirds_runner import (
         load_waterbirds_smoke_config,
         run_waterbirds_smoke,
     )

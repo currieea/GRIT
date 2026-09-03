@@ -10,8 +10,8 @@ from grit.config import CmnistTestOracleExperimentConfig
 from grit.schemas import StrictBoundaryModel
 
 if TYPE_CHECKING:
-    from grit.checkpoints import RestorationReceipt
-    from grit.selection import FrozenCandidateSelection, FrozenCheckpointSelection
+    from grit.methods.checkpoints import RestorationReceipt
+    from grit.selection.cmnist import FrozenCandidateSelection, FrozenCheckpointSelection
 
 
 class ExampleIdentity(StrictBoundaryModel):

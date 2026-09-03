@@ -21,7 +21,7 @@ from grit.config import (
     SeedSets,
 )
 from grit.schemas import CmnistSelector, SeedStage
-from grit.selection import ValidationMetricRecord
+from grit.selection.cmnist import ValidationMetricRecord
 
 
 def seed_sets() -> SeedSets:

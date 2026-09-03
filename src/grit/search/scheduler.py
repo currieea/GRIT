@@ -9,21 +9,21 @@ from typing import Annotated, Literal, TypeAlias, cast
 
 from pydantic import Field, StrictInt, StrictStr, TypeAdapter, model_validator
 
+from grit.methods.training import (
+    PersistedLinearCheckpointManifest,
+    PersistedLinearCheckpointStore,
+)
 from grit.results import CodeProvenance, EnvironmentProvenance, OrdinaryRunResult
 from grit.schemas import CmnistSelector, SeedStage, StrictBoundaryModel
-from grit.search import SearchCandidate, SearchLineage, SearchPlan
-from grit.selection import (
+from grit.search.plan import SearchCandidate, SearchLineage, SearchPlan
+from grit.search.waterbirds_contracts import WaterbirdsRunResult
+from grit.selection.cmnist import (
     CheckpointSelectionDecision,
     FrozenCandidateSelection,
     ValidationMetricRecord,
     select_checkpoint,
 )
-from grit.training import (
-    PersistedLinearCheckpointManifest,
-    PersistedLinearCheckpointStore,
-)
-from grit.waterbirds_run_contracts import WaterbirdsRunResult
-from grit.waterbirds_selection import (
+from grit.selection.waterbirds import (
     FrozenWaterbirdsCandidate,
     WaterbirdsCheckpointSelection,
     WaterbirdsValidationMetricRecord,

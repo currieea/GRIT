@@ -11,8 +11,8 @@ from typing import Annotated, Literal, TypeAlias
 from pydantic import Field, FiniteFloat, StrictInt, StrictStr, model_validator
 
 from grit.schemas import CmnistSelector, StrictBoundaryModel
-from grit.search import SearchLineage
-from grit.waterbirds_run_contracts import MetricName, WaterbirdsMetricSummary
+from grit.search.plan import SearchLineage
+from grit.search.waterbirds_contracts import MetricName, WaterbirdsMetricSummary
 
 NonEmptyStr: TypeAlias = Annotated[StrictStr, Field(min_length=1)]
 
@@ -262,7 +262,7 @@ class WaterbirdsProductionMethodSummary(StrictBoundaryModel):
                 self.raw_average_summary,
             ),
         )
-        from grit.waterbirds_run_contracts import make_waterbirds_metric_summary
+        from grit.search.waterbirds_contracts import make_waterbirds_metric_summary
 
         for name, values, summary in metrics:
             if summary != make_waterbirds_metric_summary(name, values):
@@ -299,7 +299,7 @@ class WaterbirdsProductionSummary(StrictBoundaryModel):
         )
         if self.paired_worst_group_by_seed != expected:
             raise ValueError("Waterbirds paired differences are inconsistent")
-        from grit.waterbirds_run_contracts import make_waterbirds_metric_summary
+        from grit.search.waterbirds_contracts import make_waterbirds_metric_summary
 
         if self.paired_worst_group_summary != make_waterbirds_metric_summary(
             "grit_minus_erm_worst_group_accuracy",
@@ -323,7 +323,7 @@ class WaterbirdsPairedSummaryArtifact(StrictBoundaryModel):
             self.configured_final_seeds
         ):
             raise ValueError("Waterbirds paired artifact must align by final seed")
-        from grit.waterbirds_run_contracts import make_waterbirds_metric_summary
+        from grit.search.waterbirds_contracts import make_waterbirds_metric_summary
 
         if self.paired_worst_group_summary != make_waterbirds_metric_summary(
             "grit_minus_erm_worst_group_accuracy",
@@ -401,7 +401,7 @@ def verify_experiment_index(root: Path, index: ExperimentIndex) -> ExperimentInd
             raise ValueError(
                 f"experiment-index artifact digest mismatch: {artifact.relative_path}"
             )
-    from grit.search import ResolvedProductionSearchConfig, SearchPlan
+    from grit.search.plan import ResolvedProductionSearchConfig, SearchPlan
 
     plan = SearchPlan.model_validate_json(
         (root / "search-plan.json").read_text(encoding="utf-8")

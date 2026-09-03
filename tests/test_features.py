@@ -10,8 +10,8 @@ import torch
 from PIL import Image
 from pydantic import ValidationError
 
-import grit.features as feature_module
-from grit.cmnist import (
+import grit.features.cmnist as feature_module
+from grit.data.cmnist import (
     CmnistConstruction,
     CmnistOraclePairSet,
     CmnistPartitionTargets,
@@ -20,8 +20,8 @@ from grit.cmnist import (
     construct_cmnist,
     pair_source_view,
 )
-from grit.data import ExampleIdentity, FinalTestSplitDescriptor, FinalTestView
-from grit.features import (
+from grit.data.views import ExampleIdentity, FinalTestSplitDescriptor, FinalTestView
+from grit.features.cmnist import (
     CmnistFeatureCacheManifest,
     DeterministicFakeEncoder,
     FeatureCacheValidationError,
