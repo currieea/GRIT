@@ -51,7 +51,6 @@ from grit.config import (
 from grit.features import (
     CmnistFeatureCache,
     DeterministicFakeEncoder,
-    FeatureDevice,
     Normalization,
     OfficialOpenAiClipEncoder,
     load_cmnist_feature_cache,
@@ -244,7 +243,7 @@ def prepare_official_cmnist(
     pair_seed: int,
     normalization: Normalization,
     allow_download: bool,
-    feature_device: FeatureDevice,
+    feature_device: str,
     clip_batch_size: int,
 ) -> None:
     """Explicit real-data/official-CLIP preparation command implementation."""

@@ -192,11 +192,17 @@ def test_checked_production_examples_match_preparation_layout_and_seeds(
     )
 
     monkeypatch.delenv("PROJECT_SCRATCH")
-    monkeypatch.delenv("GRIT_SCRATCH", raising=False)
-    with pytest.raises(ValueError, match="unset environment variable"):
-        load_production_search_config(
-            repository / "configs/cmnist/production-search.yaml"
-        )
+    monkeypatch.setenv("GRIT_SCRATCH", "/alt")
+    fallback = load_production_search_config(
+        repository / "configs/cmnist/production-search.yaml"
+    )
+    assert fallback.output_root == "/alt/outputs/cmnist-primary"
+    monkeypatch.delenv("GRIT_SCRATCH")
+    local = load_production_search_config(
+        repository / "configs/cmnist/production-search.yaml"
+    )
+    expected = repository / "scratch/outputs/cmnist-primary"
+    assert local.output_root == expected.as_posix()
 
 
 def _space() -> SearchSpaceConfig:
@@ -2270,3 +2276,71 @@ def test_cli_run_constructs_bounded_tuning_controls(
             max_new_runs=2,
         )
     ]
+
+
+def test_cli_pilot_selects_erm_and_grit_at_first_seed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from grit.cli.main import main
+
+    config_path, _ = _write_cmnist_production_config(
+        tmp_path, output_root=tmp_path / "output"
+    )
+    monkeypatch.setattr("grit.search._code_provenance", lambda: _CLEAN_CODE_PROVENANCE)
+    plan = plan_production_search(config_path)
+    observed: list[ProductionExecutionLimits | None] = []
+
+    def fake_run(
+        _path: Path,
+        limits: ProductionExecutionLimits | None = None,
+    ) -> ProductionSearchStatus:
+        observed.append(limits)
+        return _cmnist_status_stub(plan)
+
+    monkeypatch.setattr("grit.production_search.run_production_search", fake_run)
+    assert main(("run", str(config_path), "--pilot")) == 0
+    (limits,) = observed
+    assert limits is not None
+    assert limits.stop_after == "tuning"
+    assert limits.max_new_runs == 2
+    assert limits.tuning_seed == plan.seeds.stages.tuning[0]
+    by_id = {candidate.candidate_id: candidate for candidate in plan.candidates}
+    erm, grit = (by_id[candidate_id] for candidate_id in limits.candidate_ids)
+    assert erm.method_id == "erm"
+    assert grit.method_id == "grit" and (grit.requested_rank or 0) > 0
+
+
+def test_cli_dry_run_plans_and_reports_without_training(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from grit.cli.main import main
+
+    output_root = tmp_path / "output"
+    config_path, _ = _write_cmnist_production_config(tmp_path, output_root=output_root)
+    monkeypatch.setattr("grit.search._code_provenance", lambda: _CLEAN_CODE_PROVENANCE)
+
+    def forbidden(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("dry run reached training")
+
+    monkeypatch.setattr("grit.production_search.run_production_search", forbidden)
+    assert main(("run", str(config_path), "--dry-run")) == 0
+    assert (output_root / "search-plan.json").is_file()
+    assert not (output_root / "runs").exists()
+
+
+def _cmnist_status_stub(plan: SearchPlan) -> ProductionSearchStatus:
+    return ProductionSearchStatus(
+        schema_version="grit.production-search-status/v1",
+        dataset="cmnist",
+        plan_digest=plan.canonical_digest(),
+        phase="tuning",
+        tuning_expected=plan.expected_run_counts.tuning,
+        tuning_complete=0,
+        confirmation_expected=0,
+        confirmation_complete=0,
+        frozen_winner_count=0,
+        final_expected=0,
+        final_complete=0,
+    )

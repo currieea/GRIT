@@ -337,7 +337,7 @@ def test_cuda_preflight_fails_before_writing_when_cuda_is_unavailable(
     assert not weights_root.exists()
 
 
-def test_cuda_preflight_requires_one_visible_gpu(
+def test_cuda_device_index_out_of_range_is_rejected(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
@@ -346,13 +346,20 @@ def test_cuda_preflight_requires_one_visible_gpu(
     encoder = OfficialOpenAiClipEncoder(
         weights_root=weights_root,
         allow_download=False,
-        device="cuda",
+        device="cuda:2",
         batch_size=2,
     )
 
-    with pytest.raises(RuntimeError, match="exactly one visible GPU"):
+    with pytest.raises(RuntimeError, match="only 2 CUDA device"):
         encoder.preflight()
     assert not weights_root.exists()
+
+
+def test_cuda_device_string_parsing() -> None:
+    assert feature_module.cuda_device_index("cuda") == 0
+    assert feature_module.cuda_device_index("cuda:1") == 1
+    with pytest.raises(ValueError, match="cuda:N"):
+        feature_module.cuda_device_index("cuda:x")
 
 
 def test_feature_runtime_rejects_cross_backend_details() -> None:

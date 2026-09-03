@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import importlib
 import json
-import os
 import platform
 import subprocess
 import sys
@@ -48,6 +47,7 @@ from grit.config import (
     SeedSets,
 )
 from grit.features import CmnistFeatureCacheManifest, EncoderIdentity
+from grit.paths import expand_config_path
 from grit.results import CodeProvenance, EnvironmentProvenance
 from grit.schemas import CmnistSelector, StrictBoundaryModel, canonical_digest_value
 from grit.waterbirds import (
@@ -352,12 +352,7 @@ def _expand_environment(value: object) -> object:
     """Expand `${VAR}` references in YAML strings so configs are server-portable."""
 
     if isinstance(value, str):
-        expanded = os.path.expandvars(value)
-        if "${" in expanded:
-            raise ValueError(
-                f"config references an unset environment variable: {value}"
-            )
-        return expanded
+        return expand_config_path(value)
     if isinstance(value, dict):
         return {
             str(key): _expand_environment(item)
@@ -1188,6 +1183,16 @@ def _atomic_write_text(path: Path, payload: str) -> None:
     temporary = path.with_name(f".{path.name}.tmp")
     temporary.write_text(payload, encoding="utf-8")
     temporary.replace(path)
+
+
+def current_code_provenance() -> CodeProvenance:
+    """Commit and dirty flag for the code executing right now."""
+
+    return _code_provenance()
+
+
+def current_environment_provenance() -> EnvironmentProvenance:
+    return _environment_provenance()
 
 
 def _code_provenance() -> CodeProvenance:

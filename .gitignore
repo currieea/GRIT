@@ -51,3 +51,4 @@ wandb_data/
 # Local logs and scheduler output
 *.log
 slurm-*.out
+scratch/

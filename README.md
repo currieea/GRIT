@@ -18,12 +18,13 @@ uv sync --frozen --extra cpu --group dev     # WSL / laptops
 On the ECN servers, run `scratch-project` inside the repo first. It exports
 `PROJECT_SCRATCH` and puts the virtualenv on node-local disk. Every path below defaults
 to `$PROJECT_SCRATCH/{data,artifacts,outputs}`, so the checked-in configs run unmodified.
+Without it, `GRIT_SCRATCH` or a git-ignored `scratch/` in the repo is used instead.
 
 ## ColoredMNIST
 
 ```bash
 scratch-project
-uv run --frozen --extra cu128 grit prepare cmnist        # downloads MNIST + CLIP, ~minutes on GPU
+uv run --frozen --extra cu128 grit prepare cmnist        # downloads MNIST + CLIP; uses cuda:0, or --device cuda:1
 uv run --frozen --extra cu128 grit run configs/cmnist/production-search.yaml --pilot
 uv run --frozen --extra cu128 grit run configs/cmnist/production-search.yaml   # full grid, use tmux
 uv run --frozen --extra cu128 grit status configs/cmnist/production-search.yaml

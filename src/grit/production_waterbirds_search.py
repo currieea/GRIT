@@ -14,6 +14,8 @@ from grit.search import (
     SearchCandidate,
     SearchPlan,
     WaterbirdsProductionSearchConfig,
+    current_code_provenance,
+    current_environment_provenance,
 )
 from grit.search_outputs import (
     WaterbirdsPairedSummaryArtifact,
@@ -261,8 +263,8 @@ def run_waterbirds_production_search(
             final_seed=task.seed,
             resolved_config=runtime.config,
             resolved_config_digest=runtime.config.canonical_digest(),
-            code=plan.code,
-            environment=plan.environment,
+            code=current_code_provenance(),
+            environment=current_environment_provenance(),
             validation_metrics=trained.validation_metrics,
             candidate_selection=frozen,
             checkpoint_selection=frozen_checkpoint,

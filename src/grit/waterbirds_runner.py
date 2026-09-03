@@ -22,7 +22,7 @@ from pydantic import (
 )
 
 from grit.config import LinearProbeTrainingConfig, SeedSets
-from grit.features import FeatureDevice, OfficialOpenAiClipEncoder
+from grit.features import OfficialOpenAiClipEncoder
 from grit.projection import FittedLinearProjection
 from grit.results import CodeProvenance, EnvironmentProvenance
 from grit.schemas import SeedStage, StrictBoundaryModel
@@ -148,7 +148,7 @@ def prepare_server_waterbirds(
     construction_seed: int,
     normalization: Normalization,
     allow_clip_download: bool,
-    feature_device: FeatureDevice,
+    feature_device: str,
     clip_batch_size: int,
 ) -> None:
     """Prepare production assets supplied by the server; never acquire datasets."""

@@ -190,7 +190,7 @@ class OfficialOpenAiClipEncoder:
 
     weights_root: Path
     allow_download: bool
-    device: FeatureDevice = "cpu"
+    device: str = "cpu"
     batch_size: int = 256
     _model: _ClipModel | None = None
     _preprocess: _ClipPreprocess | None = None
@@ -294,22 +294,25 @@ class OfficialOpenAiClipEncoder:
         torch.set_float32_matmul_precision("highest")
         if self.device == "cpu":
             return "cpu", _cpu_feature_runtime(batch_size=self.batch_size)
+        if not (self.device == "cuda" or self.device.startswith("cuda:")):
+            raise ValueError(f"device must be cpu, cuda, or cuda:N, got {self.device}")
 
         os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
         if not torch.cuda.is_available():
             raise RuntimeError(
                 "CUDA feature preparation was requested but CUDA is unavailable"
             )
-        if torch.cuda.device_count() != 1:
+        device_index = cuda_device_index(self.device)
+        if device_index >= torch.cuda.device_count():
             raise RuntimeError(
-                "CUDA feature preparation requires exactly one visible GPU; "
-                "set CUDA_VISIBLE_DEVICES"
+                f"requested {self.device} but only "
+                f"{torch.cuda.device_count()} CUDA device(s) are visible"
             )
+        torch.cuda.set_device(device_index)
         torch.backends.cuda.matmul.allow_tf32 = False
         torch.backends.cudnn.allow_tf32 = False
         torch.backends.cudnn.benchmark = False
         torch.backends.cudnn.deterministic = True
-        device_index = torch.cuda.current_device()
         cuda_runtime = cast(str | None, getattr(torch.version, "cuda", None))
         if not cuda_runtime:
             raise RuntimeError("CUDA PyTorch build does not report a CUDA runtime")
@@ -328,6 +331,17 @@ class OfficialOpenAiClipEncoder:
             device_name=torch.cuda.get_device_name(device_index),
             compute_capability=(int(capability[0]), int(capability[1])),
         )
+
+
+def cuda_device_index(device: str) -> int:
+    """`cuda` means `cuda:0`; `cuda:N` selects that visible device."""
+
+    suffix = device.removeprefix("cuda")
+    if suffix == "":
+        return 0
+    if not suffix.startswith(":") or not suffix[1:].isdigit():
+        raise ValueError(f"device must be cpu, cuda, or cuda:N, got {device}")
+    return int(suffix[1:])
 
 
 @dataclass(frozen=True, slots=True)

@@ -9,23 +9,13 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal, cast
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+from grit.paths import REPO_ROOT, scratch_root
 
 # Seeds used by the checked-in production configs. Preparation must use the same ones.
 DEFAULT_CONSTRUCTION_SEED = 1729
 DEFAULT_PAIR_SEED = 2718
 
 Normalization = Literal["none", "l2"]
-
-
-def scratch_root() -> Path:
-    """Large data and outputs live under PROJECT_SCRATCH (see ~/dotfiles scratch.sh)."""
-
-    for name in ("PROJECT_SCRATCH", "GRIT_SCRATCH"):
-        value = os.environ.get(name)
-        if value:
-            return Path(value)
-    return REPO_ROOT / "scratch"
 
 
 def default_clip_weights_root() -> Path:
@@ -35,10 +25,10 @@ def default_clip_weights_root() -> Path:
     return scratch_root() / "data" / "clip-weights"
 
 
-def auto_device() -> Literal["cpu", "cuda"]:
+def auto_device() -> str:
     import torch
 
-    return "cuda" if torch.cuda.is_available() else "cpu"
+    return "cuda:0" if torch.cuda.is_available() else "cpu"
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -105,7 +95,7 @@ def _add_common_prepare_arguments(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument("--normalization", choices=("none", "l2"), default="none")
     parser.add_argument(
-        "--device", choices=("cpu", "cuda"), help="CLIP device (default: auto)"
+        "--device", help="cpu, cuda, or cuda:N for CLIP (default: cuda:0 if available)"
     )
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument(
