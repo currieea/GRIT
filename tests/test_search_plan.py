@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from typing import Literal, cast
 
 import pytest
@@ -150,7 +151,7 @@ def _seeds() -> SearchSeedConfig:
 def test_checked_production_examples_match_preparation_layout_and_seeds(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from grit.cli.main import DEFAULT_CONSTRUCTION_SEED, DEFAULT_PAIR_SEED
+    from grit.paths import DEFAULT_CONSTRUCTION_SEED, DEFAULT_PAIR_SEED
 
     repository = Path(__file__).resolve().parents[1]
     monkeypatch.setenv("PROJECT_SCRATCH", "/scratch")
@@ -2189,7 +2190,8 @@ def test_waterbirds_real_plan_pilot_uses_same_bounded_lifecycle(
 def test_cli_run_passes_no_limits_for_unrestricted_run(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from grit.cli.main import main
+    script = _run_search_script()
+    main = cast(Callable[[Sequence[str] | None], int], script.main)
 
     observed: list[ProductionExecutionLimits | None] = []
 
@@ -2204,10 +2206,22 @@ def test_cli_run_passes_no_limits_for_unrestricted_run(
         observed.append(limits)
         return _Summary()
 
-    monkeypatch.setattr("grit.production_search.plan_production_search", _fake_plan)
-    monkeypatch.setattr("grit.production_search.run_production_search", fake_run)
-    assert main(("run", "config.yaml")) == 0
+    monkeypatch.setattr(script, "plan_production_search", _fake_plan)
+    monkeypatch.setattr(script, "run_production_search", fake_run)
+    assert main(("config.yaml",)) == 0
     assert observed == [None]
+
+
+def _run_search_script() -> ModuleType:
+    """Load scripts/run_search.py; scripts are entry points, not a package."""
+
+    path = Path(__file__).resolve().parents[1] / "scripts" / "run_search.py"
+    spec = importlib.util.spec_from_file_location("run_search", path)
+    if spec is None or spec.loader is None:
+        raise AssertionError("could not load scripts/run_search.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 class _FakePlan:
@@ -2225,7 +2239,8 @@ def _fake_plan(_path: Path) -> _FakePlan:
 def test_cli_run_constructs_bounded_tuning_controls(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from grit.cli.main import main
+    script = _run_search_script()
+    main = cast(Callable[[Sequence[str] | None], int], script.main)
 
     observed: list[ProductionExecutionLimits | None] = []
 
@@ -2248,12 +2263,11 @@ def test_cli_run_constructs_bounded_tuning_controls(
             final_complete=0,
         )
 
-    monkeypatch.setattr("grit.production_search.plan_production_search", _fake_plan)
-    monkeypatch.setattr("grit.production_search.run_production_search", fake_run)
+    monkeypatch.setattr(script, "plan_production_search", _fake_plan)
+    monkeypatch.setattr(script, "run_production_search", fake_run)
     assert (
         main(
             (
-                "run",
                 "config.yaml",
                 "--candidate-id",
                 "candidate:erm",
@@ -2282,7 +2296,8 @@ def test_cli_pilot_selects_erm_and_grit_at_first_seed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from grit.cli.main import main
+    script = _run_search_script()
+    main = cast(Callable[[Sequence[str] | None], int], script.main)
 
     config_path, _ = _write_cmnist_production_config(
         tmp_path, output_root=tmp_path / "output"
@@ -2298,8 +2313,8 @@ def test_cli_pilot_selects_erm_and_grit_at_first_seed(
         observed.append(limits)
         return _cmnist_status_stub(plan)
 
-    monkeypatch.setattr("grit.production_search.run_production_search", fake_run)
-    assert main(("run", str(config_path), "--pilot")) == 0
+    monkeypatch.setattr(script, "run_production_search", fake_run)
+    assert main((str(config_path), "--pilot")) == 0
     (limits,) = observed
     assert limits is not None
     assert limits.stop_after == "tuning"
@@ -2315,7 +2330,8 @@ def test_cli_dry_run_plans_and_reports_without_training(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from grit.cli.main import main
+    script = _run_search_script()
+    main = cast(Callable[[Sequence[str] | None], int], script.main)
 
     output_root = tmp_path / "output"
     config_path, _ = _write_cmnist_production_config(tmp_path, output_root=output_root)
@@ -2324,8 +2340,8 @@ def test_cli_dry_run_plans_and_reports_without_training(
     def forbidden(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("dry run reached training")
 
-    monkeypatch.setattr("grit.production_search.run_production_search", forbidden)
-    assert main(("run", str(config_path), "--dry-run")) == 0
+    monkeypatch.setattr(script, "run_production_search", forbidden)
+    assert main((str(config_path), "--dry-run")) == 0
     assert (output_root / "search-plan.json").is_file()
     assert not (output_root / "runs").exists()
 

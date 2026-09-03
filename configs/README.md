@@ -6,7 +6,7 @@
   needs `--normalization l2` at prepare time, a separate artifact root, and
   `experiment_variant: l2_normalized_sensitivity`).
 - `cmnist/smoke.yaml` and `waterbirds/smoke.yaml`: hermetic end-to-end checks with a
-  fake encoder, run by `grit smoke`. Never report their numbers.
+  fake encoder, run by `scripts/smoke.py`. Never report their numbers.
 
 The scientific fields (grid, seeds, selectors, epochs) are fixed by the protocol docs
 and validated on load; only paths and names are meant to change between machines.

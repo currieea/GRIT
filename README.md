@@ -6,36 +6,39 @@ nuisance directions are estimated from counterfactual pairs (oracle, conditional
 matching, or nearest-neighbor matching).
 
 > The method is called **ECMP** in the inherited code under `solver/`. It was renamed to
-> **GRIT** in the paper. The new implementation lives in `src/grit/`.
+> **GRIT** in the paper. The new implementation lives in `src/grit/`, driven by the
+> scripts in `scripts/`.
 
 ## Setup
 
 ```bash
-uv sync --frozen --extra cu128 --group dev   # GPU machines
-uv sync --frozen --extra cpu --group dev     # WSL / laptops
+uv sync --group dev
 ```
 
-On the ECN servers, run `scratch-project` inside the repo first. It exports
-`PROJECT_SCRATCH` and puts the virtualenv on node-local disk. Every path below defaults
-to `$PROJECT_SCRATCH/{data,artifacts,outputs}`, so the checked-in configs run unmodified.
-Without it, `GRIT_SCRATCH` or a git-ignored `scratch/` in the repo is used instead.
+That installs the default PyTorch build (CUDA on Linux). On the ECN servers, run
+`scratch-project` inside the repo first so the virtualenv, data, and outputs land on
+node-local disk. Every path below defaults to `$PROJECT_SCRATCH/{data,artifacts,outputs}`;
+without that variable, `GRIT_SCRATCH` or a git-ignored `scratch/` in the repo is used.
 
 ## ColoredMNIST
 
 ```bash
-scratch-project
-uv run --frozen --extra cu128 grit prepare cmnist        # downloads MNIST + CLIP; uses cuda:0, or --device cuda:1
-uv run --frozen --extra cu128 grit run configs/cmnist/production-search.yaml --pilot
-uv run --frozen --extra cu128 grit run configs/cmnist/production-search.yaml   # full grid, use tmux
-uv run --frozen --extra cu128 grit status configs/cmnist/production-search.yaml
+uv run scripts/prepare_cmnist.py
+uv run scripts/run_search.py configs/cmnist/production-search.yaml --pilot
+uv run scripts/run_search.py configs/cmnist/production-search.yaml
+uv run scripts/search_status.py configs/cmnist/production-search.yaml
 ```
 
-`prepare` writes `$PROJECT_SCRATCH/artifacts/cmnist-none/` (dataset manifest, 256 oracle
-pairs, CLIP feature cache). `run` validates those artifacts, writes the plan under
-`$PROJECT_SCRATCH/outputs/cmnist-primary/`, and runs every task it does not already find
-there. It is safe to interrupt and rerun; completed tasks are reused. `--pilot` runs one
-ERM and one GRIT tuning task and stops. `--dry-run` writes the plan and prints status
-without training.
+`prepare_cmnist.py` downloads MNIST and the pinned CLIP weights if needed, builds the
+partitions and 256 oracle pairs, and caches CLIP features under
+`$PROJECT_SCRATCH/artifacts/cmnist-none/`. It uses `cuda:0` when available; pass
+`--device cuda:1` or `--device cpu` to override.
+
+`run_search.py` validates those artifacts, writes the plan under
+`$PROJECT_SCRATCH/outputs/cmnist-primary/`, and runs every task not already there. It is
+safe to interrupt and rerun. `--pilot` runs one ERM and one GRIT tuning task and stops.
+`--dry-run` writes the plan and prints status without training. Run the full grid inside
+tmux.
 
 The grid is 16 ERM and 400 GRIT (16 by 25 ranks) candidates, 3 tuning seeds, top-3
 confirmation with 2 more seeds, and 10 final seeds for the winner. Selection uses
@@ -45,32 +48,33 @@ validation only; see `docs/experiments/cmnist.md`.
 
 Waterbirds-CF is rebuilt from released Waterbirds-95, CUB images and masks, and four
 Places365 categories. Put them under `$PROJECT_SCRATCH/data/{waterbirds,cub,cub-masks,places}`
-(or pass `--released-root`, `--cub-root`, `--masks-root`, `--places-root`), then:
+or pass `--released-root`, `--cub-root`, `--masks-root`, `--places-root`. Then:
 
 ```bash
-uv run --frozen --extra cu128 grit prepare waterbirds
-uv run --frozen --extra cu128 grit run configs/waterbirds/production-search.yaml --pilot
-uv run --frozen --extra cu128 grit run configs/waterbirds/production-search.yaml
+uv run scripts/prepare_waterbirds.py
+uv run scripts/run_search.py configs/waterbirds/production-search.yaml --pilot
+uv run scripts/run_search.py configs/waterbirds/production-search.yaml
 ```
 
 See `docs/experiments/waterbirds.md` for the construction and protocol.
 
 ## Custom paths
 
-Copy a config, edit the paths, and pass the copy to `grit run`. Absolute paths and
-`${ANY_ENV_VAR}` both work. Preparation seeds must match the config
-(`--construction-seed 1729`, `--pair-seed 2718` are the defaults and match the checked-in
-configs). Use a separate prepared root and config for the L2-normalized sensitivity.
+Copy a config, edit the paths, and pass the copy to `run_search.py`. Absolute paths and
+`${ANY_ENV_VAR}` both work. Preparation seeds must match the config; the defaults
+(`--construction-seed 1729`, `--pair-seed 2718`) match the checked-in configs. Use a
+separate prepared root and config for the L2-normalized sensitivity.
 
 ## Development
 
 ```bash
-uv run --frozen --extra cpu ruff check .
-uv run --frozen --extra cpu basedpyright
-uv run --frozen --extra cpu pytest
-uv run --frozen --extra cpu grit smoke cmnist       # hermetic end-to-end with fake encoder
-uv run --frozen --extra cpu grit smoke waterbirds
+uv run ruff check .
+uv run basedpyright
+uv run pytest
+uv run scripts/smoke.py cmnist        # hermetic end-to-end with a fake encoder
+uv run scripts/smoke.py waterbirds
 ```
 
-Guidance for contributors and agents is in `AGENTS.md`. The original rewrite plan,
-contracts, and progress log are archived under `docs/history/`.
+Guidance for contributors and agents is in `AGENTS.md`. The inherited preprocessing
+scripts are under `scripts/legacy/`. The original rewrite plan, contracts, and progress
+log are archived under `docs/history/`.
