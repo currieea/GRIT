@@ -1,7 +1,7 @@
 # ColoredMNIST experiment protocol
 
-Status: **Implemented for ERM and oracle GRIT. Conditional and nearest-neighbor pair
-definitions are still open.**
+Status: **Implemented for ERM and oracle GRIT. GroupDRO is specified but not yet
+implemented. Conditional and nearest-neighbor pair definitions are still open.**
 
 ## Purpose
 
@@ -24,9 +24,9 @@ The initial vertical slice compares:
 - ERM
 - GRIT/ECMP with clean oracle invariant pairs
 
-Conditional/random and nearest-neighbor pair construction are subsequent variants. The
-set and implementation order of additional domain-generalization baselines remain
-unresolved.
+GroupDRO is the first baseline extension. Conditional/random and nearest-neighbor pair
+construction are subsequent GRIT variants. REx, IRM, and any additional
+domain-generalization baselines remain deferred.
 
 ## Construction semantics
 
@@ -401,6 +401,34 @@ Use deterministic full `torch.linalg.svd` rather than randomized
 Projection estimation may use only the configured training-side pair set. The normalized
 feature sensitivity fits a separate projection after normalizing every endpoint.
 
+## GroupDRO baseline
+
+GroupDRO trains the same unprojected linear probe over frozen CLIP features as ERM. It
+does not receive pair identities. Its four training groups are the Cartesian product of
+the noisy downstream target and observed color, in fixed order `(y=0,c=0)`, `(0,1)`,
+`(1,0)`, `(1,1)`. This privileged group annotation is part of the method definition; it
+comes only from the two training environments.
+
+Training follows the reference GroupDRO stochastic objective. For per-group minibatch
+losses $L_g$ and adversarial probabilities $q_g$, initialize $q_g=1/4$ and update
+
+$$
+q_g \leftarrow \frac{q_g\exp(\eta L_g)}{\sum_j q_j\exp(\eta L_j)},
+\qquad
+L_{\mathrm{DRO}}=\sum_g q_gL_g.
+$$
+
+The training sampler assigns every example inverse-frequency weight for its group and
+samples exactly the training-set size with replacement per epoch. This makes groups
+uniform in expectation without requiring every minibatch to contain every group. The
+sampler is deterministic from the run seed. Generalization adjustment is fixed to zero,
+and loss normalization is disabled, matching the reference Waterbirds invocation.
+
+The approved adversarial step-size candidates are `0.001`, `0.01`, and `0.1`: the
+reference default `0.01` with one decade on either side. They are crossed with the same
+learning-rate and weight-decay grid as ERM and selected using the same validation-only
+selectors. See the [reference GroupDRO implementation](https://github.com/kohpangwei/group_DRO).
+
 ## Parameter search
 
 The search is configuration-driven and applies the same saved candidate results to both
@@ -409,6 +437,8 @@ selectors.
 - ERM searches the Cartesian product of the approved learning-rate and weight-decay
   candidates.
 - GRIT searches that optimizer grid jointly with ranks 2 through 24.
+- GroupDRO searches that optimizer grid jointly with adversarial step sizes `0.001`,
+  `0.01`, and `0.1` once its implementation is enrolled.
 - Every candidate runs on three tuning seeds.
 - The top three configurations receive two confirmation seeds.
 - The five-seed validation mean selects the frozen configuration.

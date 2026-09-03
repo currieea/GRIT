@@ -1,7 +1,8 @@
 # Waterbirds experiment protocol
 
-Status: **Implemented for ERM and oracle GRIT. Source assets (Waterbirds, CUB, masks,
-Places) still need to be acquired; estimated-pair definitions are still open.**
+Status: **Implemented for ERM and oracle GRIT. GroupDRO is specified but not yet
+implemented. Source assets (Waterbirds, CUB, masks, Places) still need to be acquired;
+estimated-pair definitions are still open.**
 
 ## Purpose
 
@@ -383,6 +384,30 @@ Evaluation uses the four `(y, background)` groups.
 - Raw sample-average accuracy may also be reported but is labeled `raw_average`.
 - A missing expected group is an integrity failure rather than a silently ignored group.
 
+## GroupDRO baseline
+
+GroupDRO trains the same unprojected linear probe over frozen CLIP features as ERM. It
+does not receive pair identities. Its four training groups use the canonical
+`(y, background)` order above, and no validation or test metadata enters optimization.
+
+For per-group minibatch losses $L_g$ and adversarial probabilities $q_g$, initialize
+$q_g=1/4$ and apply the reference update
+
+$$
+q_g \leftarrow \frac{q_g\exp(\eta L_g)}{\sum_j q_j\exp(\eta L_j)},
+\qquad
+L_{\mathrm{DRO}}=\sum_g q_gL_g.
+$$
+
+The training sampler assigns examples inverse-frequency group weights and samples exactly
+the training-set size with replacement per epoch. It is deterministic from the run seed
+and balances groups in expectation rather than requiring all four groups in every
+minibatch. Generalization adjustment is fixed to zero, and loss normalization is
+disabled. The approved adversarial step-size candidates are `0.001`, `0.01`, and `0.1`,
+centered on the reference implementation's `0.01` default. They are crossed with the
+same learning-rate and weight-decay grid as ERM and selected using validation worst-group
+accuracy. See the [reference GroupDRO implementation](https://github.com/kohpangwei/group_DRO).
+
 ## Model and checkpoint selection
 
 The only ordinary Waterbirds selector maximizes official validation worst-group
@@ -429,7 +454,9 @@ does not define selection.
 
 For ERM and GRIT, the approved shared optimizer grid is the Cartesian product of the
 learning-rate and weight-decay candidates above. GRIT additionally searches the approved
-rank candidates. Later methods add only their prespecified method-specific parameters.
+rank candidates. GroupDRO searches that optimizer grid jointly with adversarial step
+sizes `0.001`, `0.01`, and `0.1`. Later methods add only their prespecified
+method-specific parameters.
 
 Milestone 6A implements this ERM/oracle-GRIT grid over explicit prepared manifests. Strict
 planning accepts only the production 4,795/1,199/5,794 Waterbirds-CF inventory, exact
@@ -640,7 +667,7 @@ are not valid ordinary selections and numerical parity is not an exit requiremen
   canonical PNG encoding before any reportable reconstruction is accepted.
 - Approve the conditional/random sampling algorithm and nearest-neighbor distance/reuse
   policy.
-- Set method-specific search ranges for GroupDRO and the estimated-pair variants.
+- Set method-specific search ranges for the estimated-pair variants.
 - Pin any upper Python and training-accelerator versions beyond the initial PyTorch
   2.11.0/CUDA 12.8 feature-preparation profile.
 
@@ -657,6 +684,7 @@ are not valid ordinary selections and numerical parity is not an exit requiremen
 - [x] L2-normalized features are a separately reported sensitivity
 - [x] Adam optimizer search, seed aggregation, and uncertainty protocol approved
 - [x] Initial method and diagnostic scope approved
+- [x] GroupDRO groups, sampler, objective, and adversarial step-size search approved
 - [x] Deterministic server-side Waterbirds-CF reconstruction plan approved
 - [x] Minimal retained Places subset and storage plan approved
 - [ ] Source datasets acquired and hashes verified on the experiment server
@@ -664,4 +692,4 @@ are not valid ordinary selections and numerical parity is not an exit requiremen
 - [x] ERM/oracle-GRIT feature, projection, four-group selection, restoration, and final
       lifecycle implemented and hermetically tested
 - [ ] Conditional and nearest-pair details approved
-- [ ] Later-method search spaces approved
+- [ ] Later-method search spaces beyond GroupDRO approved
