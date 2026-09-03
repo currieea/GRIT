@@ -43,18 +43,9 @@ from grit.methods.projection import FittedLinearProjection, fit_linear_projectio
 from grit.results import CodeProvenance, EnvironmentProvenance
 from grit.schemas import CmnistSelector, SeedStage, canonical_digest_value
 from grit.search.cmnist import (
-    ProductionExecutionLimits,
-    ProductionSearchStatus,
     compute_cmnist_finalists,
     compute_cmnist_winners,
-    limited_tuning_candidates,
     materialize_cmnist_candidate_config,
-    persist_canonical_artifact,
-    plan_production_search,
-    production_pilot_candidates,
-    production_search_status,
-    run_production_search,
-    validate_execution_limits,
 )
 from grit.search.cmnist_runner import (
     CMNIST_DATASET_MANIFEST_RELATIVE_PATH,
@@ -79,6 +70,17 @@ from grit.search.plan import (
     build_search_plan,
     load_production_search_config,
     resolve_production_search_config,
+)
+from grit.search.run import (
+    ProductionExecutionLimits,
+    ProductionSearchStatus,
+    limited_tuning_candidates,
+    persist_canonical_artifact,
+    plan_production_search,
+    production_pilot_candidates,
+    production_search_status,
+    run_production_search,
+    validate_execution_limits,
 )
 from grit.search.scheduler import (
     CmnistCompletedStageRun,
@@ -1170,8 +1172,8 @@ def test_status_is_read_only_and_uses_saved_clean_provenance_from_dirty_tree(
     def forbidden(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("status crossed a planning, writing, or runtime boundary")
 
-    monkeypatch.setattr("grit.search.cmnist.plan_production_search", forbidden)
-    monkeypatch.setattr("grit.search.cmnist.write_search_plan", forbidden)
+    monkeypatch.setattr("grit.search.run.plan_production_search", forbidden)
+    monkeypatch.setattr("grit.search.run.write_search_plan", forbidden)
     monkeypatch.setattr("grit.search.cmnist._load_cmnist_cache", forbidden)
     monkeypatch.setattr("grit.search.plan._code_provenance", forbidden)
     status = production_search_status(config_path)
@@ -1950,8 +1952,8 @@ def test_programmatic_invalid_limits_fail_before_dataset_dispatch(
     ) -> None:
         dispatch_calls.append("dispatch")
 
-    monkeypatch.setattr("grit.search.cmnist.plan_production_search", fake_plan)
-    monkeypatch.setattr("grit.search.cmnist._run_cmnist_search", forbidden_dispatch)
+    monkeypatch.setattr("grit.search.run.plan_production_search", fake_plan)
+    monkeypatch.setattr("grit.search.cmnist.run_cmnist_search", forbidden_dispatch)
     with pytest.raises(ValueError, match="integer|nonempty strings"):
         _ = run_production_search(Path("unused.yaml"), limits)
     assert not dispatch_calls
@@ -2025,7 +2027,7 @@ def test_cmnist_real_plan_pilot_runs_two_canonical_tuning_tasks_only(
     def fake_pair_manifest(_plan: SearchPlan) -> _PairIdentity:
         return _PairIdentity()
 
-    monkeypatch.setattr("grit.search.cmnist.plan_production_search", fake_plan)
+    monkeypatch.setattr("grit.search.run.plan_production_search", fake_plan)
     monkeypatch.setattr("grit.search.cmnist._load_cmnist_cache", fake_cache_loader)
     monkeypatch.setattr(
         "grit.search.cmnist._cmnist_pair_manifest", fake_pair_manifest
@@ -2149,7 +2151,7 @@ def test_waterbirds_real_plan_pilot_uses_same_bounded_lifecycle(
     def fake_weights(_dataset: object) -> WaterbirdsAdjustedWeightSpec:
         return weights
 
-    monkeypatch.setattr("grit.search.cmnist.plan_production_search", fake_plan)
+    monkeypatch.setattr("grit.search.run.plan_production_search", fake_plan)
     monkeypatch.setattr(
         "grit.search.waterbirds._dataset_manifest", fake_dataset
     )

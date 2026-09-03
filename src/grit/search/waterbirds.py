@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, cast
+from typing import Literal, cast
 
 from grit.config import LinearProbeTrainingConfig
 from grit.data.waterbirds import (
@@ -48,6 +48,15 @@ from grit.search.plan import (
     current_code_provenance,
     current_environment_provenance,
 )
+from grit.search.run import (
+    ProductionExecutionLimits,
+    ProductionSearchStatus,
+    complete_outputs_valid,
+    limited_tuning_candidates,
+    persist_canonical_artifact,
+    planned_candidate,
+    write_experiment_index,
+)
 from grit.search.scheduler import (
     CompletedStageRun,
     LocalRunScheduler,
@@ -79,12 +88,6 @@ from grit.selection.waterbirds import (
     select_waterbirds_checkpoint,
 )
 
-if TYPE_CHECKING:
-    from grit.search.cmnist import (
-        ProductionExecutionLimits,
-        ProductionSearchStatus,
-    )
-
 
 @dataclass(frozen=True, slots=True)
 class _RuntimeCandidate:
@@ -98,13 +101,6 @@ def run_waterbirds_production_search(
     limits: ProductionExecutionLimits | None = None,
 ) -> WaterbirdsProductionSummary | ProductionSearchStatus:
     """Run or continue the approved Waterbirds ERM/oracle-GRIT search."""
-
-    from grit.search.cmnist import (
-        limited_tuning_candidates,
-        persist_canonical_artifact,
-        waterbirds_status_from_plan,
-        write_experiment_index,
-    )
 
     config = _search_config(plan)
     output_root = Path(plan.resolved_config.output_root)
@@ -339,8 +335,6 @@ def _finalists(
     runs: tuple[WaterbirdsCompletedStageRun, ...],
     output_root: Path,
 ) -> dict[WaterbirdsMethod, WaterbirdsTuningFinalists]:
-    from grit.search.cmnist import persist_canonical_artifact
-
     artifacts = compute_waterbirds_finalists(plan, runs)
     for method, finalists in artifacts.items():
         persist_canonical_artifact(
@@ -371,8 +365,6 @@ def _freeze_winners(
     runs: tuple[WaterbirdsCompletedStageRun, ...],
     output_root: Path,
 ) -> dict[WaterbirdsMethod, FrozenWaterbirdsCandidate]:
-    from grit.search.cmnist import persist_canonical_artifact
-
     winners = compute_waterbirds_winners(plan, finalists, runs)
     for method, frozen in winners.items():
         persist_canonical_artifact(
@@ -699,3 +691,165 @@ def _search_config(plan: SearchPlan) -> WaterbirdsProductionSearchConfig:
     if not isinstance(config, WaterbirdsProductionSearchConfig):
         raise TypeError("Waterbirds production runner received another dataset")
     return config
+
+
+def waterbirds_status_from_plan(plan: SearchPlan) -> ProductionSearchStatus:
+    config = plan.resolved_config.config
+    if not isinstance(config, WaterbirdsProductionSearchConfig):
+        raise TypeError("Waterbirds status received another dataset")
+    scheduler = LocalRunScheduler(Path(plan.resolved_config.output_root), plan)
+    tuning = tuple(
+        make_search_task(plan, candidate, SeedStage.TUNING, seed)
+        for candidate in plan.candidates
+        for seed in config.seeds.stages.tuning
+    )
+    status = scheduler.status(tuning)
+    tuning_complete = len(status.complete_task_ids)
+    if tuning_complete != len(tuning):
+        return ProductionSearchStatus(
+            schema_version="grit.production-search-status/v1",
+            dataset="waterbirds_cf",
+            plan_digest=plan.canonical_digest(),
+            phase="tuning",
+            tuning_expected=len(tuning),
+            tuning_complete=tuning_complete,
+            confirmation_expected=0,
+            confirmation_complete=0,
+            frozen_winner_count=0,
+            final_expected=0,
+            final_complete=0,
+        )
+    tuning_runs_untyped = scheduler.completed_results(tuning)
+    if any(
+        not isinstance(run, WaterbirdsCompletedStageRun)
+        for run in tuning_runs_untyped
+    ):
+        raise ValueError("Waterbirds tuning stage contains another dataset result")
+    tuning_runs = cast(
+        tuple[WaterbirdsCompletedStageRun, ...], tuning_runs_untyped
+    )
+    expected_finalists = compute_waterbirds_finalists(plan, tuning_runs)
+    root = Path(plan.resolved_config.output_root)
+    finalist_count = 0
+    for method in ("erm", "grit"):
+        path = root / "selection" / method / "tuning-finalists.json"
+        if not path.exists():
+            continue
+        finalist_count += 1
+        observed = WaterbirdsTuningFinalists.model_validate_json(
+            path.read_text(encoding="utf-8")
+        )
+        if observed != expected_finalists[method]:
+            raise ValueError(
+                "Waterbirds finalist artifact does not match canonical tuning "
+                f"results: {path}"
+            )
+    if finalist_count != 2:
+        return ProductionSearchStatus(
+            schema_version="grit.production-search-status/v1",
+            dataset="waterbirds_cf",
+            plan_digest=plan.canonical_digest(),
+            phase="confirmation",
+            tuning_expected=len(tuning),
+            tuning_complete=tuning_complete,
+            confirmation_expected=0,
+            confirmation_complete=0,
+            frozen_winner_count=0,
+            final_expected=0,
+            final_complete=0,
+        )
+    by_id = {item.candidate_id: item for item in plan.candidates}
+    confirmation = tuple(
+        make_search_task(
+            plan,
+            planned_candidate(by_id, item.candidate_id),
+            SeedStage.CONFIRMATION,
+            seed,
+        )
+        for method in ("erm", "grit")
+        for item in expected_finalists[method].ordered_candidates
+        for seed in config.seeds.stages.confirmation
+    )
+    confirmation_status = scheduler.status(confirmation)
+    confirmation_complete = len(confirmation_status.complete_task_ids)
+    if confirmation_complete != len(confirmation):
+        return ProductionSearchStatus(
+            schema_version="grit.production-search-status/v1",
+            dataset="waterbirds_cf",
+            plan_digest=plan.canonical_digest(),
+            phase="confirmation",
+            tuning_expected=len(tuning),
+            tuning_complete=tuning_complete,
+            confirmation_expected=len(confirmation),
+            confirmation_complete=confirmation_complete,
+            frozen_winner_count=0,
+            final_expected=0,
+            final_complete=0,
+        )
+    confirmation_runs_untyped = scheduler.completed_results(confirmation)
+    if any(
+        not isinstance(run, WaterbirdsCompletedStageRun)
+        for run in confirmation_runs_untyped
+    ):
+        raise ValueError("Waterbirds confirmation contains another dataset result")
+    confirmation_runs = cast(
+        tuple[WaterbirdsCompletedStageRun, ...], confirmation_runs_untyped
+    )
+    expected_winners = compute_waterbirds_winners(
+        plan, expected_finalists, confirmation_runs
+    )
+    winner_count = 0
+    for method in ("erm", "grit"):
+        path = root / "selection" / method / "winner.json"
+        if path.exists():
+            winner_count += 1
+            observed = FrozenWaterbirdsCandidate.model_validate_json(
+                path.read_text(encoding="utf-8")
+            )
+            if observed != expected_winners[method]:
+                raise ValueError(
+                    "Waterbirds frozen winner does not match canonical confirmation "
+                    f"results: {path}"
+                )
+    if winner_count != 2:
+        return ProductionSearchStatus(
+            schema_version="grit.production-search-status/v1",
+            dataset="waterbirds_cf",
+            plan_digest=plan.canonical_digest(),
+            phase="final",
+            tuning_expected=len(tuning),
+            tuning_complete=tuning_complete,
+            confirmation_expected=len(confirmation),
+            confirmation_complete=confirmation_complete,
+            frozen_winner_count=winner_count,
+            final_expected=0,
+            final_complete=0,
+        )
+    final = tuple(
+        make_final_search_task(
+            plan,
+            planned_candidate(by_id, winner.candidate_id),
+            seed,
+            winner,
+        )
+        for winner in expected_winners.values()
+        for seed in config.seeds.stages.final
+    )
+    final_status = scheduler.status(final)
+    final_complete = len(final_status.complete_task_ids)
+    phase = "final"
+    if final_complete == len(final) and complete_outputs_valid(plan):
+        phase = "complete"
+    return ProductionSearchStatus(
+        schema_version="grit.production-search-status/v1",
+        dataset="waterbirds_cf",
+        plan_digest=plan.canonical_digest(),
+        phase=phase,
+        tuning_expected=len(tuning),
+        tuning_complete=tuning_complete,
+        confirmation_expected=len(confirmation),
+        confirmation_complete=confirmation_complete,
+        frozen_winner_count=2,
+        final_expected=len(final),
+        final_complete=final_complete,
+    )

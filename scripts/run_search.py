@@ -14,7 +14,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from grit.search.cmnist import (
+from grit.search.run import (
     ProductionExecutionLimits,
     ProductionSearchStatus,
     plan_production_search,

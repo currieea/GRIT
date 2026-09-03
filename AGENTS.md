@@ -24,8 +24,9 @@ changes a number in the paper or prevents a real leak. If not, leave it out.
   `search_status.py`, `smoke.py`). Each is a short argparse wrapper over `src/grit/`.
 - `src/grit/` is organized by concern: `data/` (dataset construction and pair banks),
   `features/` (CLIP caches), `methods/` (projection, linear probe, checkpoints),
-  `selection/` (validation-only selectors), `search/` (planner, scheduler, runners,
-  summaries). Top-level modules hold shared schemas, config, results, and paths. The
+  `selection/` (validation-only selectors), `search/` (`run.py` holds the
+  dataset-neutral entry points and dispatches to `cmnist.py`/`waterbirds.py`;
+  plus planner, scheduler, runners, summaries). Top-level modules hold shared schemas, config, results, and paths. The
   CMNIST and Waterbirds files inside each folder still duplicate each other; merge them
   rather than adding a third copy when porting a new dataset or method.
 - Configs are YAML under `configs/`. Paths may use `${PROJECT_SCRATCH}`; that variable is
