@@ -25,7 +25,7 @@ The first complete Waterbirds study includes:
 - ERM on Waterbirds-CF as the primary ERM baseline;
 - GroupDRO on Waterbirds-CF;
 - GRIT with oracle, conditional, and nearest-neighbor pairs on Waterbirds-CF; and
-- rank-zero GRIT as an identity-projection sanity check.
+- a separately reported rank-zero GRIT identity-projection sanity control.
 
 The initial end-to-end implementation may begin with ERM and oracle GRIT before adding
 the other approved methods. IRM, REx, Fish, LISA, MatchDG, and SWAD are deferred until
@@ -362,8 +362,10 @@ Use deterministic full `torch.linalg.svd` rather than randomized
 - produce an orthogonal projector within a tested tolerance; and
 - save singular values, explained-energy diagnostics, tolerance, and effective rank.
 
-The initial rank candidates are every integer from 0 through 24, extending the paper's
-2-through-24 range with rank one and an identity control.
+The primary rank candidates are every integer from 2 through 24, matching the paper's
+stated range. Rank zero remains supported as a separately named identity-projection
+sanity control, but it is not eligible to win the primary GRIT search. Rank one is
+outside the primary paper-aligned grid.
 
 ## Group evaluation
 
@@ -432,7 +434,7 @@ rank candidates. Later methods add only their prespecified method-specific param
 Milestone 6A implements this ERM/oracle-GRIT grid over explicit prepared manifests. Strict
 planning accepts only the production 4,795/1,199/5,794 Waterbirds-CF inventory, exact
 184/56 oracle relation manifest, reportable official OpenAI CLIP cache, matching
-normalization, and dataset-minted adjusted-weight identity. It emits all 416 candidates
+normalization, and dataset-minted adjusted-weight identity. It emits all 384 candidates
 and configured 3+2+10 seeds without loading features, training, or issuing final-test
 access. Unnormalized features remain primary; L2 is a separately named sensitivity with a
 different cache identity.
@@ -490,7 +492,7 @@ pairs:
 
 projection:
   center_differences: false
-  ranks: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
+  ranks: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
           13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
 
 training:

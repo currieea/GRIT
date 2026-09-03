@@ -76,7 +76,7 @@ APPROVED_WEIGHT_DECAYS: tuple[float, float, float, float] = (
     0.0001,
     0.001,
 )
-APPROVED_RANKS: tuple[int, ...] = tuple(range(25))
+APPROVED_RANKS: tuple[int, ...] = tuple(range(2, 25))
 
 
 class _YamlModule(Protocol):

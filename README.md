@@ -35,12 +35,12 @@ partitions and 256 oracle pairs, and caches CLIP features under
 `--device cuda:1` or `--device cpu` to override.
 
 `run_search.py` validates those artifacts, writes the plan under
-`$PROJECT_SCRATCH/outputs/cmnist-primary/`, and runs every task not already there. It is
+`$PROJECT_SCRATCH/outputs/cmnist-primary-r2-24/`, and runs every task not already there. It is
 safe to interrupt and rerun. `--pilot` runs one ERM and one GRIT tuning task and stops.
 `--dry-run` writes the plan and prints status without training. Run the full grid inside
 tmux.
 
-The grid is 16 ERM and 400 GRIT (16 by 25 ranks) candidates, 3 tuning seeds, top-3
+The grid is 16 ERM and 368 GRIT (16 by ranks 2 through 24) candidates, 3 tuning seeds, top-3
 confirmation with 2 more seeds, and 10 final seeds for the winner. Selection uses
 validation only; see `docs/experiments/cmnist.md`.
 

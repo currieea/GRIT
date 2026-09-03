@@ -178,7 +178,8 @@ def test_checked_production_examples_match_preparation_layout_and_seeds(
     assert cmnist.artifacts.oracle_pair_manifest == (
         cmnist_root + CMNIST_PAIR_MANIFEST_RELATIVE_PATH.as_posix()
     )
-    assert cmnist.output_root == "/scratch/outputs/cmnist-primary"
+    assert cmnist.search_space.projection_ranks == tuple(range(2, 25))
+    assert cmnist.output_root == "/scratch/outputs/cmnist-primary-r2-24"
 
     assert waterbirds.seeds.construction == DEFAULT_CONSTRUCTION_SEED
     waterbirds_root = "/scratch/artifacts/waterbirds-none/"
@@ -193,18 +194,20 @@ def test_checked_production_examples_match_preparation_layout_and_seeds(
     assert waterbirds.artifacts.oracle_pair_manifest == (
         waterbirds_root + WATERBIRDS_PAIR_MANIFEST_RELATIVE_PATH.as_posix()
     )
+    assert waterbirds.search_space.projection_ranks == tuple(range(2, 25))
+    assert waterbirds.output_root == "/scratch/outputs/waterbirds-primary-r2-24"
 
     monkeypatch.delenv("PROJECT_SCRATCH")
     monkeypatch.setenv("GRIT_SCRATCH", "/alt")
     fallback = load_production_search_config(
         repository / "configs/cmnist/production-search.yaml"
     )
-    assert fallback.output_root == "/alt/outputs/cmnist-primary"
+    assert fallback.output_root == "/alt/outputs/cmnist-primary-r2-24"
     monkeypatch.delenv("GRIT_SCRATCH")
     local = load_production_search_config(
         repository / "configs/cmnist/production-search.yaml"
     )
-    expected = repository / "scratch/outputs/cmnist-primary"
+    expected = repository / "scratch/outputs/cmnist-primary-r2-24"
     assert local.output_root == expected.as_posix()
 
 
@@ -670,12 +673,12 @@ def test_production_plan_has_exact_deterministic_candidate_grid(dataset: str) ->
     second = build_search_plan(resolved_search_fixture(dataset))
     assert first.candidates == second.candidates
     assert sum(item.method_id == "erm" for item in first.candidates) == 16
-    assert sum(item.method_id == "grit" for item in first.candidates) == 400
-    assert first.expected_run_counts.tuning == 1_248
+    assert sum(item.method_id == "grit" for item in first.candidates) == 368
+    assert first.expected_run_counts.tuning == 1_152
     assert tuple(item.requested_rank for item in first.candidates[:16]) == (None,) * 16
     assert tuple(item.method_id for item in first.candidates) == (
         *("erm" for _ in range(16)),
-        *("grit" for _ in range(400)),
+        *("grit" for _ in range(368)),
     )
 
 
@@ -856,7 +859,7 @@ def test_plan_only_verifies_official_manifest_lineage_without_training(
         encoding="utf-8",
     )
     plan = plan_production_search(config_path)
-    assert len(plan.candidates) == 416
+    assert len(plan.candidates) == 384
     assert plan.resolved_config.lineage.feature_cache_manifest_digest
     assert plan_production_search(config_path) == plan
     assert not (tmp_path / "planned" / "runs").exists()
@@ -964,7 +967,7 @@ def test_waterbirds_plan_only_accepts_verified_production_manifests(
     )
     plan = plan_production_search(config_path)
     assert plan.dataset == "waterbirds_cf"
-    assert len(plan.candidates) == 416
+    assert len(plan.candidates) == 384
     assert plan.resolved_config.lineage.adjusted_weight_spec_digest is not None
     assert not (tmp_path / "waterbirds-plan" / "runs").exists()
 
@@ -1823,7 +1826,7 @@ def test_tuning_filters_select_only_canonical_tasks_for_each_dataset(
     grit = next(
         item
         for item in plan.candidates
-        if item.method_id == "grit" and item.requested_rank == 1
+        if item.method_id == "grit" and item.requested_rank == 2
     )
     for candidate in (erm, grit):
         limits = validate_execution_limits(
@@ -2258,7 +2261,7 @@ def test_cli_run_constructs_bounded_tuning_controls(
             dataset="cmnist",
             plan_digest="sha256:plan",
             phase="tuning",
-            tuning_expected=1248,
+            tuning_expected=1152,
             tuning_complete=2,
             confirmation_expected=0,
             confirmation_complete=0,

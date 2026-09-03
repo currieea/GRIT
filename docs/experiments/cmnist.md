@@ -336,7 +336,7 @@ features:
 
 projection:
   center_differences: false
-  ranks: {start: 0, stop: 24, step: 1}
+  ranks: {start: 2, stop: 24, step: 1}
 
 training:
   optimizer: adam
@@ -383,7 +383,11 @@ $$
 The primary protocol does not subtract the mean difference. GRIT removes the selected
 right-singular-vector subspace of `D`. Projection rank is the number of removed
 directions; rank zero is the exact identity operation. The primary rank candidates are
-every integer from 0 through 24.
+every integer from 2 through 24, matching the paper's stated range. Rank zero remains a
+supported identity control, but it is excluded from the primary GRIT search because ERM
+already provides the explicit unprojected baseline. Any rank-zero result is reported as
+a separately named sanity control rather than as a GRIT candidate eligible to win the
+primary search. Rank one is outside the primary paper-aligned grid.
 
 Use deterministic full `torch.linalg.svd` rather than randomized
 `torch.svd_lowrank`. The implementation must:
@@ -404,7 +408,7 @@ selectors.
 
 - ERM searches the Cartesian product of the approved learning-rate and weight-decay
   candidates.
-- GRIT searches that optimizer grid jointly with ranks 0 through 24.
+- GRIT searches that optimizer grid jointly with ranks 2 through 24.
 - Every candidate runs on three tuning seeds.
 - The top three configurations receive two confirmation seeds.
 - The five-seed validation mean selects the frozen configuration.
@@ -419,9 +423,9 @@ Milestone 6A implements this approved ERM/oracle-GRIT grid locally. The producti
 requires explicit dataset, feature-cache, and 256-pair manifest paths; the canonical
 production inventory; pinned official OpenAI CLIP identity; one matching normalization;
 and explicit construction, pair, 3 tuning, 2 confirmation, and 10 final seeds. Planning
-emits all 416 ordered candidates and expected stage counts without loading arrays,
-training, checkpoints, or final-test access. The primary unnormalized experiment and the
-named L2 sensitivity are distinct configurations and caches.
+emits all 384 ordered candidates (16 ERM and 368 GRIT) and expected stage counts without
+loading arrays, training, checkpoints, or final-test access. The primary unnormalized
+experiment and the named L2 sensitivity are distinct configurations and caches.
 
 The run scheduler applies both selectors to the same saved tuning runs, confirms the
 ordered union of their method-specific top threes once, and freezes separate winners.
@@ -429,7 +433,7 @@ Final tasks cannot be planned from validation records alone: they require the ma
 frozen-winner artifact, then train on a fresh final seed, select an epoch from validation,
 persist and restore that checkpoint, and only then open `test_ood`. Canonical stage results,
 selection artifacts, ten-seed summaries, per-seed paired differences, and the verified
-experiment index are local authority. No real 1,248-run tuning stage was executed while
+experiment index are local authority. No real 1,152-run tuning stage was executed while
 implementing this system, so this status makes no scientific performance claim.
 
 Final results report mean, standard deviation, and a 95% t-interval across final seeds.
