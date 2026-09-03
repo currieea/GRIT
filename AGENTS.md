@@ -42,7 +42,7 @@ changes a number in the paper or prevents a real leak. If not, leave it out.
 - Do not add console-script entry points, milestone documents, or progress logs. Summarize
   decisions in the commit message or the relevant protocol doc.
 - Do not spawn subagents for routine edits.
-- Do not touch the inherited top-level code unless porting a baseline from it.
+- Do not touch the inherited code under `legacy/` unless porting a baseline from it.
 
 `docs/history/` holds the original rewrite plan, contracts, and progress log. They are
 context, not instructions.

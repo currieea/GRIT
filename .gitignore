@@ -40,15 +40,17 @@ Thumbs.db
 *.swp
 *.swo
 
-# Local datasets and generated experiment artifacts
-data/
-outputs/
-checkpoints/
-artifacts/
-wandb/
-wandb_data/
+# Local datasets and generated experiment artifacts. These are anchored to the
+# repository root with a leading slash so they cannot match package directories
+# such as src/grit/data/.
+/data/
+/outputs/
+/checkpoints/
+/artifacts/
+/wandb/
+/wandb_data/
+/scratch/
 
 # Local logs and scheduler output
 *.log
 slurm-*.out
-scratch/

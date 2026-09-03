@@ -11,7 +11,10 @@ from grit.schemas import StrictBoundaryModel
 
 if TYPE_CHECKING:
     from grit.methods.checkpoints import RestorationReceipt
-    from grit.selection.cmnist import FrozenCandidateSelection, FrozenCheckpointSelection
+    from grit.selection.cmnist import (
+        FrozenCandidateSelection,
+        FrozenCheckpointSelection,
+    )
 
 
 class ExampleIdentity(StrictBoundaryModel):
