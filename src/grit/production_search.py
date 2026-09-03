@@ -1529,3 +1529,20 @@ def _file_sha256(path: Path) -> str:
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(block)
     return f"sha256:{digest.hexdigest()}"
+
+
+def completed_task_revisions(output_root: Path) -> dict[str, int]:
+    """Count completed task results by the code revision that produced them."""
+
+    counts: dict[str, int] = {}
+    for result_path in sorted(output_root.glob("runs/**/result.json")):
+        try:
+            payload = json.loads(result_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        code = cast(dict[str, object], payload.get("code") or {})
+        revision = str(code.get("git_revision", "unrecorded"))[:12]
+        if code.get("git_dirty"):
+            revision += " (dirty)"
+        counts[revision] = counts.get(revision, 0) + 1
+    return counts

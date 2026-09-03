@@ -6,16 +6,33 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
-from grit.production_search import production_search_status
+from grit.production_search import (
+    completed_task_revisions,
+    production_search_status,
+)
+from grit.search import load_production_search_config
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("config", type=Path)
     args = parser.parse_args()
-    print(production_search_status(Path(args.config)).canonical_json())
+    config_path = Path(args.config)
+    print(production_search_status(config_path).canonical_json())
+    output_root = Path(load_production_search_config(config_path).output_root)
+    revisions = completed_task_revisions(output_root)
+    if revisions:
+        summary = ", ".join(f"{rev}: {n}" for rev, n in sorted(revisions.items()))
+        print(f"completed tasks by code revision: {summary}", file=sys.stderr)
+        if len(revisions) > 1:
+            print(
+                "note: this output directory mixes code revisions; use a fresh "
+                "output_root if training code changed between them",
+                file=sys.stderr,
+            )
 
 
 if __name__ == "__main__":

@@ -8,6 +8,10 @@
 - `cmnist/smoke.yaml` and `waterbirds/smoke.yaml`: hermetic end-to-end checks with a
   fake encoder, run by `scripts/smoke.py`. Never report their numbers.
 
+`reportable: true` in a result means real data and the pinned CLIP encoder were used, as
+opposed to the fake-encoder smoke path. It does not mean the run matched the paper grid;
+judge that from the plan file next to the results.
+
 The checked-in grids, seeds, epochs, and pair counts are the primary protocol from
 `docs/experiments/`. Any of them can be changed in a copied config for a sensitivity or a
 quick check; the plan and every result record the values that actually ran. A config's

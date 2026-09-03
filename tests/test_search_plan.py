@@ -2377,7 +2377,7 @@ def test_custom_grid_epochs_and_pair_count_plan_from_yaml(
         overrides={
             "search_space": {
                 "methods": ["erm", "grit"],
-                "learning_rates": [0.001, 0.01],
+                "learning_rates": [0.001, 0.01, 0.1],
                 "weight_decays": [0.0],
                 "projection_ranks": [0, 2, 4],
             },
@@ -2387,7 +2387,7 @@ def test_custom_grid_epochs_and_pair_count_plan_from_yaml(
         },
     )
     plan = plan_production_search(config_path)
-    assert len(plan.candidates) == 2 + 2 * 3
+    assert len(plan.candidates) == 3 + 3 * 3
     assert {c.requested_rank for c in plan.candidates if c.method_id == "grit"} == {
         0,
         2,
@@ -2395,7 +2395,7 @@ def test_custom_grid_epochs_and_pair_count_plan_from_yaml(
     }
     assert plan.resolved_config.config.max_epochs == 5
     assert plan.resolved_config.config.pair_count == 64
-    assert plan.expected_run_counts.tuning == 8 * 3
+    assert plan.expected_run_counts.tuning == 12 * 3
 
 
 def test_pair_count_above_prepared_bank_is_rejected(
@@ -2408,3 +2408,43 @@ def test_pair_count_above_prepared_bank_is_rejected(
     )
     with pytest.raises(ValueError, match="prepared bank holds 256"):
         plan_production_search(config_path)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    (
+        (
+            {
+                "search_space": {
+                    "methods": ["erm", "grit"],
+                    "learning_rates": [0.001, 0.01],
+                    "weight_decays": [0.0, 0.001],
+                    "projection_ranks": [0, 300],
+                },
+            },
+            "exceed min\\(pair_count, feature_dim\\) = 256",
+        ),
+        (
+            {
+                "search_space": {
+                    "methods": ["erm", "grit"],
+                    "learning_rates": [0.001, 0.01],
+                    "weight_decays": [0.0],
+                    "projection_ranks": [0, 2, 4],
+                },
+            },
+            "grid yields 2 ERM",
+        ),
+    ),
+)
+def test_unrunnable_grids_fail_at_plan_time(
+    tmp_path: Path,
+    overrides: dict[str, object],
+    message: str,
+) -> None:
+    config_path, _ = _write_cmnist_production_config(
+        tmp_path, output_root=tmp_path / "output", overrides=overrides
+    )
+    with pytest.raises(ValueError, match=message):
+        plan_production_search(config_path)
+    assert not (tmp_path / "output").exists()

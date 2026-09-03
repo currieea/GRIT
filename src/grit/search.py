@@ -165,6 +165,11 @@ class CmnistProductionSearchConfig(_CommonProductionSearchConfig):
     batch_size: PositiveInt
     max_epochs: PositiveInt
 
+    @model_validator(mode="after")
+    def _validate_grid_fits(self) -> CmnistProductionSearchConfig:
+        _require_runnable_grid(self.search_space, self.pair_count)
+        return self
+
 
 class WaterbirdsProductionSearchConfig(_CommonProductionSearchConfig):
     dataset: Literal["waterbirds_cf"]
@@ -173,6 +178,35 @@ class WaterbirdsProductionSearchConfig(_CommonProductionSearchConfig):
     selectors: tuple[Literal["waterbirds_validation_worst_group"]]
     batch_size: PositiveInt
     max_epochs: PositiveInt
+
+    @model_validator(mode="after")
+    def _validate_grid_fits(self) -> WaterbirdsProductionSearchConfig:
+        _require_runnable_grid(self.search_space, self.pair_count)
+        return self
+
+
+FEATURE_DIMENSION = 512
+FINALIST_COUNT = 3
+
+
+def _require_runnable_grid(space: SearchSpaceConfig, pair_count: int) -> None:
+    """Catch at plan time what would otherwise fail hours later."""
+
+    max_rank = min(pair_count, FEATURE_DIMENSION)
+    too_large = [rank for rank in space.projection_ranks if rank > max_rank]
+    if too_large:
+        raise ValueError(
+            f"projection_ranks {too_large} exceed min(pair_count, feature_dim) = "
+            f"{max_rank}"
+        )
+    per_method = len(space.learning_rates) * len(space.weight_decays)
+    erm_count = per_method
+    grit_count = per_method * len(space.projection_ranks)
+    if min(erm_count, grit_count) < FINALIST_COUNT:
+        raise ValueError(
+            f"selection keeps the top {FINALIST_COUNT} candidates per method, but the "
+            f"grid yields {erm_count} ERM and {grit_count} GRIT candidates"
+        )
 
 
 ProductionSearchConfig: TypeAlias = Annotated[
