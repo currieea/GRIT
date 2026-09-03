@@ -28,6 +28,7 @@ from grit.features.waterbirds import (
     WaterbirdsEvaluationFeatureTable,
     WaterbirdsFinalTestView,
 )
+from grit.methods.types import MethodId
 from grit.schemas import SeedStage, StrictBoundaryModel
 from grit.selection.cmnist import CheckpointIdentity
 
@@ -64,7 +65,7 @@ class _WaterbirdsMetricIdentity(_WaterbirdsArtifactLineage):
     record_id: NonEmptyStr
     run_id: NonEmptyStr
     candidate_id: NonEmptyStr
-    method_id: Literal["erm", "grit"]
+    method_id: MethodId
     scientific_config_digest: NonEmptyStr
     checkpoint_id: NonEmptyStr
     epoch: NonNegativeInt
@@ -132,7 +133,7 @@ class WaterbirdsFinalTestMetricRecord(_WaterbirdsMetricIdentity):
 class WaterbirdsCheckpointSelection(_WaterbirdsArtifactLineage):
     decision_id: NonEmptyStr
     selector: Literal["waterbirds_validation_worst_group"]
-    method_id: Literal["erm", "grit"]
+    method_id: MethodId
     seed_stage: SeedStage
     seed: StrictInt
     checkpoint: CheckpointIdentity
@@ -145,7 +146,7 @@ class WaterbirdsCheckpointSelection(_WaterbirdsArtifactLineage):
 class WaterbirdsCandidateSelection(_WaterbirdsArtifactLineage):
     decision_id: NonEmptyStr
     selector: Literal["waterbirds_validation_worst_group"]
-    method_id: Literal["erm", "grit"]
+    method_id: MethodId
     candidate_id: NonEmptyStr
     scientific_config_digest: NonEmptyStr
     mean_worst_group_accuracy: Accuracy
@@ -200,7 +201,7 @@ class WaterbirdsTuningFinalists(_WaterbirdsArtifactLineage):
     )
     artifact_id: NonEmptyStr
     selector: Literal["waterbirds_validation_worst_group"]
-    method_id: Literal["erm", "grit"]
+    method_id: MethodId
     tuning_seeds: Annotated[tuple[StrictInt, ...], Field(min_length=3, max_length=3)]
     ordered_candidates: Annotated[
         tuple[WaterbirdsCandidateSelection, ...], Field(min_length=3, max_length=3)
@@ -237,7 +238,7 @@ class FrozenWaterbirdsCandidate(_WaterbirdsArtifactLineage):
     )
     frozen_selection_id: NonEmptyStr
     selector: Literal["waterbirds_validation_worst_group"]
-    method_id: Literal["erm", "grit"]
+    method_id: MethodId
     candidate_id: NonEmptyStr
     scientific_config_digest: NonEmptyStr
     projection_rank: NonNegativeInt | None
@@ -293,7 +294,7 @@ class FrozenWaterbirdsCandidate(_WaterbirdsArtifactLineage):
 class FrozenWaterbirdsCheckpoint(_WaterbirdsArtifactLineage):
     frozen_checkpoint_id: NonEmptyStr
     candidate_selection_id: NonEmptyStr
-    method_id: Literal["erm", "grit"]
+    method_id: MethodId
     checkpoint: CheckpointIdentity
     decision: WaterbirdsCheckpointSelection
 
@@ -318,7 +319,7 @@ def compute_waterbirds_validation_metric(
     record_id: str,
     run_id: str,
     candidate_id: str,
-    method_id: Literal["erm", "grit"],
+    method_id: MethodId,
     scientific_config_digest: str,
     checkpoint_id: str,
     epoch: int,

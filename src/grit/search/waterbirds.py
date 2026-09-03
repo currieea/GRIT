@@ -203,7 +203,7 @@ def run_waterbirds_production_search(
             SeedStage.CONFIRMATION,
             seed,
         )
-        for method in ("erm", "grit")
+        for method in plan.methods
         for item in finalists[method].ordered_candidates
         for seed in config.seeds.stages.confirmation
     )
@@ -304,7 +304,7 @@ def run_waterbirds_production_search(
             seed,
             winners[method],
         )
-        for method in ("erm", "grit")
+        for method in plan.methods
         for seed in config.seeds.stages.final
     )
     final_runs = cast(
@@ -350,7 +350,7 @@ def compute_waterbirds_finalists(
 ) -> dict[WaterbirdsMethod, WaterbirdsTuningFinalists]:
     records = tuple(item for run in runs for item in run.validation_metrics)
     artifacts: dict[WaterbirdsMethod, WaterbirdsTuningFinalists] = {}
-    for method in ("erm", "grit"):
+    for method in plan.methods:
         finalists = make_waterbirds_tuning_finalists(
             tuple(item for item in records if item.method_id == method),
             plan.seeds.stages,
@@ -380,7 +380,7 @@ def compute_waterbirds_winners(
 ) -> dict[WaterbirdsMethod, FrozenWaterbirdsCandidate]:
     records = tuple(item for run in runs for item in run.validation_metrics)
     winners: dict[WaterbirdsMethod, FrozenWaterbirdsCandidate] = {}
-    for method in ("erm", "grit"):
+    for method in plan.methods:
         artifact = finalists[method]
         ids = {item.candidate_id for item in artifact.ordered_candidates}
         decision = select_confirmed_waterbirds_candidate(
@@ -549,7 +549,7 @@ def _summary(
         (run.task.candidate.method_id, run.task.seed): run for run in runs
     }
     methods: list[WaterbirdsProductionMethodSummary] = []
-    for method in ("erm", "grit"):
+    for method in plan.methods:
         results: list[WaterbirdsRunResult] = []
         paths: list[tuple[int, str]] = []
         for seed in plan.seeds.stages.final:
@@ -731,7 +731,7 @@ def waterbirds_status_from_plan(plan: SearchPlan) -> ProductionSearchStatus:
     expected_finalists = compute_waterbirds_finalists(plan, tuning_runs)
     root = Path(plan.resolved_config.output_root)
     finalist_count = 0
-    for method in ("erm", "grit"):
+    for method in plan.methods:
         path = root / "selection" / method / "tuning-finalists.json"
         if not path.exists():
             continue
@@ -744,7 +744,7 @@ def waterbirds_status_from_plan(plan: SearchPlan) -> ProductionSearchStatus:
                 "Waterbirds finalist artifact does not match canonical tuning "
                 f"results: {path}"
             )
-    if finalist_count != 2:
+    if finalist_count != len(plan.methods):
         return ProductionSearchStatus(
             schema_version="grit.production-search-status/v1",
             dataset="waterbirds_cf",
@@ -766,7 +766,7 @@ def waterbirds_status_from_plan(plan: SearchPlan) -> ProductionSearchStatus:
             SeedStage.CONFIRMATION,
             seed,
         )
-        for method in ("erm", "grit")
+        for method in plan.methods
         for item in expected_finalists[method].ordered_candidates
         for seed in config.seeds.stages.confirmation
     )
@@ -799,7 +799,7 @@ def waterbirds_status_from_plan(plan: SearchPlan) -> ProductionSearchStatus:
         plan, expected_finalists, confirmation_runs
     )
     winner_count = 0
-    for method in ("erm", "grit"):
+    for method in plan.methods:
         path = root / "selection" / method / "winner.json"
         if path.exists():
             winner_count += 1
@@ -811,7 +811,7 @@ def waterbirds_status_from_plan(plan: SearchPlan) -> ProductionSearchStatus:
                     "Waterbirds frozen winner does not match canonical confirmation "
                     f"results: {path}"
                 )
-    if winner_count != 2:
+    if winner_count != len(plan.methods):
         return ProductionSearchStatus(
             schema_version="grit.production-search-status/v1",
             dataset="waterbirds_cf",

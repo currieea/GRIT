@@ -15,6 +15,7 @@ from typing import Literal, TypeAlias, cast
 
 from pydantic import Field, StrictInt, StrictStr, model_validator
 
+from grit.methods.types import MethodId
 from grit.schemas import CmnistSelector, StrictBoundaryModel
 from grit.search.outputs import (
     CmnistPairedSelectorSummary,
@@ -70,7 +71,7 @@ class ProductionExecutionLimits:
     """Operational task limits that never participate in scientific identity."""
 
     stop_after: Literal["tuning"] | None = None
-    method: Literal["erm", "grit", "all"] = "all"
+    method: MethodId | Literal["all"] = "all"
     candidate_ids: tuple[str, ...] = ()
     tuning_seed: int | None = None
     max_new_runs: int | None = None
@@ -188,8 +189,9 @@ def validate_execution_limits(
         return None
     if limits.stop_after not in {None, "tuning"}:
         raise ValueError("stop_after supports only the tuning boundary")
-    if limits.method not in {"erm", "grit", "all"}:
-        raise ValueError("method must be erm, grit, or all")
+    if limits.method != "all" and limits.method not in plan.methods:
+        choices = ", ".join((*plan.methods, "all"))
+        raise ValueError(f"method must be one of: {choices}")
     max_new_runs = _validate_optional_exact_integer(
         limits.max_new_runs, "max_new_runs"
     )

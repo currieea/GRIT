@@ -17,6 +17,7 @@ from pydantic import (
 )
 
 from grit.config import LinearProbeTrainingConfig, SeedSets
+from grit.methods.types import MethodId
 from grit.methods.waterbirds_training import WaterbirdsRestorationReceipt
 from grit.results import CodeProvenance, EnvironmentProvenance
 from grit.schemas import StrictBoundaryModel, canonical_digest_value
@@ -35,7 +36,7 @@ class WaterbirdsCandidateConfig(StrictBoundaryModel):
     schema_version: Literal["grit.waterbirds-candidate/v2"]
     protocol_id: Literal["waterbirds_cf/v1"]
     non_reportable: StrictBool
-    method_id: Literal["erm", "grit"]
+    method_id: MethodId
     dataset_profile: Literal["fixture", "production"]
     dataset_manifest_digest: NonEmptyStr
     feature_cache_manifest_digest: NonEmptyStr
@@ -366,7 +367,7 @@ def make_waterbirds_metric_summary(
 
 class WaterbirdsFinalSeedObservation(StrictBoundaryModel):
     seed: StrictInt
-    method_id: Literal["erm", "grit"]
+    method_id: MethodId
     result_path: NonEmptyStr
     metric_record_id: NonEmptyStr
     worst_group_accuracy: FiniteFloat
@@ -380,7 +381,7 @@ class WaterbirdsPairedSeedDifference(StrictBoundaryModel):
 
 
 class WaterbirdsMethodSmokeSummary(StrictBoundaryModel):
-    method_id: Literal["erm", "grit"]
+    method_id: MethodId
     dataset_manifest_digest: NonEmptyStr
     feature_cache_manifest_digest: NonEmptyStr
     normalization: Literal["none", "l2"]

@@ -139,7 +139,7 @@ class CmnistSmokeRunConfig(StrictBoundaryModel):
 
 
 class MethodSmokeSummary(StrictBoundaryModel):
-    method_id: Literal["erm", "grit"]
+    method_id: MethodId
     primary_candidate_id: NonEmptyStr
     secondary_candidate_id: NonEmptyStr
     finalist_union_ids: tuple[NonEmptyStr, ...]

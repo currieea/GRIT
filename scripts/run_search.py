@@ -14,6 +14,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from grit.methods.types import IMPLEMENTED_METHODS
 from grit.search.run import (
     ProductionExecutionLimits,
     ProductionSearchStatus,
@@ -33,7 +34,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--pilot", action="store_true")
     parser.add_argument("--limit", type=int, help="run at most N new tasks, then stop")
     parser.add_argument("--stop-after", choices=("tuning",))
-    parser.add_argument("--only", choices=("erm", "grit"), help="tuning-only filter")
+    parser.add_argument(
+        "--only", choices=IMPLEMENTED_METHODS, help="tuning-only filter"
+    )
     parser.add_argument("--candidate-id", action="append", default=[])
     parser.add_argument("--seed", type=int, help="tuning-only seed filter")
     args = parser.parse_args(argv)

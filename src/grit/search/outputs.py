@@ -10,6 +10,7 @@ from typing import Annotated, Literal, TypeAlias
 
 from pydantic import Field, FiniteFloat, StrictInt, StrictStr, model_validator
 
+from grit.methods.types import MethodId
 from grit.schemas import CmnistSelector, StrictBoundaryModel
 from grit.search.plan import SearchLineage
 from grit.search.waterbirds_contracts import MetricName, WaterbirdsMetricSummary
@@ -49,7 +50,7 @@ def make_cmnist_accuracy_summary(
 
 class CmnistFinalSeedObservation(StrictBoundaryModel):
     seed: StrictInt
-    method_id: Literal["erm", "grit"]
+    method_id: MethodId
     selector: CmnistSelector
     result_path: NonEmptyStr
     metric_record_id: NonEmptyStr
@@ -57,7 +58,7 @@ class CmnistFinalSeedObservation(StrictBoundaryModel):
 
 
 class CmnistMethodSelectorSummary(StrictBoundaryModel):
-    method_id: Literal["erm", "grit"]
+    method_id: MethodId
     selector: CmnistSelector
     lineage: SearchLineage
     selected_candidate_id: NonEmptyStr
@@ -205,7 +206,7 @@ class CmnistProductionSummary(StrictBoundaryModel):
 
 
 class WaterbirdsProductionMethodSummary(StrictBoundaryModel):
-    method_id: Literal["erm", "grit"]
+    method_id: MethodId
     lineage: SearchLineage
     selected_candidate_id: NonEmptyStr
     finalist_candidate_ids: tuple[NonEmptyStr, NonEmptyStr, NonEmptyStr]

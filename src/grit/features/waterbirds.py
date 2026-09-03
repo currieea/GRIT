@@ -29,6 +29,7 @@ from grit.features.cmnist import (
     PilImageEncoder,
 )
 from grit.methods.projection import FittedLinearProjection, fit_linear_projection
+from grit.methods.types import MethodId
 from grit.schemas import StrictBoundaryModel, canonical_digest_value
 
 if TYPE_CHECKING:
@@ -206,7 +207,7 @@ class WaterbirdsFinalTestView:
     authorization_id: str
     run_id: str
     candidate_id: str
-    method_id: Literal["erm", "grit"]
+    method_id: MethodId
     scientific_config_digest: str
     checkpoint_id: str
     epoch: int
@@ -235,7 +236,7 @@ class WaterbirdsFinalTestHandle:
         *,
         run_id: str,
         candidate_id: str,
-        method_id: Literal["erm", "grit"],
+        method_id: MethodId,
         scientific_config_digest: str,
         seed: int,
         projection_rank: int | None,
@@ -244,7 +245,7 @@ class WaterbirdsFinalTestHandle:
     ) -> None:
         self.__run_id = run_id
         self.__candidate_id = candidate_id
-        self.__method_id: Literal["erm", "grit"] = method_id
+        self.__method_id: MethodId = method_id
         self.__scientific_config_digest = scientific_config_digest
         self.__seed = seed
         self.__projection_rank = projection_rank
@@ -342,7 +343,7 @@ class WaterbirdsFeatureCache:
         *,
         run_id: str,
         candidate_id: str,
-        method_id: Literal["erm", "grit"],
+        method_id: MethodId,
         scientific_config_digest: str,
         seed: int,
         projection_rank: int | None,

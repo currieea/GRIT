@@ -13,6 +13,7 @@ from grit.methods.training import (
     PersistedLinearCheckpointManifest,
     PersistedLinearCheckpointStore,
 )
+from grit.methods.types import MethodId
 from grit.results import CodeProvenance, EnvironmentProvenance, OrdinaryRunResult
 from grit.schemas import CmnistSelector, SeedStage, StrictBoundaryModel
 from grit.search.plan import SearchCandidate, SearchLineage, SearchPlan
@@ -43,7 +44,7 @@ class FrozenWinnerReference(StrictBoundaryModel):
 
     dataset: Literal["cmnist", "waterbirds_cf"]
     selector: NonEmptyStr
-    method_id: Literal["erm", "grit"]
+    method_id: MethodId
     candidate_id: NonEmptyStr
     scientific_config_digest: NonEmptyStr
     frozen_selection_id: NonEmptyStr
@@ -340,13 +341,12 @@ def make_final_search_task(
         frozen = FrozenCandidateSelection.model_validate_json(
             frozen_candidate.canonical_json()
         )
-        if frozen.method_id not in {"erm", "grit"}:
+        if frozen.method_id not in plan.methods:
             raise ValueError("CMNIST frozen winner has an unsupported method")
-        method_id = cast(Literal["erm", "grit"], frozen.method_id)
         reference = FrozenWinnerReference(
             dataset="cmnist",
             selector=frozen.selector.value,
-            method_id=method_id,
+            method_id=frozen.method_id,
             candidate_id=frozen.candidate_id,
             scientific_config_digest=frozen.scientific_config_digest,
             frozen_selection_id=frozen.frozen_selection_id,

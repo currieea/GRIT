@@ -218,7 +218,7 @@ def run_cmnist_search(
             SeedStage.CONFIRMATION,
             seed,
         )
-        for method in ("erm", "grit")
+        for method in plan.methods
         for candidate_id in confirmation_ids[method]
         for seed in config.seeds.stages.confirmation
     )
@@ -318,7 +318,7 @@ def run_cmnist_search(
             seed,
             frozen,
         )
-        for method in ("erm", "grit")
+        for method in plan.methods
         for selector in (
             CmnistSelector.PRIMARY_ROBUST,
             CmnistSelector.SECONDARY_SOURCE,
@@ -355,7 +355,7 @@ def _cmnist_finalists(
     dict[MethodId, FinalistUnion],
 ]:
     artifacts, unions = compute_cmnist_finalists(plan, runs)
-    for method in ("erm", "grit"):
+    for method in plan.methods:
         primary = artifacts[(method, CmnistSelector.PRIMARY_ROBUST)]
         secondary = artifacts[(method, CmnistSelector.SECONDARY_SOURCE)]
         union = unions[method]
@@ -381,7 +381,7 @@ def compute_cmnist_finalists(
         tuple[MethodId, CmnistSelector], TuningFinalistsArtifact
     ] = {}
     unions: dict[MethodId, FinalistUnion] = {}
-    for method in ("erm", "grit"):
+    for method in plan.methods:
         method_metrics = tuple(item for item in metrics if item.method_id == method)
         primary = make_tuning_finalists(
             method_metrics,
@@ -425,7 +425,7 @@ def compute_cmnist_winners(
     winners: dict[
         tuple[MethodId, CmnistSelector], FrozenCandidateSelection
     ] = {}
-    for method in ("erm", "grit"):
+    for method in plan.methods:
         for selector in (
             CmnistSelector.PRIMARY_ROBUST,
             CmnistSelector.SECONDARY_SOURCE,
@@ -623,7 +623,7 @@ def _cmnist_summary(
         for run in runs
     }
     methods: list[CmnistMethodSelectorSummary] = []
-    for method in ("erm", "grit"):
+    for method in plan.methods:
         for selector in (
             CmnistSelector.PRIMARY_ROBUST,
             CmnistSelector.SECONDARY_SOURCE,
@@ -805,7 +805,7 @@ def cmnist_status_from_plan(plan: SearchPlan) -> ProductionSearchStatus:
     )
     root = Path(plan.resolved_config.output_root)
     finalist_artifact_count = 0
-    for method in ("erm", "grit"):
+    for method in plan.methods:
         selection_root = root / "selection" / method
         finalist_paths = (
             (
@@ -836,7 +836,7 @@ def cmnist_status_from_plan(plan: SearchPlan) -> ProductionSearchStatus:
                     f"CMNIST selection artifact does not match canonical tuning "
                     f"results: {path}"
                 )
-    if finalist_artifact_count != 6:
+    if finalist_artifact_count != len(plan.methods) * (len(config.selectors) + 1):
         return ProductionSearchStatus(
             schema_version="grit.production-search-status/v1",
             dataset="cmnist",
@@ -858,7 +858,7 @@ def cmnist_status_from_plan(plan: SearchPlan) -> ProductionSearchStatus:
             SeedStage.CONFIRMATION,
             seed,
         )
-        for method in ("erm", "grit")
+        for method in plan.methods
         for candidate_id in expected_unions[method].confirmation_candidate_ids
         for seed in config.seeds.stages.confirmation
     )
@@ -891,7 +891,7 @@ def cmnist_status_from_plan(plan: SearchPlan) -> ProductionSearchStatus:
         plan, expected_finalists, confirmation_runs
     )
     winner_count = 0
-    for method in ("erm", "grit"):
+    for method in plan.methods:
         for selector in (
             CmnistSelector.PRIMARY_ROBUST,
             CmnistSelector.SECONDARY_SOURCE,
@@ -907,7 +907,7 @@ def cmnist_status_from_plan(plan: SearchPlan) -> ProductionSearchStatus:
                         "CMNIST frozen winner does not match canonical confirmation "
                         f"results: {path}"
                     )
-    if winner_count != 4:
+    if winner_count != len(plan.methods) * len(config.selectors):
         return ProductionSearchStatus(
             schema_version="grit.production-search-status/v1",
             dataset="cmnist",

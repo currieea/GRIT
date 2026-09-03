@@ -17,10 +17,9 @@ from grit.config import LinearProbeTrainingConfig
 from grit.features.cmnist import FeatureTable
 from grit.methods.checkpoints import CheckpointStore, StoredCheckpoint
 from grit.methods.projection import FittedLinearProjection
+from grit.methods.types import MethodId
 from grit.schemas import SeedStage, StrictBoundaryModel
 from grit.selection.cmnist import CheckpointIdentity, ValidationMetricRecord
-
-MethodId = Literal["erm", "grit"]
 
 
 @dataclass(frozen=True, slots=True)

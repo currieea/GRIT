@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import TypeAlias
 
 import torch
 from pydantic import Field, StrictStr
@@ -21,6 +21,7 @@ from grit.methods.training import (
     LinearProbeAlgorithm,
     LinearProbeState,
 )
+from grit.methods.types import MethodId
 from grit.schemas import SeedStage, StrictBoundaryModel
 from grit.selection.cmnist import CheckpointIdentity
 from grit.selection.waterbirds import (
@@ -29,7 +30,7 @@ from grit.selection.waterbirds import (
     compute_waterbirds_validation_metric,
 )
 
-WaterbirdsMethod = Literal["erm", "grit"]
+WaterbirdsMethod: TypeAlias = MethodId
 
 
 class WaterbirdsRestorationReceipt(StrictBoundaryModel):

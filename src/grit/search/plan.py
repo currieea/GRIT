@@ -54,6 +54,7 @@ from grit.data.waterbirds import (
 from grit.data.waterbirds_pairs import WaterbirdsOraclePairManifest
 from grit.features.cmnist import CmnistFeatureCacheManifest, EncoderIdentity
 from grit.features.waterbirds import WaterbirdsFeatureCacheManifest
+from grit.methods.types import IMPLEMENTED_METHODS, MethodId
 from grit.paths import REPO_ROOT, expand_config_path
 from grit.results import CodeProvenance, EnvironmentProvenance
 from grit.schemas import CmnistSelector, StrictBoundaryModel, canonical_digest_value
@@ -61,7 +62,6 @@ from grit.search.waterbirds_contracts import WaterbirdsCandidateConfig
 
 NonEmptyStr: TypeAlias = Annotated[StrictStr, Field(min_length=1)]
 Normalization: TypeAlias = Literal["none", "l2"]
-MethodId: TypeAlias = Literal["erm", "grit"]
 
 # Defaults used by the checked-in configs and tests. Any grid may be configured.
 APPROVED_LEARNING_RATES: tuple[float, float, float, float] = (
@@ -101,15 +101,17 @@ class SearchSeedConfig(StrictBoundaryModel):
 class SearchSpaceConfig(StrictBoundaryModel):
     """The grid is whatever the YAML says; the plan records what actually ran."""
 
-    methods: tuple[Literal["erm", "grit"], Literal["erm", "grit"]]
+    methods: Annotated[tuple[MethodId, ...], Field(min_length=2)]
     learning_rates: Annotated[tuple[StrictFloat, ...], Field(min_length=1)]
     weight_decays: Annotated[tuple[StrictFloat, ...], Field(min_length=1)]
     projection_ranks: Annotated[tuple[StrictInt, ...], Field(min_length=1)]
 
     @model_validator(mode="after")
     def _validate_space(self) -> SearchSpaceConfig:
-        if self.methods != ("erm", "grit"):
-            raise ValueError("production search methods must be ordered ERM then GRIT")
+        if self.methods != IMPLEMENTED_METHODS:
+            raise ValueError(
+                "production search methods must match the implemented method order"
+            )
         for name, values in (
             ("learning_rates", self.learning_rates),
             ("weight_decays", self.weight_decays),
@@ -330,7 +332,7 @@ class SearchPlan(StrictBoundaryModel):
     experiment_variant: Literal["primary_unnormalized", "l2_normalized_sensitivity"]
     normalization: Normalization
     resolved_config: ResolvedProductionSearchConfig
-    methods: tuple[Literal["erm", "grit"], Literal["erm", "grit"]]
+    methods: Annotated[tuple[MethodId, ...], Field(min_length=2)]
     selectors: tuple[NonEmptyStr, ...]
     candidates: tuple[SearchCandidate, ...]
     seeds: SearchSeedConfig
@@ -504,18 +506,23 @@ def _build_search_plan(
 
 
 def _expected_run_counts(config: ProductionSearchConfig) -> ExpectedRunCounts:
-    candidate_count = len(_candidate_grid_for_config(config))
-    if isinstance(config, CmnistProductionSearchConfig):
-        confirmation_maximum = 24
-        final = 40
-    else:
-        confirmation_maximum = 12
-        final = 20
+    candidate_count = _candidate_count_for_config(config)
+    method_count = len(config.search_space.methods)
+    selector_count = len(config.selectors)
+    confirmation_seed_count = len(config.seeds.stages.confirmation)
+    final_seed_count = len(config.seeds.stages.final)
     return ExpectedRunCounts(
         tuning=candidate_count * len(config.seeds.stages.tuning),
-        confirmation_minimum=12,
-        confirmation_maximum=confirmation_maximum,
-        final=final,
+        confirmation_minimum=(
+            method_count * FINALIST_COUNT * confirmation_seed_count
+        ),
+        confirmation_maximum=(
+            method_count
+            * selector_count
+            * FINALIST_COUNT
+            * confirmation_seed_count
+        ),
+        final=method_count * selector_count * final_seed_count,
     )
 
 
@@ -607,18 +614,21 @@ def _expected_output_schemas(
     )
 
 
-def _candidate_grid_for_config(config: ProductionSearchConfig) -> tuple[int, ...]:
-    return tuple(
-        1
-        for method in config.search_space.methods
-        for _learning_rate in config.search_space.learning_rates
-        for _weight_decay in config.search_space.weight_decays
-        for _rank in (
-            (None,)
-            if method == "erm"
-            else config.search_space.projection_ranks
-        )
+def _candidate_count_for_config(config: ProductionSearchConfig) -> int:
+    per_optimizer_grid = len(config.search_space.learning_rates) * len(
+        config.search_space.weight_decays
     )
+    candidate_count = 0
+    for method in config.search_space.methods:
+        if method == "erm":
+            candidate_count += per_optimizer_grid
+        elif method == "grit":
+            candidate_count += per_optimizer_grid * len(
+                config.search_space.projection_ranks
+            )
+        else:
+            raise AssertionError(f"candidate grid is missing method {method}")
+    return candidate_count
 
 
 def write_search_plan(
@@ -682,9 +692,12 @@ def _candidate_grid(
         configured_ranks = sorted(
             int(value) for value in config.search_space.projection_ranks
         )
-        ranks: tuple[int | None, ...] = (
-            (None,) if method == "erm" else tuple(configured_ranks)
-        )
+        if method == "erm":
+            ranks: tuple[int | None, ...] = (None,)
+        elif method == "grit":
+            ranks = tuple(configured_ranks)
+        else:
+            raise AssertionError(f"candidate grid is missing method {method}")
         for learning_rate in sorted(
             float(value) for value in config.search_space.learning_rates
         ):
@@ -741,7 +754,7 @@ def _candidate_scientific_digest(
             projection = DisabledProjectionConfig(kind="disabled")
             algorithm = ErmAlgorithmConfig(kind="erm")
             pair_digest = None
-        else:
+        elif method == "grit":
             if requested_rank is None:
                 raise AssertionError("planned CMNIST GRIT candidate lacks a rank")
             pairs = OraclePairsConfig(
@@ -765,6 +778,10 @@ def _candidate_scientific_digest(
             )
             algorithm = GritAlgorithmConfig(kind="grit")
             pair_digest = lineage.pair_manifest_digest
+        else:
+            raise AssertionError(
+                f"CMNIST config materializer is missing method {method}"
+            )
         candidate = OrdinaryExperimentConfig(
             schema_version="grit.experiment/v1",
             run_kind="ordinary",
@@ -822,6 +839,10 @@ def _candidate_scientific_digest(
         projection_digest = "pending:derived-after-plan"
         pair_digest = lineage.pair_manifest_digest
         tolerance = config.relative_singular_value_tolerance
+    elif method != "erm":
+        raise AssertionError(
+            f"Waterbirds config materializer is missing method {method}"
+        )
     candidate = WaterbirdsCandidateConfig(
         schema_version="grit.waterbirds-candidate/v2",
         protocol_id="waterbirds_cf/v1",
@@ -855,7 +876,7 @@ def _candidate_id(dataset: str, method: MethodId, digest: str) -> str:
 def _candidate_order_key(candidate: SearchCandidate) -> tuple[int, float, float, int]:
     rank = -1 if candidate.requested_rank is None else candidate.requested_rank
     return (
-        0 if candidate.method_id == "erm" else 1,
+        IMPLEMENTED_METHODS.index(candidate.method_id),
         float(candidate.learning_rate),
         float(candidate.weight_decay),
         rank,
