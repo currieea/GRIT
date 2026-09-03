@@ -1,10 +1,10 @@
-"""Plan and run (or continue) an ERM/GRIT search from a YAML config.
+"""Plan and run (or continue) a production search from a YAML config.
 
     uv run scripts/run_search.py configs/cmnist/production-search.yaml --pilot
     uv run scripts/run_search.py configs/cmnist/production-search.yaml
 
 Completed tasks in the output directory are reused, so interrupting and rerunning
-is safe. --pilot runs one ERM and one rank>0 GRIT tuning task and stops.
+is safe. --pilot runs one tuning task for each configured method and stops.
 """
 
 from __future__ import annotations
@@ -18,8 +18,8 @@ from grit.methods.types import IMPLEMENTED_METHODS
 from grit.search.run import (
     ProductionExecutionLimits,
     ProductionSearchStatus,
+    pilot_candidates,
     plan_production_search,
-    production_pilot_candidates,
     production_search_status,
     run_production_search,
 )
@@ -57,11 +57,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     stop_after = args.stop_after
     limit = args.limit
     if args.pilot:
-        pilot = production_pilot_candidates(config)
-        candidate_ids = (pilot.erm.candidate_id, pilot.grit_nonzero_rank.candidate_id)
-        seed = pilot.tuning_seed
+        candidates = pilot_candidates(plan)
+        candidate_ids = tuple(candidate.candidate_id for candidate in candidates)
+        seed = plan.seeds.stages.tuning[0]
         stop_after = "tuning"
-        limit = 2
+        limit = len(candidates)
     filtered = args.only is not None or bool(candidate_ids) or seed is not None
     if filtered:
         stop_after = "tuning"

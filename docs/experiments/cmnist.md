@@ -1,7 +1,7 @@
 # ColoredMNIST experiment protocol
 
-Status: **Implemented for ERM and oracle GRIT. GroupDRO is specified but not yet
-implemented. Conditional and nearest-neighbor pair definitions are still open.**
+Status: **Implemented for ERM, oracle GRIT, and GroupDRO. Conditional and
+nearest-neighbor pair definitions are still open.**
 
 ## Purpose
 
@@ -23,10 +23,10 @@ The initial vertical slice compares:
 
 - ERM
 - GRIT/ECMP with clean oracle invariant pairs
+- GroupDRO with noisy-target/color training groups
 
-GroupDRO is the first baseline extension. Conditional/random and nearest-neighbor pair
-construction are subsequent GRIT variants. REx, IRM, and any additional
-domain-generalization baselines remain deferred.
+Conditional/random and nearest-neighbor pair construction are subsequent GRIT variants.
+REx, IRM, and any additional domain-generalization baselines remain deferred.
 
 ## Construction semantics
 
@@ -438,7 +438,7 @@ selectors.
   candidates.
 - GRIT searches that optimizer grid jointly with ranks 2 through 24.
 - GroupDRO searches that optimizer grid jointly with adversarial step sizes `0.001`,
-  `0.01`, and `0.1` once its implementation is enrolled.
+  `0.01`, and `0.1`.
 - Every candidate runs on three tuning seeds.
 - The top three configurations receive two confirmation seeds.
 - The five-seed validation mean selects the frozen configuration.
@@ -449,13 +449,17 @@ selectors.
 The search runner saves every resolved candidate and per-seed validation metric. W&B may
 mirror the search, but local structured results define selection semantics.
 
-Milestone 6A implements this approved ERM/oracle-GRIT grid locally. The production schema
+The production lifecycle implements the approved ERM/oracle-GRIT grid and an independent
+GroupDRO grid locally. The production schema
 requires explicit dataset, feature-cache, and 256-pair manifest paths; the canonical
 production inventory; pinned official OpenAI CLIP identity; one matching normalization;
 and explicit construction, pair, 3 tuning, 2 confirmation, and 10 final seeds. Planning
 emits all 384 ordered candidates (16 ERM and 368 GRIT) and expected stage counts without
 loading arrays, training, checkpoints, or final-test access. The primary unnormalized
-experiment and the named L2 sensitivity are distinct configurations and caches.
+experiment and the named L2 sensitivity are distinct configurations and caches. The
+GroupDRO configuration emits 48 candidates (16 optimizer settings crossed with three
+adversarial step sizes) into a separate output tree, so it does not invalidate or rerun
+the ERM/GRIT search.
 
 The run scheduler applies both selectors to the same saved tuning runs, confirms the
 ordered union of their method-specific top threes once, and freezes separate winners.

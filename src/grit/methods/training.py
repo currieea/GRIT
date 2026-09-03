@@ -1,9 +1,10 @@
-"""Small real frozen-feature linear-probe path for CMNIST ERM and GRIT."""
+"""Frozen-feature linear-probe training for CMNIST ERM, GRIT, and GroupDRO."""
 
 from __future__ import annotations
 
 import hashlib
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol, cast
@@ -13,9 +14,15 @@ import torch
 from numpy.typing import NDArray
 from pydantic import StrictInt, StrictStr
 
-from grit.config import LinearProbeTrainingConfig
+from grit.config import GroupDroAlgorithmConfig, LinearProbeTrainingConfig
 from grit.features.cmnist import FeatureTable
 from grit.methods.checkpoints import CheckpointStore, StoredCheckpoint
+from grit.methods.groupdro import (
+    CMNIST_GROUP_COUNT,
+    GroupDroObjective,
+    cmnist_group_ids,
+    group_balanced_epoch_indices,
+)
 from grit.methods.projection import FittedLinearProjection
 from grit.methods.types import MethodId
 from grit.schemas import SeedStage, StrictBoundaryModel
@@ -60,11 +67,28 @@ class LinearProbeAlgorithm:
     def update(self, features: torch.Tensor, targets: torch.Tensor) -> float:
         """Perform the algorithm-owned mutation for one trainer-provided batch."""
 
+        return self.update_with_objective(
+            features, targets, lambda losses: losses.mean()
+        )
+
+    def update_with_objective(
+        self,
+        features: torch.Tensor,
+        targets: torch.Tensor,
+        objective: Callable[[torch.Tensor], torch.Tensor],
+    ) -> float:
+        """Update from an algorithm-specific reduction of per-example losses."""
+
         self._model.train()
         prepared = self._prepare(features)
         self._optimizer.zero_grad(set_to_none=True)
         logits = self._model(prepared)
-        loss = torch.nn.functional.cross_entropy(logits, targets.to(torch.int64))
+        per_example = torch.nn.functional.cross_entropy(
+            logits, targets.to(torch.int64), reduction="none"
+        )
+        loss = objective(per_example)
+        if loss.ndim != 0 or not torch.isfinite(loss):
+            raise ValueError("linear-probe objective must return one finite scalar")
         backward = cast(CallableWithoutArguments, loss.backward)
         step = cast(CallableWithoutArguments, self._optimizer.step)
         backward()
@@ -154,17 +178,22 @@ def train_linear_probe(
     seed: int,
     projection: FittedLinearProjection | None,
     projection_rank: int | None,
+    groupdro: GroupDroAlgorithmConfig | None = None,
 ) -> TrainedLinearProbeRun:
     """Run trainer-owned epoch/batch iteration and emit validation every epoch."""
 
-    if method_id == "erm" and projection is not None:
-        raise ValueError("ERM must train on unprojected features")
+    if method_id in ("erm", "groupdro") and projection is not None:
+        raise ValueError("ERM and GroupDRO must train on unprojected features")
     if method_id == "grit" and projection is None:
         raise ValueError("GRIT requires a fitted projection")
-    if method_id == "erm" and projection_rank is not None:
-        raise ValueError("ERM cannot declare a projection rank")
+    if method_id in ("erm", "groupdro") and projection_rank is not None:
+        raise ValueError("ERM and GroupDRO cannot declare a projection rank")
     if method_id == "grit" and projection_rank is None:
         raise ValueError("GRIT must declare its projection rank")
+    if (method_id == "groupdro") != (groupdro is not None):
+        raise ValueError("GroupDRO runs require exactly one GroupDRO configuration")
+    if groupdro is not None and groupdro.group_definition != "target_color":
+        raise ValueError("CMNIST GroupDRO requires target-color groups")
     torch.use_deterministic_algorithms(True)
     algorithm = LinearProbeAlgorithm(config, model_seed=seed, projection=projection)
     train_features = torch.cat(
@@ -173,21 +202,56 @@ def train_linear_probe(
     train_targets = torch.cat(
         [table.targets for table in training_tables], dim=0
     ).to(torch.int64)
+    train_groups = (
+        cmnist_group_ids(
+            train_targets,
+            torch.cat([table.colors for table in training_tables], dim=0),
+        )
+        if groupdro is not None
+        else None
+    )
     if int(train_features.shape[0]) == 0:
         raise ValueError("linear probe training data must be non-empty")
 
     generator = torch.Generator(device="cpu").manual_seed(seed)
+    groupdro_objective = (
+        GroupDroObjective(
+            group_count=CMNIST_GROUP_COUNT,
+            step_size=float(groupdro.adversarial_step_size),
+        )
+        if groupdro is not None
+        else None
+    )
     store = InMemoryLinearCheckpointStore(store_id=f"memory:{run_id}")
     metrics: list[ValidationMetricRecord] = []
     epoch_losses: list[float] = []
     for epoch in range(1, config.max_epochs + 1):
-        permutation = torch.randperm(int(train_features.shape[0]), generator=generator)
+        permutation = (
+            torch.randperm(int(train_features.shape[0]), generator=generator)
+            if train_groups is None
+            else group_balanced_epoch_indices(
+                train_groups,
+                group_count=CMNIST_GROUP_COUNT,
+                generator=generator,
+            )
+        )
         batch_losses: list[float] = []
         for start in range(0, len(permutation), config.batch_size):
             rows = permutation[start : start + config.batch_size]
-            batch_losses.append(
-                algorithm.update(train_features[rows], train_targets[rows])
-            )
+            if train_groups is None or groupdro_objective is None:
+                batch_loss = algorithm.update(
+                    train_features[rows], train_targets[rows]
+                )
+            else:
+                batch_groups = train_groups[rows]
+                batch_loss = algorithm.update_with_objective(
+                    train_features[rows],
+                    train_targets[rows],
+                    lambda losses, groups=batch_groups: groupdro_objective(
+                        losses, groups
+                    ),
+                )
+            batch_losses.append(batch_loss)
         epoch_losses.append(sum(batch_losses) / len(batch_losses))
         checkpoint_id = f"checkpoint:{run_id}:epoch:{epoch}"
         identity = CheckpointIdentity(

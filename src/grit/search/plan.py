@@ -35,6 +35,7 @@ from grit.config import (
     ErmAlgorithmConfig,
     FrozenFeatureConfig,
     GritAlgorithmConfig,
+    GroupDroAlgorithmConfig,
     LinearProbeTrainingConfig,
     LinearProjectionConfig,
     OraclePairsConfig,
@@ -77,6 +78,7 @@ APPROVED_WEIGHT_DECAYS: tuple[float, float, float, float] = (
     0.001,
 )
 APPROVED_RANKS: tuple[int, ...] = tuple(range(2, 25))
+APPROVED_GROUPDRO_STEP_SIZES: tuple[float, float, float] = (0.001, 0.01, 0.1)
 
 
 class _YamlModule(Protocol):
@@ -101,21 +103,27 @@ class SearchSeedConfig(StrictBoundaryModel):
 class SearchSpaceConfig(StrictBoundaryModel):
     """The grid is whatever the YAML says; the plan records what actually ran."""
 
-    methods: Annotated[tuple[MethodId, ...], Field(min_length=2)]
+    methods: Annotated[tuple[MethodId, ...], Field(min_length=1)]
     learning_rates: Annotated[tuple[StrictFloat, ...], Field(min_length=1)]
     weight_decays: Annotated[tuple[StrictFloat, ...], Field(min_length=1)]
-    projection_ranks: Annotated[tuple[StrictInt, ...], Field(min_length=1)]
+    projection_ranks: tuple[StrictInt, ...] = Field(
+        default=(), exclude_if=lambda values: not values
+    )
+    groupdro_step_sizes: tuple[StrictFloat, ...] = Field(
+        default=(), exclude_if=lambda values: not values
+    )
 
     @model_validator(mode="after")
     def _validate_space(self) -> SearchSpaceConfig:
-        if self.methods != IMPLEMENTED_METHODS:
-            raise ValueError(
-                "production search methods must match the implemented method order"
-            )
+        if len(set(self.methods)) != len(self.methods):
+            raise ValueError("production search methods must be unique")
+        if tuple(sorted(self.methods, key=IMPLEMENTED_METHODS.index)) != self.methods:
+            raise ValueError("production search methods must use canonical order")
         for name, values in (
             ("learning_rates", self.learning_rates),
             ("weight_decays", self.weight_decays),
             ("projection_ranks", self.projection_ranks),
+            ("groupdro_step_sizes", self.groupdro_step_sizes),
         ):
             if len(set(values)) != len(values):
                 raise ValueError(f"{name} contains duplicate values")
@@ -125,6 +133,17 @@ class SearchSpaceConfig(StrictBoundaryModel):
             raise ValueError("weight_decays must be non-negative")
         if any(value < 0 for value in self.projection_ranks):
             raise ValueError("projection_ranks must be non-negative")
+        if any(value <= 0 for value in self.groupdro_step_sizes):
+            raise ValueError("groupdro_step_sizes must be positive")
+        if ("grit" in self.methods) != bool(self.projection_ranks):
+            raise ValueError(
+                "projection_ranks must be non-empty exactly when GRIT is selected"
+            )
+        if ("groupdro" in self.methods) != bool(self.groupdro_step_sizes):
+            raise ValueError(
+                "groupdro_step_sizes must be non-empty exactly when GroupDRO is "
+                "selected"
+            )
         return self
 
 
@@ -183,6 +202,8 @@ class WaterbirdsProductionSearchConfig(_CommonProductionSearchConfig):
 
     @model_validator(mode="after")
     def _validate_grid_fits(self) -> WaterbirdsProductionSearchConfig:
+        if "groupdro" in self.search_space.methods:
+            raise ValueError("Waterbirds GroupDRO is specified but not implemented")
         _require_runnable_grid(self.search_space, self.pair_count)
         return self
 
@@ -201,14 +222,30 @@ def _require_runnable_grid(space: SearchSpaceConfig, pair_count: int) -> None:
             f"projection_ranks {too_large} exceed min(pair_count, feature_dim) = "
             f"{max_rank}"
         )
-    per_method = len(space.learning_rates) * len(space.weight_decays)
-    erm_count = per_method
-    grit_count = per_method * len(space.projection_ranks)
-    if min(erm_count, grit_count) < FINALIST_COUNT:
+    per_optimizer = len(space.learning_rates) * len(space.weight_decays)
+    counts = {
+        method: per_optimizer * _method_setting_count(space, method)
+        for method in space.methods
+    }
+    if min(counts.values()) < FINALIST_COUNT:
+        labels = {"erm": "ERM", "grit": "GRIT", "groupdro": "GroupDRO"}
+        formatted = " and ".join(
+            f"{count} {labels[method]}" for method, count in counts.items()
+        )
         raise ValueError(
             f"selection keeps the top {FINALIST_COUNT} candidates per method, but the "
-            f"grid yields {erm_count} ERM and {grit_count} GRIT candidates"
+            f"grid yields {formatted} candidates"
         )
+
+
+def _method_setting_count(space: SearchSpaceConfig, method: MethodId) -> int:
+    if method == "erm":
+        return 1
+    if method == "grit":
+        return len(space.projection_ranks)
+    if method == "groupdro":
+        return len(space.groupdro_step_sizes)
+    raise AssertionError(f"candidate grid is missing method {method}")
 
 
 ProductionSearchConfig: TypeAlias = Annotated[
@@ -310,6 +347,21 @@ class SearchCandidate(StrictBoundaryModel):
     learning_rate: StrictFloat
     weight_decay: StrictFloat
     requested_rank: Annotated[StrictInt, Field(ge=0, le=24)] | None
+    groupdro_step_size: Annotated[StrictFloat, Field(gt=0.0)] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+    @model_validator(mode="after")
+    def _validate_method_settings(self) -> SearchCandidate:
+        if self.method_id == "grit":
+            if self.requested_rank is None or self.groupdro_step_size is not None:
+                raise ValueError("GRIT candidates require only a projection rank")
+        elif self.method_id == "groupdro":
+            if self.requested_rank is not None or self.groupdro_step_size is None:
+                raise ValueError("GroupDRO candidates require only an adversarial step")
+        elif self.requested_rank is not None or self.groupdro_step_size is not None:
+            raise ValueError("ERM candidates cannot carry method-specific settings")
+        return self
 
 
 class ExpectedRunCounts(StrictBoundaryModel):
@@ -332,7 +384,7 @@ class SearchPlan(StrictBoundaryModel):
     experiment_variant: Literal["primary_unnormalized", "l2_normalized_sensitivity"]
     normalization: Normalization
     resolved_config: ResolvedProductionSearchConfig
-    methods: Annotated[tuple[MethodId, ...], Field(min_length=2)]
+    methods: Annotated[tuple[MethodId, ...], Field(min_length=1)]
     selectors: tuple[NonEmptyStr, ...]
     candidates: tuple[SearchCandidate, ...]
     seeds: SearchSeedConfig
@@ -381,7 +433,12 @@ def load_production_search_config(path: Path) -> ProductionSearchConfig:
 
 
 _FLOAT_FIELDS = frozenset(
-    {"learning_rates", "weight_decays", "relative_singular_value_tolerance"}
+    {
+        "learning_rates",
+        "weight_decays",
+        "groupdro_step_sizes",
+        "relative_singular_value_tolerance",
+    }
 )
 _EXPONENT_FLOAT = re.compile(r"^[+-]?(\d+\.?\d*|\.\d+)[eE][+-]?\d+$")
 
@@ -554,9 +611,16 @@ def _expected_output_schemas(
                 artifact_kind="production_summary",
                 schema_version="grit.cmnist-production-summary/v1",
             ),
-            OutputSchemaVersion(
-                artifact_kind="paired_summary",
-                schema_version="grit.cmnist-paired-summary/v1",
+            *(
+                (
+                    OutputSchemaVersion(
+                        artifact_kind="paired_summary",
+                        schema_version="grit.cmnist-paired-summary/v1",
+                    ),
+                )
+                if "erm" in config.search_space.methods
+                and "grit" in config.search_space.methods
+                else ()
             ),
         )
     else:
@@ -599,9 +663,15 @@ def _expected_output_schemas(
             artifact_kind="search_plan", schema_version="grit.search-plan/v1"
         ),
         *dataset_specific,
-        OutputSchemaVersion(
-            artifact_kind="projection_diagnostics",
-            schema_version="grit.linear-projection/v2",
+        *(
+            (
+                OutputSchemaVersion(
+                    artifact_kind="projection_diagnostics",
+                    schema_version="grit.linear-projection/v2",
+                ),
+            )
+            if "grit" in config.search_space.methods
+            else ()
         ),
         OutputSchemaVersion(
             artifact_kind="selected_checkpoint",
@@ -620,14 +690,9 @@ def _candidate_count_for_config(config: ProductionSearchConfig) -> int:
     )
     candidate_count = 0
     for method in config.search_space.methods:
-        if method == "erm":
-            candidate_count += per_optimizer_grid
-        elif method == "grit":
-            candidate_count += per_optimizer_grid * len(
-                config.search_space.projection_ranks
-            )
-        else:
-            raise AssertionError(f"candidate grid is missing method {method}")
+        candidate_count += per_optimizer_grid * _method_setting_count(
+            config.search_space, method
+        )
     return candidate_count
 
 
@@ -689,13 +754,18 @@ def _candidate_grid(
     lineage = resolved.lineage
     candidates: list[SearchCandidate] = []
     for method in config.search_space.methods:
-        configured_ranks = sorted(
-            int(value) for value in config.search_space.projection_ranks
-        )
         if method == "erm":
-            ranks: tuple[int | None, ...] = (None,)
+            settings: tuple[tuple[int | None, float | None], ...] = ((None, None),)
         elif method == "grit":
-            ranks = tuple(configured_ranks)
+            settings = tuple(
+                (int(rank), None)
+                for rank in sorted(config.search_space.projection_ranks)
+            )
+        elif method == "groupdro":
+            settings = tuple(
+                (None, float(step_size))
+                for step_size in sorted(config.search_space.groupdro_step_sizes)
+            )
         else:
             raise AssertionError(f"candidate grid is missing method {method}")
         for learning_rate in sorted(
@@ -704,7 +774,7 @@ def _candidate_grid(
             for weight_decay in sorted(
                 float(value) for value in config.search_space.weight_decays
             ):
-                for requested_rank in ranks:
+                for requested_rank, groupdro_step_size in settings:
                     scientific = _candidate_scientific_digest(
                         config,
                         lineage,
@@ -712,6 +782,7 @@ def _candidate_grid(
                         learning_rate,
                         weight_decay,
                         requested_rank,
+                        groupdro_step_size,
                     )
                     candidate_id = _candidate_id(config.dataset, method, scientific)
                     candidates.append(
@@ -722,6 +793,7 @@ def _candidate_grid(
                             learning_rate=learning_rate,
                             weight_decay=weight_decay,
                             requested_rank=requested_rank,
+                            groupdro_step_size=groupdro_step_size,
                         )
                     )
     candidate_ids = [candidate.candidate_id for candidate in candidates]
@@ -740,6 +812,7 @@ def _candidate_scientific_digest(
     learning_rate: float,
     weight_decay: float,
     requested_rank: int | None,
+    groupdro_step_size: float | None,
 ) -> str:
     training = LinearProbeTrainingConfig(
         optimizer="adam",
@@ -778,6 +851,22 @@ def _candidate_scientific_digest(
             )
             algorithm = GritAlgorithmConfig(kind="grit")
             pair_digest = lineage.pair_manifest_digest
+        elif method == "groupdro":
+            if groupdro_step_size is None:
+                raise AssertionError(
+                    "planned CMNIST GroupDRO candidate lacks a step size"
+                )
+            pairs = DisabledPairsConfig(kind="disabled")
+            projection = DisabledProjectionConfig(kind="disabled")
+            algorithm = GroupDroAlgorithmConfig(
+                kind="groupdro",
+                group_definition="target_color",
+                adversarial_step_size=groupdro_step_size,
+                sampling="inverse_group_frequency_with_replacement",
+                generalization_adjustment=0.0,
+                normalize_loss=False,
+            )
+            pair_digest = None
         else:
             raise AssertionError(
                 f"CMNIST config materializer is missing method {method}"
@@ -873,13 +962,18 @@ def _candidate_id(dataset: str, method: MethodId, digest: str) -> str:
     return f"candidate:{dataset}:{method}:{digest.removeprefix('sha256:')[:24]}"
 
 
-def _candidate_order_key(candidate: SearchCandidate) -> tuple[int, float, float, int]:
+def _candidate_order_key(
+    candidate: SearchCandidate,
+) -> tuple[int, float, float, int, float]:
     rank = -1 if candidate.requested_rank is None else candidate.requested_rank
     return (
         IMPLEMENTED_METHODS.index(candidate.method_id),
         float(candidate.learning_rate),
         float(candidate.weight_decay),
         rank,
+        -1.0
+        if candidate.groupdro_step_size is None
+        else float(candidate.groupdro_step_size),
     )
 
 

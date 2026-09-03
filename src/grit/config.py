@@ -131,8 +131,17 @@ class GritAlgorithmConfig(StrictBoundaryModel):
     kind: Literal["grit"]
 
 
+class GroupDroAlgorithmConfig(StrictBoundaryModel):
+    kind: Literal["groupdro"]
+    group_definition: Literal["target_color", "target_background"]
+    adversarial_step_size: Annotated[StrictFloat, Field(gt=0.0)]
+    sampling: Literal["inverse_group_frequency_with_replacement"]
+    generalization_adjustment: Annotated[StrictFloat, Field(ge=0.0, le=0.0)]
+    normalize_loss: Literal[False]
+
+
 AlgorithmConfig: TypeAlias = Annotated[
-    ErmAlgorithmConfig | GritAlgorithmConfig,
+    ErmAlgorithmConfig | GritAlgorithmConfig | GroupDroAlgorithmConfig,
     Field(discriminator="kind"),
 ]
 
@@ -232,11 +241,16 @@ class _CommonCmnistExperimentConfig(StrictBoundaryModel):
 
     @model_validator(mode="after")
     def _validate_algorithm_components(self) -> _CommonCmnistExperimentConfig:
-        if isinstance(self.algorithm, ErmAlgorithmConfig):
+        if isinstance(self.algorithm, ErmAlgorithmConfig | GroupDroAlgorithmConfig):
             if not isinstance(self.pairs, DisabledPairsConfig):
-                raise ValueError("ERM requires pairs.kind='disabled'")
+                raise ValueError("ERM and GroupDRO require pairs.kind='disabled'")
             if not isinstance(self.projection, DisabledProjectionConfig):
-                raise ValueError("ERM requires projection.kind='disabled'")
+                raise ValueError("ERM and GroupDRO require projection.kind='disabled'")
+            if (
+                isinstance(self.algorithm, GroupDroAlgorithmConfig)
+                and self.algorithm.group_definition != "target_color"
+            ):
+                raise ValueError("CMNIST GroupDRO requires target-color groups")
         else:
             if not isinstance(self.pairs, OraclePairsConfig):
                 raise ValueError("initial GRIT requires pairs.kind='oracle'")
@@ -247,9 +261,11 @@ class _CommonCmnistExperimentConfig(StrictBoundaryModel):
         if self.reportable:
             if self.artifact_lineage is None:
                 raise ValueError("reportable CMNIST requires prepared-artifact lineage")
-            if isinstance(self.algorithm, ErmAlgorithmConfig):
+            if isinstance(self.algorithm, ErmAlgorithmConfig | GroupDroAlgorithmConfig):
                 if self.artifact_lineage.pair_manifest_digest is not None:
-                    raise ValueError("reportable CMNIST ERM cannot bind oracle pairs")
+                    raise ValueError(
+                        "reportable CMNIST ERM and GroupDRO cannot bind oracle pairs"
+                    )
             elif self.artifact_lineage.pair_manifest_digest is None:
                 raise ValueError("reportable CMNIST GRIT requires oracle-pair lineage")
             counts = self.dataset.source_counts

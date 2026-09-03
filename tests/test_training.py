@@ -4,11 +4,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import torch
 
-from grit.config import LinearProbeTrainingConfig
+from grit.config import GroupDroAlgorithmConfig, LinearProbeTrainingConfig
 from grit.features.cmnist import FeatureTable, TableRole
 from grit.methods.checkpoints import restore_checkpoint
+from grit.methods.groupdro import (
+    GroupDroObjective,
+    cmnist_group_ids,
+    group_balanced_epoch_indices,
+)
 from grit.methods.projection import fit_linear_projection
 from grit.methods.training import (
     LinearProbeState,
@@ -63,6 +69,39 @@ def _tables() -> tuple[
             _table("val_e02", "validation", 8, 4),
             _table("val_e05", "validation", 8, 5),
         ),
+    )
+
+
+def _groupdro_training_tables() -> tuple[FeatureTable, FeatureTable]:
+    tables: list[FeatureTable] = []
+    for name, offset in (("train_e01", 21), ("train_e02", 22)):
+        generator = torch.Generator(device="cpu").manual_seed(100 + offset)
+        features = torch.randn((16, 512), generator=generator)
+        targets = torch.tensor([0, 0, 1, 1] * 4, dtype=torch.int64)
+        colors = torch.tensor([0, 1, 0, 1] * 4, dtype=torch.int64)
+        tables.append(
+            FeatureTable(
+                name=name,
+                role="training",
+                source_ids=tuple(f"source:{name}:{index}" for index in range(16)),
+                features=features,
+                digits=targets * 5,
+                clean_labels=targets,
+                targets=targets,
+                colors=colors,
+            )
+        )
+    return tables[0], tables[1]
+
+
+def _groupdro_config() -> GroupDroAlgorithmConfig:
+    return GroupDroAlgorithmConfig(
+        kind="groupdro",
+        group_definition="target_color",
+        adversarial_step_size=0.01,
+        sampling="inverse_group_frequency_with_replacement",
+        generalization_adjustment=0.0,
+        normalize_loss=False,
     )
 
 
@@ -161,3 +200,75 @@ def test_rank_zero_grit_and_erm_are_exactly_equivalent() -> None:
     assert tuple(metric.value for metric in erm.validation_metrics) == tuple(
         metric.value for metric in grit.validation_metrics
     )
+
+
+def test_groupdro_objective_updates_adversarial_probabilities() -> None:
+    objective = GroupDroObjective(group_count=4, step_size=0.1)
+    losses = torch.tensor([1.0, 2.0, 3.0, 4.0])
+    value = objective(losses, torch.tensor([0, 1, 2, 3]))
+    expected_probabilities = torch.softmax(0.1 * losses.detach(), dim=0)
+    assert torch.allclose(objective.probabilities, expected_probabilities)
+    assert torch.allclose(value, losses.dot(expected_probabilities))
+
+
+def test_groupdro_sampler_uses_inverse_group_frequency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[tuple[torch.Tensor, int, bool, torch.Generator | None]] = []
+
+    def fake_multinomial(
+        weights: torch.Tensor,
+        num_samples: int,
+        replacement: bool,
+        *,
+        generator: torch.Generator | None = None,
+    ) -> torch.Tensor:
+        captured.append((weights.clone(), num_samples, replacement, generator))
+        return torch.arange(num_samples)
+
+    monkeypatch.setattr(torch, "multinomial", fake_multinomial)
+    generator = torch.Generator(device="cpu").manual_seed(9)
+    rows = group_balanced_epoch_indices(
+        torch.tensor([0, 0, 1, 2, 3]),
+        group_count=4,
+        generator=generator,
+    )
+    assert torch.equal(rows, torch.arange(5))
+    assert len(captured) == 1
+    weights, sample_count, replacement, observed_generator = captured[0]
+    assert torch.equal(weights, torch.tensor([2.5, 2.5, 5.0, 5.0, 5.0]))
+    assert sample_count == 5
+    assert replacement
+    assert observed_generator is generator
+
+
+def test_cmnist_groupdro_training_is_deterministic() -> None:
+    _, validation = _tables()
+    runs = tuple(
+        train_linear_probe(
+            _groupdro_training_tables(),
+            validation,
+            _training_config(),
+            run_id=f"run:groupdro:{index}",
+            candidate_id="candidate:groupdro",
+            method_id="groupdro",
+            scientific_config_digest="sha256:groupdro",
+            seed_stage=SeedStage.TUNING,
+            seed=101,
+            projection=None,
+            projection_rank=None,
+            groupdro=_groupdro_config(),
+        )
+        for index in range(2)
+    )
+    first, second = runs
+    assert first.epoch_losses == second.epoch_losses
+    assert torch.equal(
+        first.algorithm.capture_inference_state().weight,
+        second.algorithm.capture_inference_state().weight,
+    )
+    assert {metric.method_id for metric in first.validation_metrics} == {"groupdro"}
+    groups = cmnist_group_ids(
+        torch.tensor([0, 0, 1, 1]), torch.tensor([0, 1, 0, 1])
+    )
+    assert torch.equal(groups, torch.tensor([0, 1, 2, 3]))

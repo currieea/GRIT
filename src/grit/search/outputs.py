@@ -10,7 +10,7 @@ from typing import Annotated, Literal, TypeAlias
 
 from pydantic import Field, FiniteFloat, StrictInt, StrictStr, model_validator
 
-from grit.methods.types import MethodId
+from grit.methods.types import IMPLEMENTED_METHODS, MethodId
 from grit.schemas import CmnistSelector, StrictBoundaryModel
 from grit.search.plan import SearchLineage
 from grit.search.waterbirds_contracts import MetricName, WaterbirdsMetricSummary
@@ -146,32 +146,40 @@ class CmnistProductionSummary(StrictBoundaryModel):
     reportable: Literal[True]
     plan_digest: NonEmptyStr
     lineage: SearchLineage
-    methods: tuple[
-        CmnistMethodSelectorSummary,
-        CmnistMethodSelectorSummary,
-        CmnistMethodSelectorSummary,
-        CmnistMethodSelectorSummary,
+    methods: Annotated[
+        tuple[CmnistMethodSelectorSummary, ...], Field(min_length=1)
     ]
-    paired_selectors: tuple[
-        CmnistPairedSelectorSummary,
-        CmnistPairedSelectorSummary,
-    ]
+    paired_selectors: tuple[CmnistPairedSelectorSummary, ...]
 
     @model_validator(mode="after")
     def _validate_methods(self) -> CmnistProductionSummary:
-        expected = (
-            ("erm", CmnistSelector.PRIMARY_ROBUST),
-            ("erm", CmnistSelector.SECONDARY_SOURCE),
-            ("grit", CmnistSelector.PRIMARY_ROBUST),
-            ("grit", CmnistSelector.SECONDARY_SOURCE),
+        observed_methods = tuple(dict.fromkeys(item.method_id for item in self.methods))
+        if tuple(sorted(observed_methods, key=IMPLEMENTED_METHODS.index)) != (
+            observed_methods
+        ):
+            raise ValueError("CMNIST production methods are misordered")
+        expected = tuple(
+            (method, selector)
+            for method in observed_methods
+            for selector in (
+                CmnistSelector.PRIMARY_ROBUST,
+                CmnistSelector.SECONDARY_SOURCE,
+            )
         )
         if tuple((item.method_id, item.selector) for item in self.methods) != expected:
             raise ValueError("CMNIST production summaries require canonical ordering")
         if any(item.lineage != self.lineage for item in self.methods):
             raise ValueError("CMNIST production summary lineage is inconsistent")
+        expected_paired_selectors = (
+            (
+                CmnistSelector.PRIMARY_ROBUST,
+                CmnistSelector.SECONDARY_SOURCE,
+            )
+            if "erm" in observed_methods and "grit" in observed_methods
+            else ()
+        )
         if tuple(item.selector for item in self.paired_selectors) != (
-            CmnistSelector.PRIMARY_ROBUST,
-            CmnistSelector.SECONDARY_SOURCE,
+            expected_paired_selectors
         ):
             raise ValueError("CMNIST paired selector summaries are misordered")
         by_identity = {

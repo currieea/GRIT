@@ -27,6 +27,11 @@ uv run scripts/prepare_cmnist.py
 uv run scripts/run_search.py configs/cmnist/production-search.yaml --pilot
 uv run scripts/run_search.py configs/cmnist/production-search.yaml
 uv run scripts/search_status.py configs/cmnist/production-search.yaml
+
+# Independent GroupDRO baseline (after the ERM/GRIT pilot is healthy)
+uv run scripts/run_search.py configs/cmnist/groupdro-search.yaml --pilot
+uv run scripts/run_search.py configs/cmnist/groupdro-search.yaml
+uv run scripts/search_status.py configs/cmnist/groupdro-search.yaml
 ```
 
 `prepare_cmnist.py` downloads MNIST and the pinned CLIP weights if needed, builds the
@@ -40,9 +45,10 @@ safe to interrupt and rerun. `--pilot` runs one ERM and one GRIT tuning task and
 `--dry-run` writes the plan and prints status without training. Run the full grid inside
 tmux.
 
-The grid is 16 ERM and 368 GRIT (16 by ranks 2 through 24) candidates, 3 tuning seeds, top-3
-confirmation with 2 more seeds, and 10 final seeds for the winner. Selection uses
-validation only; see `docs/experiments/cmnist.md`.
+The primary grid is 16 ERM and 368 GRIT (16 by ranks 2 through 24) candidates. The
+independent GroupDRO grid has 48 candidates (16 by three adversarial step sizes). Both
+use 3 tuning seeds, top-3 confirmation with 2 more seeds, and 10 final seeds for the
+winner. Selection uses validation only; see `docs/experiments/cmnist.md`.
 
 ## Waterbirds
 

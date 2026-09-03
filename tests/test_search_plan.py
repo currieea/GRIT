@@ -53,6 +53,7 @@ from grit.search.cmnist_runner import (
     CMNIST_PAIR_MANIFEST_RELATIVE_PATH,
 )
 from grit.search.plan import (
+    APPROVED_GROUPDRO_STEP_SIZES,
     APPROVED_LEARNING_RATES,
     APPROVED_RANKS,
     APPROVED_WEIGHT_DECAYS,
@@ -76,6 +77,7 @@ from grit.search.run import (
     ProductionSearchStatus,
     limited_tuning_candidates,
     persist_canonical_artifact,
+    pilot_candidates,
     plan_production_search,
     production_pilot_candidates,
     production_search_status,
@@ -160,6 +162,9 @@ def test_checked_production_examples_match_preparation_layout_and_seeds(
     cmnist = load_production_search_config(
         repository / "configs/cmnist/production-search.yaml"
     )
+    cmnist_groupdro = load_production_search_config(
+        repository / "configs/cmnist/groupdro-search.yaml"
+    )
     waterbirds = load_production_search_config(
         repository / "configs/waterbirds/production-search.yaml"
     )
@@ -180,6 +185,12 @@ def test_checked_production_examples_match_preparation_layout_and_seeds(
     )
     assert cmnist.search_space.projection_ranks == tuple(range(2, 25))
     assert cmnist.output_root == "/scratch/outputs/cmnist-primary-r2-24"
+    assert isinstance(cmnist_groupdro, CmnistProductionSearchConfig)
+    assert cmnist_groupdro.search_space.methods == ("groupdro",)
+    assert cmnist_groupdro.search_space.groupdro_step_sizes == (
+        APPROVED_GROUPDRO_STEP_SIZES
+    )
+    assert cmnist_groupdro.output_root == "/scratch/outputs/cmnist-groupdro"
 
     assert waterbirds.seeds.construction == DEFAULT_CONSTRUCTION_SEED
     waterbirds_root = "/scratch/artifacts/waterbirds-none/"
@@ -2407,6 +2418,47 @@ def test_custom_grid_epochs_and_pair_count_plan_from_yaml(
     assert plan.resolved_config.config.max_epochs == 5
     assert plan.resolved_config.config.pair_count == 64
     assert plan.expected_run_counts.tuning == 12 * 3
+
+
+def test_cmnist_groupdro_only_grid_plans_and_materializes(tmp_path: Path) -> None:
+    config_path, _ = _write_cmnist_production_config(
+        tmp_path,
+        output_root=tmp_path / "groupdro-output",
+        overrides={
+            "experiment_name": "cmnist-groupdro",
+            "search_space": {
+                "methods": ["groupdro"],
+                "learning_rates": [0.0001, 0.0003, 0.001, 0.003],
+                "weight_decays": [0.0, 0.00001, 0.0001, 0.001],
+                "groupdro_step_sizes": list(APPROVED_GROUPDRO_STEP_SIZES),
+            },
+        },
+    )
+    plan = plan_production_search(config_path)
+    assert plan.methods == ("groupdro",)
+    assert len(plan.candidates) == 48
+    assert plan.expected_run_counts.tuning == 144
+    assert plan.expected_run_counts.final == 20
+    assert "paired_summary" not in {
+        item.artifact_kind for item in plan.output_schemas
+    }
+    assert "projection_diagnostics" not in {
+        item.artifact_kind for item in plan.output_schemas
+    }
+    assert {item.groupdro_step_size for item in plan.candidates} == set(
+        APPROVED_GROUPDRO_STEP_SIZES
+    )
+    assert {item.requested_rank for item in plan.candidates} == {None}
+    resolved = materialize_cmnist_candidate_config(
+        plan, plan.candidates[0], CmnistSelector.PRIMARY_ROBUST
+    )
+    assert resolved.algorithm.kind == "groupdro"
+    assert resolved.artifact_lineage is not None
+    assert resolved.artifact_lineage.pair_manifest_digest is None
+    assert resolved.scientific_config_digest() == (
+        plan.candidates[0].scientific_config_digest
+    )
+    assert pilot_candidates(plan) == (plan.candidates[0],)
 
 
 def test_pair_count_above_prepared_bank_is_rejected(

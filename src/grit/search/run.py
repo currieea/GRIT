@@ -112,16 +112,12 @@ def production_pilot_candidates(config_path: Path) -> PilotCandidateSelection:
     """Present canonical ERM/nonzero-GRIT pilot candidates from an existing plan."""
 
     plan = _load_existing_search_plan(config_path)
-    erm = next(
-        candidate for candidate in plan.candidates if candidate.method_id == "erm"
-    )
-    grit = next(
-        candidate
-        for candidate in plan.candidates
-        if candidate.method_id == "grit"
-        and candidate.requested_rank is not None
-        and candidate.requested_rank > 0
-    )
+    by_method = {candidate.method_id: candidate for candidate in pilot_candidates(plan)}
+    try:
+        erm = by_method["erm"]
+        grit = by_method["grit"]
+    except KeyError as error:
+        raise ValueError("legacy pilot view requires both ERM and GRIT") from error
     return PilotCandidateSelection(
         schema_version="grit.production-pilot-candidates/v1",
         dataset=plan.dataset,
@@ -130,6 +126,28 @@ def production_pilot_candidates(config_path: Path) -> PilotCandidateSelection:
         erm=erm,
         grit_nonzero_rank=grit,
     )
+
+
+def pilot_candidates(plan: SearchPlan) -> tuple[SearchCandidate, ...]:
+    """Choose one deterministic tuning candidate for every planned method."""
+
+    selected: list[SearchCandidate] = []
+    for method in plan.methods:
+        selected.append(
+            next(
+                candidate
+                for candidate in plan.candidates
+                if candidate.method_id == method
+                and (
+                    method != "grit"
+                    or (
+                        candidate.requested_rank is not None
+                        and candidate.requested_rank > 0
+                    )
+                )
+            )
+        )
+    return tuple(selected)
 
 def production_search_status(config_path: Path) -> ProductionSearchStatus:
     """Report canonical completed work without invoking a trainer."""
@@ -282,14 +300,18 @@ def complete_outputs_valid(plan: SearchPlan) -> bool:
     index_path = root / "experiment-index.json"
     if plan.dataset == "cmnist":
         summary_path = root / "summaries" / "cmnist-summary.json"
-        paired_paths = tuple(
-            root
-            / "summaries"
-            / f"cmnist-{selector.value}-paired-differences.json"
-            for selector in (
-                CmnistSelector.PRIMARY_ROBUST,
-                CmnistSelector.SECONDARY_SOURCE,
+        paired_paths = (
+            tuple(
+                root
+                / "summaries"
+                / f"cmnist-{selector.value}-paired-differences.json"
+                for selector in (
+                    CmnistSelector.PRIMARY_ROBUST,
+                    CmnistSelector.SECONDARY_SOURCE,
+                )
             )
+            if "erm" in plan.methods and "grit" in plan.methods
+            else ()
         )
         required = (summary_path, *paired_paths, index_path)
         if not all(path.is_file() for path in required):

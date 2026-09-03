@@ -20,6 +20,7 @@ from grit.config import (
     ErmAlgorithmConfig,
     FrozenFeatureConfig,
     GritAlgorithmConfig,
+    GroupDroAlgorithmConfig,
     LinearProbeTrainingConfig,
     LinearProjectionConfig,
     OraclePairsConfig,
@@ -109,7 +110,7 @@ def run_cmnist_search(
     cache = _load_cmnist_cache(
         plan, tuning_only=limits is not None and limits.stop_after == "tuning"
     )
-    pair_manifest = _cmnist_pair_manifest(plan)
+    pair_manifest = _cmnist_pair_manifest(plan) if "grit" in plan.methods else None
     projections: dict[int, FittedLinearProjection] = {}
     scheduler = LocalRunScheduler(output_root, plan)
     remaining = None if limits is None else limits.max_new_runs
@@ -137,6 +138,8 @@ def run_cmnist_search(
             rank = candidate.requested_rank
             if rank is None:
                 raise AssertionError("planned GRIT candidate lacks a rank")
+            if pair_manifest is None:
+                raise AssertionError("planned GRIT search lacks its pair manifest")
             projection = projections.get(rank)
             if projection is None:
                 red, green = cache.pair_tables()
@@ -465,7 +468,7 @@ def materialize_cmnist_candidate_config(
         projection = DisabledProjectionConfig(kind="disabled")
         algorithm = ErmAlgorithmConfig(kind="erm")
         pair_digest = None
-    else:
+    elif candidate.method_id == "grit":
         rank = candidate.requested_rank
         if rank is None:
             raise AssertionError("planned GRIT candidate lacks a rank")
@@ -487,6 +490,25 @@ def materialize_cmnist_candidate_config(
         )
         algorithm = GritAlgorithmConfig(kind="grit")
         pair_digest = lineage.pair_manifest_digest
+    elif candidate.method_id == "groupdro":
+        step_size = candidate.groupdro_step_size
+        if step_size is None:
+            raise AssertionError("planned GroupDRO candidate lacks a step size")
+        pairs = DisabledPairsConfig(kind="disabled")
+        projection = DisabledProjectionConfig(kind="disabled")
+        algorithm = GroupDroAlgorithmConfig(
+            kind="groupdro",
+            group_definition="target_color",
+            adversarial_step_size=step_size,
+            sampling="inverse_group_frequency_with_replacement",
+            generalization_adjustment=0.0,
+            normalize_loss=False,
+        )
+        pair_digest = None
+    else:
+        raise AssertionError(
+            f"CMNIST config materializer is missing {candidate.method_id}"
+        )
     resolved = OrdinaryExperimentConfig(
         schema_version="grit.experiment/v1",
         run_kind="ordinary",
@@ -551,6 +573,11 @@ def _train_cmnist_task(
         seed=task.seed,
         projection=runtime.projection,
         projection_rank=task.candidate.requested_rank,
+        groupdro=(
+            runtime.config.algorithm
+            if isinstance(runtime.config.algorithm, GroupDroAlgorithmConfig)
+            else None
+        ),
     )
 
 def _cmnist_result_artifacts(
@@ -671,51 +698,52 @@ def _cmnist_summary(
             )
     paired: list[CmnistPairedSelectorSummary] = []
     method_map = {(item.method_id, item.selector): item for item in methods}
-    for selector in (
-        CmnistSelector.PRIMARY_ROBUST,
-        CmnistSelector.SECONDARY_SOURCE,
-    ):
-        erm = method_map[("erm", selector)]
-        grit = method_map[("grit", selector)]
-        erm_values = {
-            item.seed: float(item.test_ood_accuracy)
-            for item in erm.final_observations
-        }
-        grit_values = {
-            item.seed: float(item.test_ood_accuracy)
-            for item in grit.final_observations
-        }
-        differences = tuple(
-            CmnistPairedSeedDifference(
-                seed=seed,
-                selector=selector,
-                grit_minus_erm_test_ood_accuracy=(
-                    grit_values[seed] - erm_values[seed]
-                ),
-            )
-            for seed in plan.seeds.stages.final
-        )
-        paired.append(
-            CmnistPairedSelectorSummary(
-                selector=selector,
-                configured_final_seeds=plan.seeds.stages.final,
-                paired_differences=differences,
-                difference_summary=make_cmnist_accuracy_summary(
-                    "grit_minus_erm_test_ood_accuracy",
-                    tuple(
-                        float(item.grit_minus_erm_test_ood_accuracy)
-                        for item in differences
+    if "erm" in plan.methods and "grit" in plan.methods:
+        for selector in (
+            CmnistSelector.PRIMARY_ROBUST,
+            CmnistSelector.SECONDARY_SOURCE,
+        ):
+            erm = method_map[("erm", selector)]
+            grit = method_map[("grit", selector)]
+            erm_values = {
+                item.seed: float(item.test_ood_accuracy)
+                for item in erm.final_observations
+            }
+            grit_values = {
+                item.seed: float(item.test_ood_accuracy)
+                for item in grit.final_observations
+            }
+            differences = tuple(
+                CmnistPairedSeedDifference(
+                    seed=seed,
+                    selector=selector,
+                    grit_minus_erm_test_ood_accuracy=(
+                        grit_values[seed] - erm_values[seed]
                     ),
-                ),
+                )
+                for seed in plan.seeds.stages.final
             )
-        )
+            paired.append(
+                CmnistPairedSelectorSummary(
+                    selector=selector,
+                    configured_final_seeds=plan.seeds.stages.final,
+                    paired_differences=differences,
+                    difference_summary=make_cmnist_accuracy_summary(
+                        "grit_minus_erm_test_ood_accuracy",
+                        tuple(
+                            float(item.grit_minus_erm_test_ood_accuracy)
+                            for item in differences
+                        ),
+                    ),
+                )
+            )
     return CmnistProductionSummary(
         schema_version="grit.cmnist-production-summary/v1",
         reportable=True,
         plan_digest=plan.canonical_digest(),
         lineage=plan.resolved_config.lineage,
-        methods=(methods[0], methods[1], methods[2], methods[3]),
-        paired_selectors=(paired[0], paired[1]),
+        methods=tuple(methods),
+        paired_selectors=tuple(paired),
     )
 
 def _load_cmnist_cache(
