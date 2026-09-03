@@ -245,6 +245,7 @@ def prepare_official_cmnist(
     allow_download: bool,
     feature_device: str,
     clip_batch_size: int,
+    pair_count: int = 256,
 ) -> None:
     """Explicit real-data/official-CLIP preparation command implementation."""
 
@@ -272,7 +273,7 @@ def prepare_official_cmnist(
     pairs = build_clean_oracle_pairs(
         pair_source_view(construction, train_pool),
         pair_seed=pair_seed,
-        pair_count=256,
+        pair_count=pair_count,
     )
     output_root.mkdir(parents=True, exist_ok=True)
     _write_construction_manifests(output_root, construction, pairs)

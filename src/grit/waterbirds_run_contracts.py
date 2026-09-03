@@ -75,19 +75,6 @@ class WaterbirdsCandidateConfig(StrictBoundaryModel):
             )
         ):
             raise ValueError("Waterbirds GRIT config requires oracle projection")
-        if self.dataset_profile == "production":
-            training = self.training
-            if (
-                training.batch_size != 256
-                or training.max_epochs != 100
-                or float(training.learning_rate)
-                not in {0.0001, 0.0003, 0.001, 0.003}
-                or float(training.weight_decay)
-                not in {0.0, 0.00001, 0.0001, 0.001}
-            ):
-                raise ValueError(
-                    "production Waterbirds requires approved linear-probe settings"
-                )
         return self
 
     def scientific_config_digest(self) -> str:

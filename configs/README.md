@@ -8,5 +8,9 @@
 - `cmnist/smoke.yaml` and `waterbirds/smoke.yaml`: hermetic end-to-end checks with a
   fake encoder, run by `scripts/smoke.py`. Never report their numbers.
 
-The scientific fields (grid, seeds, selectors, epochs) are fixed by the protocol docs
-and validated on load; only paths and names are meant to change between machines.
+The checked-in grids, seeds, epochs, and pair counts are the primary protocol from
+`docs/experiments/`. Any of them can be changed in a copied config for a sensitivity or a
+quick check; the plan and every result record the values that actually ran. A config's
+`pair_count` may be any prefix of the prepared pair bank (pairs are stored in seeded
+order), so bank 512 pairs once with `--pair-count 512` and run 32/64/128/256/512 from
+five configs.

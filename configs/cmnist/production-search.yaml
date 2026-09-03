@@ -1,5 +1,6 @@
 # Primary unnormalized study. Paths resolve from $PROJECT_SCRATCH (run `scratch-project`
-# first) or set GRIT_SCRATCH. Override by copying this file and editing the paths.
+# first) or set GRIT_SCRATCH. Copy this file to change paths, the grid, epochs, or
+# pair_count; the plan written next to the results records whatever grid ran.
 schema_version: grit.production-search/v1
 dataset: cmnist
 protocol_id: cmnist/v1
@@ -19,8 +20,8 @@ seeds:
     final: [3101, 3102, 3103, 3104, 3105, 3106, 3107, 3108, 3109, 3110]
 search_space:
   methods: [erm, grit]
-  learning_rates: [0.0001, 0.0003, 0.001, 0.003]
-  weight_decays: [0.0, 0.00001, 0.0001, 0.001]
+  learning_rates: [1e-4, 3e-4, 1e-3, 3e-3]
+  weight_decays: [0.0, 1e-5, 1e-4, 1e-3]
   projection_ranks: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
 selectors: [primary_robust, secondary_source]
 pair_count: 256
@@ -31,4 +32,4 @@ runtime:
   device: cpu
   deterministic_algorithms: true
   workers: 1
-relative_singular_value_tolerance: 0.000000000001
+relative_singular_value_tolerance: 1e-12

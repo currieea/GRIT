@@ -6,6 +6,7 @@ import hashlib
 import importlib
 import json
 import platform
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -62,6 +63,7 @@ NonEmptyStr: TypeAlias = Annotated[StrictStr, Field(min_length=1)]
 Normalization: TypeAlias = Literal["none", "l2"]
 MethodId: TypeAlias = Literal["erm", "grit"]
 
+# Defaults used by the checked-in configs and tests. Any grid may be configured.
 APPROVED_LEARNING_RATES: tuple[float, float, float, float] = (
     0.0001,
     0.0003,
@@ -97,34 +99,30 @@ class SearchSeedConfig(StrictBoundaryModel):
 
 
 class SearchSpaceConfig(StrictBoundaryModel):
+    """The grid is whatever the YAML says; the plan records what actually ran."""
+
     methods: tuple[Literal["erm", "grit"], Literal["erm", "grit"]]
-    learning_rates: tuple[StrictFloat, StrictFloat, StrictFloat, StrictFloat]
-    weight_decays: tuple[StrictFloat, StrictFloat, StrictFloat, StrictFloat]
-    projection_ranks: Annotated[
-        tuple[StrictInt, ...], Field(min_length=25, max_length=25)
-    ]
+    learning_rates: Annotated[tuple[StrictFloat, ...], Field(min_length=1)]
+    weight_decays: Annotated[tuple[StrictFloat, ...], Field(min_length=1)]
+    projection_ranks: Annotated[tuple[StrictInt, ...], Field(min_length=1)]
 
     @model_validator(mode="after")
-    def _validate_approved_space(self) -> SearchSpaceConfig:
+    def _validate_space(self) -> SearchSpaceConfig:
         if self.methods != ("erm", "grit"):
             raise ValueError("production search methods must be ordered ERM then GRIT")
-        if tuple(sorted(float(value) for value in self.learning_rates)) != (
-            APPROVED_LEARNING_RATES
+        for name, values in (
+            ("learning_rates", self.learning_rates),
+            ("weight_decays", self.weight_decays),
+            ("projection_ranks", self.projection_ranks),
         ):
-            raise ValueError(
-                "production search requires the approved learning-rate grid"
-            )
-        if tuple(sorted(float(value) for value in self.weight_decays)) != (
-            APPROVED_WEIGHT_DECAYS
-        ):
-            raise ValueError(
-                "production search requires the approved weight-decay grid"
-            )
-        if (
-            tuple(sorted(int(value) for value in self.projection_ranks))
-            != APPROVED_RANKS
-        ):
-            raise ValueError("production search requires projection ranks 0 through 24")
+            if len(set(values)) != len(values):
+                raise ValueError(f"{name} contains duplicate values")
+        if any(value <= 0 for value in self.learning_rates):
+            raise ValueError("learning_rates must be positive")
+        if any(value < 0 for value in self.weight_decays):
+            raise ValueError("weight_decays must be non-negative")
+        if any(value < 0 for value in self.projection_ranks):
+            raise ValueError("projection_ranks must be non-negative")
         return self
 
 
@@ -154,31 +152,27 @@ class _CommonProductionSearchConfig(StrictBoundaryModel):
         }
         if self.normalization != expected[self.experiment_variant]:
             raise ValueError("experiment variant and normalization are inconsistent")
-        if float(self.relative_singular_value_tolerance) != 1e-12:
-            raise ValueError(
-                "production search requires the approved SVD tolerance 1e-12"
-            )
         return self
 
 
 class CmnistProductionSearchConfig(_CommonProductionSearchConfig):
     dataset: Literal["cmnist"]
     protocol_id: Literal["cmnist/v1"]
-    pair_count: Literal[256]
+    pair_count: PositiveInt
     selectors: tuple[
         Literal["primary_robust"], Literal["secondary_source"]
     ]
-    batch_size: Literal[256]
-    max_epochs: Literal[40]
+    batch_size: PositiveInt
+    max_epochs: PositiveInt
 
 
 class WaterbirdsProductionSearchConfig(_CommonProductionSearchConfig):
     dataset: Literal["waterbirds_cf"]
     protocol_id: Literal["waterbirds_cf/v1"]
-    pair_count: Literal[240]
+    pair_count: PositiveInt
     selectors: tuple[Literal["waterbirds_validation_worst_group"]]
-    batch_size: Literal[256]
-    max_epochs: Literal[100]
+    batch_size: PositiveInt
+    max_epochs: PositiveInt
 
 
 ProductionSearchConfig: TypeAlias = Annotated[
@@ -344,8 +338,50 @@ class SearchPlan(StrictBoundaryModel):
 def load_production_search_config(path: Path) -> ProductionSearchConfig:
     """Parse an authored production YAML through the strict discriminated boundary."""
 
-    authored = _expand_environment(_yaml.safe_load(path.read_text(encoding="utf-8")))
+    authored = _normalize_numbers(
+        _expand_environment(_yaml.safe_load(path.read_text(encoding="utf-8")))
+    )
     return _SEARCH_CONFIG_ADAPTER.validate_json(json.dumps(authored, allow_nan=False))
+
+
+_FLOAT_FIELDS = frozenset(
+    {"learning_rates", "weight_decays", "relative_singular_value_tolerance"}
+)
+_EXPONENT_FLOAT = re.compile(r"^[+-]?(\d+\.?\d*|\.\d+)[eE][+-]?\d+$")
+
+
+def _normalize_numbers(value: object) -> object:
+    """Let YAML authors write `0` or `1e-5` for float fields.
+
+    YAML 1.1 parses `1e-5` as a string and `0` as an int; the strict schema wants
+    floats. This coerces only the float-valued fields and exponent-form strings.
+    """
+
+    if isinstance(value, dict):
+        result: dict[str, object] = {}
+        for key, item in cast(dict[str, object], value).items():
+            if key in _FLOAT_FIELDS:
+                item = _coerce_float(item)
+            result[key] = _normalize_numbers(item)
+        return result
+    if isinstance(value, list):
+        return [_normalize_numbers(item) for item in cast(list[object], value)]
+    if isinstance(value, str) and _EXPONENT_FLOAT.match(value):
+        return float(value)
+    return value
+
+
+def _coerce_float(item: object) -> object:
+    if isinstance(item, list):
+        return [_coerce_float(element) for element in cast(list[object], item)]
+    if isinstance(item, bool):
+        return item
+    if isinstance(item, int | str):
+        try:
+            return float(item)
+        except ValueError:
+            return item
+    return item
 
 
 def _expand_environment(value: object) -> object:
@@ -609,8 +645,11 @@ def _candidate_grid(
     lineage = resolved.lineage
     candidates: list[SearchCandidate] = []
     for method in config.search_space.methods:
+        configured_ranks = sorted(
+            int(value) for value in config.search_space.projection_ranks
+        )
         ranks: tuple[int | None, ...] = (
-            (None,) if method == "erm" else tuple(APPROVED_RANKS)
+            (None,) if method == "erm" else tuple(configured_ranks)
         )
         for learning_rate in sorted(
             float(value) for value in config.search_space.learning_rates
@@ -678,7 +717,7 @@ def _candidate_scientific_digest(
                     "train_e01_sources",
                     "train_e02_sources",
                 ),
-                pair_count=256,
+                pair_count=config.pair_count,
                 pair_seed=config.seeds.pairs,
                 orientation="red_minus_green",
             )
@@ -832,9 +871,14 @@ def _verify_cmnist_artifacts(
     if (
         pairs.dataset_manifest_digest != dataset_digest
         or pairs.pair_seed != config.seeds.pairs
-        or pairs.realized_count != 256
     ):
-        raise ValueError("CMNIST oracle-pair lineage or count is inconsistent")
+        raise ValueError("CMNIST oracle-pair lineage is inconsistent")
+    if pairs.realized_count < config.pair_count:
+        raise ValueError(
+            f"config asks for {config.pair_count} oracle pairs but the prepared bank "
+            f"holds {pairs.realized_count}; rerun scripts/prepare_cmnist.py "
+            f"--pair-count {config.pair_count}"
+        )
     if (
         feature.source_manifest_digest != dataset_digest
         or feature.pair_manifest_digest != pair_digest
@@ -887,7 +931,7 @@ def _verify_waterbirds_artifacts(
         pairs.dataset_manifest_digest != dataset_digest
         or pairs.profile_kind != "production"
         or pairs.non_reportable
-        or pairs.pair_count != 240
+        or pairs.pair_count != config.pair_count
     ):
         raise ValueError("Waterbirds oracle-pair lineage or count is inconsistent")
     if (

@@ -173,6 +173,8 @@ def run_waterbirds_production_search(
             status="complete",
             task=task,
             lineage=plan.resolved_config.lineage,
+            code=current_code_provenance(),
+            environment=current_environment_provenance(),
             validation_metrics=trained.validation_metrics,
             checkpoint_decision=decision,
         )
@@ -288,6 +290,8 @@ def run_waterbirds_production_search(
             status="complete",
             task=task,
             lineage=plan.resolved_config.lineage,
+            code=current_code_provenance(),
+            environment=current_environment_provenance(),
             validation_metrics=trained.validation_metrics,
             checkpoint_decision=decision,
             final_result_relative_path="final-result.json",
@@ -441,10 +445,10 @@ def materialize_waterbirds_candidate_config(
         relative_singular_value_tolerance=tolerance,
         training=LinearProbeTrainingConfig(
             optimizer="adam",
-            batch_size=256,
+            batch_size=config.batch_size,
             learning_rate=float(candidate.learning_rate),
             weight_decay=float(candidate.weight_decay),
-            max_epochs=100,
+            max_epochs=config.max_epochs,
         ),
         seed_sets=config.seeds.stages,
     )

@@ -58,12 +58,16 @@ uv run scripts/run_search.py configs/waterbirds/production-search.yaml
 
 See `docs/experiments/waterbirds.md` for the construction and protocol.
 
-## Custom paths
+## Custom paths and grids
 
-Copy a config, edit the paths, and pass the copy to `run_search.py`. Absolute paths and
-`${ANY_ENV_VAR}` both work. Preparation seeds must match the config; the defaults
-(`--construction-seed 1729`, `--pair-seed 2718`) match the checked-in configs. Use a
-separate prepared root and config for the L2-normalized sensitivity.
+Copy a config, edit it, and pass the copy to `run_search.py`. Paths accept absolute
+values and `${ANY_ENV_VAR}`. The learning-rate, weight-decay, and rank grids, the epoch
+count, and `pair_count` are all ordinary settings; a quick check might use two learning
+rates, three ranks, and five epochs. `pair_count` may be any prefix of the prepared pair
+bank, so prepare once with `--pair-count 512` for the pair-budget sensitivity.
+Preparation seeds must match the config; the defaults (`--construction-seed 1729`,
+`--pair-seed 2718`) match the checked-in configs. Use a separate prepared root and
+config for the L2-normalized sensitivity.
 
 ## Development
 

@@ -93,8 +93,6 @@ class OraclePairsConfig(StrictBoundaryModel):
                 "initial CMNIST oracle pairs require the approved training source "
                 f"partitions {expected_sources!r}"
             )
-        if self.pair_count != 256:
-            raise ValueError("initial CMNIST oracle pairs require pair_count=256")
         return self
 
 
@@ -278,18 +276,6 @@ class _CommonCmnistExperimentConfig(StrictBoundaryModel):
             ):
                 raise ValueError(
                     "reportable CMNIST requires the pinned official CLIP identity"
-                )
-            training = self.training
-            if (
-                training.batch_size != 256
-                or training.max_epochs != 40
-                or float(training.learning_rate)
-                not in {0.0001, 0.0003, 0.001, 0.003}
-                or float(training.weight_decay)
-                not in {0.0, 0.00001, 0.0001, 0.001}
-            ):
-                raise ValueError(
-                    "reportable CMNIST requires approved linear-probe settings"
                 )
         return self
 

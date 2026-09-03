@@ -233,7 +233,7 @@ def _load_existing_search_plan(config_path: Path) -> SearchPlan:
     planning_paths = (authored_path, resolved_path, plan_path)
     if not all(path.is_file() for path in planning_paths):
         raise ValueError(
-            "no complete production search plan exists; run `grit run` first"
+            "no complete production search plan exists; run scripts/run_search.py first"
         )
     stored_authored = load_production_search_config(authored_path)
     stored_resolved = ResolvedProductionSearchConfig.model_validate_json(
@@ -384,9 +384,11 @@ def _run_cmnist_search(
             projection = projections.get(rank)
             if projection is None:
                 red, green = cache.pair_tables()
+                # Pairs are stored in seeded hash order, so the first N form the
+                # N-pair bank for the same seed.
                 projection = fit_linear_projection(
-                    red.features,
-                    green.features,
+                    red.features[: config.pair_count],
+                    green.features[: config.pair_count],
                     requested_rank=rank,
                     pair_manifest_digest=pair_manifest.canonical_digest(),
                     feature_cache_manifest_digest=cache.manifest.canonical_digest(),
@@ -423,6 +425,8 @@ def _run_cmnist_search(
             status="complete",
             task=task,
             lineage=plan.resolved_config.lineage,
+            code=current_code_provenance(),
+            environment=current_environment_provenance(),
             validation_metrics=trained.validation_metrics,
             checkpoint_decisions=decisions,
         )
@@ -540,6 +544,8 @@ def _run_cmnist_search(
             status="complete",
             task=task,
             lineage=plan.resolved_config.lineage,
+            code=current_code_provenance(),
+            environment=current_environment_provenance(),
             validation_metrics=trained.validation_metrics,
             checkpoint_decisions=(decision,),
             final_result_relative_path="final-result.json",
@@ -698,10 +704,10 @@ def materialize_cmnist_candidate_config(
     lineage = plan.resolved_config.lineage
     training = LinearProbeTrainingConfig(
         optimizer="adam",
-        batch_size=256,
+        batch_size=config.batch_size,
         learning_rate=float(candidate.learning_rate),
         weight_decay=float(candidate.weight_decay),
-        max_epochs=40,
+        max_epochs=config.max_epochs,
     )
     if candidate.method_id == "erm":
         pairs = DisabledPairsConfig(kind="disabled")
@@ -716,7 +722,7 @@ def materialize_cmnist_candidate_config(
             kind="oracle",
             construction_id="cmnist-clean-oracle-pairs-v1",
             source_partition_ids=("train_e01_sources", "train_e02_sources"),
-            pair_count=256,
+            pair_count=config.pair_count,
             pair_seed=config.seeds.pairs,
             orientation="red_minus_green",
         )

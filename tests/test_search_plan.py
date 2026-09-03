@@ -643,9 +643,11 @@ def _write_cmnist_production_config(
     root: Path,
     *,
     output_root: Path,
+    overrides: dict[str, object] | None = None,
 ) -> tuple[Path, tuple[Path, Path, Path]]:
     artifact_paths = _write_manifest_only_cmnist_production(root / "prepared")
     payload = _config().model_dump(mode="json")
+    payload.update(overrides or {})
     payload["artifacts"] = {
         "dataset_manifest": artifact_paths[0].as_posix(),
         "feature_cache_manifest": artifact_paths[1].as_posix(),
@@ -1152,7 +1154,7 @@ def test_status_requires_existing_matching_triplet_and_never_creates_it(
     config_path.write_text(
         _yaml_compatible_json(config_payload), encoding="utf-8"
     )
-    with pytest.raises(ValueError, match="run `grit run` first"):
+    with pytest.raises(ValueError, match="run scripts/run_search.py first"):
         production_search_status(config_path)
     assert not output_root.exists()
 
@@ -2360,3 +2362,49 @@ def _cmnist_status_stub(plan: SearchPlan) -> ProductionSearchStatus:
         final_expected=0,
         final_complete=0,
     )
+
+
+def test_custom_grid_epochs_and_pair_count_plan_from_yaml(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The YAML is the grid; nothing in the code pins the approved values."""
+
+    monkeypatch.setattr("grit.search._code_provenance", lambda: _CLEAN_CODE_PROVENANCE)
+    config_path, _ = _write_cmnist_production_config(
+        tmp_path,
+        output_root=tmp_path / "output",
+        overrides={
+            "search_space": {
+                "methods": ["erm", "grit"],
+                "learning_rates": [0.001, 0.01],
+                "weight_decays": [0.0],
+                "projection_ranks": [0, 2, 4],
+            },
+            "max_epochs": 5,
+            "pair_count": 64,
+            "relative_singular_value_tolerance": 1e-10,
+        },
+    )
+    plan = plan_production_search(config_path)
+    assert len(plan.candidates) == 2 + 2 * 3
+    assert {c.requested_rank for c in plan.candidates if c.method_id == "grit"} == {
+        0,
+        2,
+        4,
+    }
+    assert plan.resolved_config.config.max_epochs == 5
+    assert plan.resolved_config.config.pair_count == 64
+    assert plan.expected_run_counts.tuning == 8 * 3
+
+
+def test_pair_count_above_prepared_bank_is_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("grit.search._code_provenance", lambda: _CLEAN_CODE_PROVENANCE)
+    config_path, _ = _write_cmnist_production_config(
+        tmp_path, output_root=tmp_path / "output", overrides={"pair_count": 512}
+    )
+    with pytest.raises(ValueError, match="prepared bank holds 256"):
+        plan_production_search(config_path)

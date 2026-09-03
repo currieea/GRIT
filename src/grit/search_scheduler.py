@@ -9,7 +9,7 @@ from typing import Annotated, Literal, TypeAlias, cast
 
 from pydantic import Field, StrictInt, StrictStr, TypeAdapter, model_validator
 
-from grit.results import OrdinaryRunResult
+from grit.results import CodeProvenance, EnvironmentProvenance, OrdinaryRunResult
 from grit.schemas import CmnistSelector, SeedStage, StrictBoundaryModel
 from grit.search import SearchCandidate, SearchLineage, SearchPlan
 from grit.selection import (
@@ -124,6 +124,8 @@ class CmnistCompletedStageRun(StrictBoundaryModel):
     status: Literal["complete"]
     task: SearchRunTask
     lineage: SearchLineage
+    code: CodeProvenance | None = None
+    environment: EnvironmentProvenance | None = None
     validation_metrics: tuple[ValidationMetricRecord, ...]
     checkpoint_decisions: tuple[CheckpointSelectionDecision, ...]
     final_result_relative_path: Literal["final-result.json"] | None = None
@@ -215,6 +217,8 @@ class WaterbirdsCompletedStageRun(StrictBoundaryModel):
     status: Literal["complete"]
     task: SearchRunTask
     lineage: SearchLineage
+    code: CodeProvenance | None = None
+    environment: EnvironmentProvenance | None = None
     validation_metrics: tuple[WaterbirdsValidationMetricRecord, ...]
     checkpoint_decision: WaterbirdsCheckpointSelection
     final_result_relative_path: Literal["final-result.json"] | None = None

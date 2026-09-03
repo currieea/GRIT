@@ -31,6 +31,12 @@ def main() -> None:
         "--construction-seed", type=int, default=DEFAULT_CONSTRUCTION_SEED
     )
     parser.add_argument("--pair-seed", type=int, default=DEFAULT_PAIR_SEED)
+    parser.add_argument(
+        "--pair-count",
+        type=int,
+        default=256,
+        help="oracle pairs to bank; a config may use any prefix of this bank",
+    )
     parser.add_argument("--normalization", choices=("none", "l2"), default="none")
     parser.add_argument("--device", help="cpu, cuda, or cuda:N (default: auto)")
     parser.add_argument("--batch-size", type=int, default=256)
@@ -56,6 +62,7 @@ def main() -> None:
         allow_download=not args.no_download,
         feature_device=device,
         clip_batch_size=args.batch_size,
+        pair_count=args.pair_count,
     )
 
 

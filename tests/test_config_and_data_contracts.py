@@ -92,7 +92,7 @@ def test_scientific_candidate_identity_excludes_selector_branch_only() -> None:
     assert primary.scientific_config_digest() == secondary.scientific_config_digest()
 
 
-def test_reportable_config_requires_pinned_official_clip_and_training() -> None:
+def test_reportable_config_requires_pinned_official_clip() -> None:
     payload = ordinary_erm_config().model_dump(mode="python")
     payload["reportable"] = True
     payload["artifact_lineage"] = CmnistArtifactLineageConfig(
@@ -107,11 +107,6 @@ def test_reportable_config_requires_pinned_official_clip_and_training() -> None:
     wrong_revision["representation"]["encoder_revision"] = "unverified-revision"
     with pytest.raises(ValidationError, match="pinned official CLIP identity"):
         OrdinaryExperimentConfig.model_validate(wrong_revision)
-
-    wrong_training = reportable.model_dump(mode="python")
-    wrong_training["training"]["batch_size"] = 32
-    with pytest.raises(ValidationError, match="approved linear-probe settings"):
-        OrdinaryExperimentConfig.model_validate(wrong_training)
 
 
 def test_unsupported_schema_and_lossy_values_are_rejected() -> None:
@@ -191,15 +186,6 @@ def test_oracle_pairs_accept_only_approved_training_sources() -> None:
             construction_id="cmnist-clean-oracle-pairs-v1",
             source_partition_ids=("validation_sources", "test_sources"),
             pair_count=256,
-            pair_seed=0,
-            orientation="red_minus_green",
-        )
-    with pytest.raises(ValidationError, match="pair_count=256"):
-        OraclePairsConfig(
-            kind="oracle",
-            construction_id="cmnist-clean-oracle-pairs-v1",
-            source_partition_ids=("train_e01_sources", "train_e02_sources"),
-            pair_count=255,
             pair_seed=0,
             orientation="red_minus_green",
         )
