@@ -21,7 +21,7 @@ search_space:
   learning_rates: [1e-4, 3e-4, 1e-3, 3e-3]
   weight_decays: [0.0, 1e-5, 1e-4, 1e-3]
   irm_penalty_weights: [100.0, 1000.0, 10000.0, 100000.0]
-  irm_penalty_anneal_updates: 100
+  irm_penalty_anneal_updates: 190
 selectors: [primary_robust, secondary_source]
 pair_count: 256
 batch_size: 256

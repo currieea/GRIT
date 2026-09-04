@@ -457,11 +457,18 @@ the variance-risk objective from the [REx paper](https://proceedings.mlr.press/v
 not variance over individual-example losses as in the inherited implementation.
 
 The penalty coefficient is 1 for updates 0 through 99 and the selected coefficient from
-update 100 onward. As in the authors' official CMNIST implementation, when the active
-coefficient exceeds 1 the whole objective is divided by that coefficient to keep gradient
-magnitudes controlled; this leaves its minimizer unchanged. The anneal point is fixed at
-100 rather than searched. The approved first-pass penalty grid is `10`, `100`, `1000`, and
-`10000`, spanning the
+update 100 onward. Under the canonical batching there are 196 updates per epoch and
+7,840 updates in 40 epochs, so this transition occurs about 0.51 epoch, or 1.3% of the
+way, through training. This deliberately preserves the official REx and inherited
+launchers' optimizer-update threshold; it does not claim to reproduce the fraction of
+training completed by the original full-batch experiment. As in the authors' official
+CMNIST implementation, when the active coefficient exceeds 1 the whole objective is
+divided by that coefficient. This retains the reference loss-rescaling convention and
+leaves the objective's minimizer unchanged. Because Adam largely cancels a common
+positive gradient scale apart from its epsilon term and optimizer-state transients, the
+division is not treated as a general gradient-control mechanism. The anneal point is
+fixed rather than searched. The approved first-pass penalty grid is `10`, `100`, `1000`,
+and `10000`, spanning the
 [DomainBed reference default](https://github.com/facebookresearch/DomainBed/blob/main/domainbed/hparams_registry.py)
 through the
 [official REx CMNIST code's default](https://github.com/capybaralet/REx_code_release/tree/master/InvariantRiskMinimization/colored_mnist).
@@ -470,8 +477,9 @@ checkpoint selection, and validation-only selectors are unchanged.
 
 ## IRMv1 baseline
 
-IRMv1 uses the identical unprojected features, explicit environment IDs, deterministic
-environment-balanced minibatches, and fixed update-100 anneal schedule as V-REx. For
+IRMv1 uses the identical unprojected features, explicit environment IDs, and deterministic
+environment-balanced minibatches as V-REx. Its configured penalty coefficient begins at
+update 190 rather than sharing the REx transition. For
 environment $e$, introduce a scalar dummy classifier scale $s$, compute
 
 $$
@@ -488,16 +496,18 @@ $$
 This is the scalar-classifier IRMv1 penalty used by the
 [original IRM ColoredMNIST code](https://github.com/facebookresearch/InvariantRiskMinimization/tree/main/code/colored_mnist).
 It is computed separately inside the actual `train_e01` and `train_e02` minibatches; it
-does not split one already-mixed batch in half. The coefficient is 1 before update 100 and
-the selected value thereafter, with the same whole-objective rescaling above 1 used by the
-authors' implementation. The approved first-pass penalty grid is `100`, `1000`, `10000`,
-and `100000`: it starts at the
+does not split one already-mixed batch in half. The coefficient is 1 for updates 0 through
+189 and the selected value from update 190 onward, with the same whole-objective
+rescaling above 1 used by the authors' implementation. Under the canonical batching this
+is about 0.97 epoch, or 2.4% of 7,840 updates. The exact optimizer-update threshold is the
+setting selected by the original CMNIST study; it is not rescaled to preserve that
+full-batch experiment's fraction of training. The approved first-pass penalty grid is
+`100`, `1000`, `10000`, and `100000`: it starts at the
 [DomainBed reference default](https://github.com/facebookresearch/DomainBed/blob/main/domainbed/hparams_registry.py)
 and covers the neighborhood of the roughly 91,000 coefficient selected by the original
-CMNIST study. The original study searched anneal points from 50 through 249; fixing 100
-keeps the rewrite's method search focused on penalty strength and matches the official
-REx CMNIST default and inherited launcher without inheriting the latter's batching or
-test-selection errors.
+CMNIST study. That study searched anneal points from 50 through 249 and selected 190;
+fixing that threshold keeps the rewrite's method search focused on penalty strength
+without inheriting the legacy launcher's batching or test-selection errors.
 
 ## Parameter search
 
@@ -512,7 +522,7 @@ selectors.
 - V-REx searches that optimizer grid jointly with penalty coefficients `10`, `100`,
   `1000`, and `10000`; its anneal point is fixed at update 100.
 - IRMv1 searches that optimizer grid jointly with penalty coefficients `100`, `1000`,
-  `10000`, and `100000`; its anneal point is fixed at update 100.
+  `10000`, and `100000`; its anneal point is fixed at update 190.
 - Every candidate runs on three tuning seeds.
 - The top three configurations receive two confirmation seeds.
 - The five-seed validation mean selects the frozen configuration.

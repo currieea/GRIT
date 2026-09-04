@@ -59,7 +59,8 @@ from grit.search.plan import (
     APPROVED_RANKS,
     APPROVED_REX_PENALTY_WEIGHTS,
     APPROVED_WEIGHT_DECAYS,
-    INVARIANCE_PENALTY_ANNEAL_UPDATES,
+    IRM_PENALTY_ANNEAL_UPDATES,
+    REX_PENALTY_ANNEAL_UPDATES,
     CmnistProductionSearchConfig,
     ResolvedProductionSearchConfig,
     SearchArtifactPaths,
@@ -207,7 +208,7 @@ def test_checked_production_examples_match_preparation_layout_and_seeds(
     )
     assert (
         cmnist_rex.search_space.rex_penalty_anneal_updates
-        == INVARIANCE_PENALTY_ANNEAL_UPDATES
+        == REX_PENALTY_ANNEAL_UPDATES
     )
     assert cmnist_rex.output_root == "/scratch/outputs/cmnist-rex"
     assert isinstance(cmnist_irm, CmnistProductionSearchConfig)
@@ -217,7 +218,7 @@ def test_checked_production_examples_match_preparation_layout_and_seeds(
     )
     assert (
         cmnist_irm.search_space.irm_penalty_anneal_updates
-        == INVARIANCE_PENALTY_ANNEAL_UPDATES
+        == IRM_PENALTY_ANNEAL_UPDATES
     )
     assert cmnist_irm.output_root == "/scratch/outputs/cmnist-irmv1"
 
@@ -2503,7 +2504,7 @@ def test_cmnist_rex_only_grid_plans_materializes_and_selects_pilot(
                 "learning_rates": [0.0001, 0.0003, 0.001, 0.003],
                 "weight_decays": [0.0, 0.00001, 0.0001, 0.001],
                 "rex_penalty_weights": list(APPROVED_REX_PENALTY_WEIGHTS),
-                "rex_penalty_anneal_updates": 100,
+                "rex_penalty_anneal_updates": REX_PENALTY_ANNEAL_UPDATES,
             },
         },
     )
@@ -2520,6 +2521,10 @@ def test_cmnist_rex_only_grid_plans_materializes_and_selects_pilot(
         plan, plan.candidates[0], CmnistSelector.PRIMARY_ROBUST
     )
     assert resolved.algorithm.kind == "rex"
+    assert (
+        resolved.algorithm.penalty_anneal_updates
+        == REX_PENALTY_ANNEAL_UPDATES
+    )
     assert resolved.artifact_lineage is not None
     assert resolved.artifact_lineage.pair_manifest_digest is None
     assert resolved.scientific_config_digest() == (
@@ -2541,7 +2546,7 @@ def test_cmnist_irm_only_grid_plans_materializes_and_selects_pilot(
                 "learning_rates": [0.0001, 0.0003, 0.001, 0.003],
                 "weight_decays": [0.0, 0.00001, 0.0001, 0.001],
                 "irm_penalty_weights": list(APPROVED_IRM_PENALTY_WEIGHTS),
-                "irm_penalty_anneal_updates": 100,
+                "irm_penalty_anneal_updates": IRM_PENALTY_ANNEAL_UPDATES,
             },
         },
     )
@@ -2558,6 +2563,10 @@ def test_cmnist_irm_only_grid_plans_materializes_and_selects_pilot(
         plan, plan.candidates[0], CmnistSelector.PRIMARY_ROBUST
     )
     assert resolved.algorithm.kind == "irm"
+    assert (
+        resolved.algorithm.penalty_anneal_updates
+        == IRM_PENALTY_ANNEAL_UPDATES
+    )
     assert resolved.artifact_lineage is not None
     assert resolved.artifact_lineage.pair_manifest_digest is None
     assert resolved.scientific_config_digest() == (
@@ -2573,14 +2582,14 @@ def test_cmnist_irm_only_grid_plans_materializes_and_selects_pilot(
             "rex",
             {
                 "rex_penalty_weights": list(APPROVED_REX_PENALTY_WEIGHTS),
-                "rex_penalty_anneal_updates": 100,
+                "rex_penalty_anneal_updates": REX_PENALTY_ANNEAL_UPDATES,
             },
         ),
         (
             "irm",
             {
                 "irm_penalty_weights": list(APPROVED_IRM_PENALTY_WEIGHTS),
-                "irm_penalty_anneal_updates": 100,
+                "irm_penalty_anneal_updates": IRM_PENALTY_ANNEAL_UPDATES,
             },
         ),
     ),
