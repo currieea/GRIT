@@ -140,8 +140,21 @@ class GroupDroAlgorithmConfig(StrictBoundaryModel):
     normalize_loss: Literal[False]
 
 
+class RexAlgorithmConfig(StrictBoundaryModel):
+    kind: Literal["rex"]
+    environment_names: tuple[Literal["train_e01"], Literal["train_e02"]]
+    penalty_weight: Annotated[StrictFloat, Field(gt=0.0)]
+    penalty_anneal_updates: NonNegativeInt
+    risk_variance: Literal["population"]
+    sampling: Literal["environment_balanced_without_replacement"]
+    loss_rescaling: Literal["divide_by_penalty_weight_above_one"]
+
+
 AlgorithmConfig: TypeAlias = Annotated[
-    ErmAlgorithmConfig | GritAlgorithmConfig | GroupDroAlgorithmConfig,
+    ErmAlgorithmConfig
+    | GritAlgorithmConfig
+    | GroupDroAlgorithmConfig
+    | RexAlgorithmConfig,
     Field(discriminator="kind"),
 ]
 
@@ -241,11 +254,18 @@ class _CommonCmnistExperimentConfig(StrictBoundaryModel):
 
     @model_validator(mode="after")
     def _validate_algorithm_components(self) -> _CommonCmnistExperimentConfig:
-        if isinstance(self.algorithm, ErmAlgorithmConfig | GroupDroAlgorithmConfig):
+        if isinstance(
+            self.algorithm,
+            ErmAlgorithmConfig | GroupDroAlgorithmConfig | RexAlgorithmConfig,
+        ):
             if not isinstance(self.pairs, DisabledPairsConfig):
-                raise ValueError("ERM and GroupDRO require pairs.kind='disabled'")
+                raise ValueError(
+                    "ERM, GroupDRO, and REx require pairs.kind='disabled'"
+                )
             if not isinstance(self.projection, DisabledProjectionConfig):
-                raise ValueError("ERM and GroupDRO require projection.kind='disabled'")
+                raise ValueError(
+                    "ERM, GroupDRO, and REx require projection.kind='disabled'"
+                )
             if (
                 isinstance(self.algorithm, GroupDroAlgorithmConfig)
                 and self.algorithm.group_definition != "target_color"
@@ -261,10 +281,14 @@ class _CommonCmnistExperimentConfig(StrictBoundaryModel):
         if self.reportable:
             if self.artifact_lineage is None:
                 raise ValueError("reportable CMNIST requires prepared-artifact lineage")
-            if isinstance(self.algorithm, ErmAlgorithmConfig | GroupDroAlgorithmConfig):
+            if isinstance(
+                self.algorithm,
+                ErmAlgorithmConfig | GroupDroAlgorithmConfig | RexAlgorithmConfig,
+            ):
                 if self.artifact_lineage.pair_manifest_digest is not None:
                     raise ValueError(
-                        "reportable CMNIST ERM and GroupDRO cannot bind oracle pairs"
+                        "reportable CMNIST ERM, GroupDRO, and REx cannot bind "
+                        "oracle pairs"
                     )
             elif self.artifact_lineage.pair_manifest_digest is None:
                 raise ValueError("reportable CMNIST GRIT requires oracle-pair lineage")

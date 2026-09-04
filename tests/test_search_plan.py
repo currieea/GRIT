@@ -56,6 +56,7 @@ from grit.search.plan import (
     APPROVED_GROUPDRO_STEP_SIZES,
     APPROVED_LEARNING_RATES,
     APPROVED_RANKS,
+    APPROVED_REX_PENALTY_WEIGHTS,
     APPROVED_WEIGHT_DECAYS,
     CmnistProductionSearchConfig,
     ResolvedProductionSearchConfig,
@@ -165,6 +166,9 @@ def test_checked_production_examples_match_preparation_layout_and_seeds(
     cmnist_groupdro = load_production_search_config(
         repository / "configs/cmnist/groupdro-search.yaml"
     )
+    cmnist_rex = load_production_search_config(
+        repository / "configs/cmnist/rex-search.yaml"
+    )
     waterbirds = load_production_search_config(
         repository / "configs/waterbirds/production-search.yaml"
     )
@@ -191,6 +195,13 @@ def test_checked_production_examples_match_preparation_layout_and_seeds(
         APPROVED_GROUPDRO_STEP_SIZES
     )
     assert cmnist_groupdro.output_root == "/scratch/outputs/cmnist-groupdro"
+    assert isinstance(cmnist_rex, CmnistProductionSearchConfig)
+    assert cmnist_rex.search_space.methods == ("rex",)
+    assert cmnist_rex.search_space.rex_penalty_weights == (
+        APPROVED_REX_PENALTY_WEIGHTS
+    )
+    assert cmnist_rex.search_space.rex_penalty_anneal_updates == 100
+    assert cmnist_rex.output_root == "/scratch/outputs/cmnist-rex"
 
     assert waterbirds.seeds.construction == DEFAULT_CONSTRUCTION_SEED
     waterbirds_root = "/scratch/artifacts/waterbirds-none/"
@@ -2453,6 +2464,44 @@ def test_cmnist_groupdro_only_grid_plans_and_materializes(tmp_path: Path) -> Non
         plan, plan.candidates[0], CmnistSelector.PRIMARY_ROBUST
     )
     assert resolved.algorithm.kind == "groupdro"
+    assert resolved.artifact_lineage is not None
+    assert resolved.artifact_lineage.pair_manifest_digest is None
+    assert resolved.scientific_config_digest() == (
+        plan.candidates[0].scientific_config_digest
+    )
+    assert pilot_candidates(plan) == (plan.candidates[0],)
+
+
+def test_cmnist_rex_only_grid_plans_materializes_and_selects_pilot(
+    tmp_path: Path,
+) -> None:
+    config_path, _ = _write_cmnist_production_config(
+        tmp_path,
+        output_root=tmp_path / "rex-output",
+        overrides={
+            "experiment_name": "cmnist-rex",
+            "search_space": {
+                "methods": ["rex"],
+                "learning_rates": [0.0001, 0.0003, 0.001, 0.003],
+                "weight_decays": [0.0, 0.00001, 0.0001, 0.001],
+                "rex_penalty_weights": list(APPROVED_REX_PENALTY_WEIGHTS),
+                "rex_penalty_anneal_updates": 100,
+            },
+        },
+    )
+    plan = plan_production_search(config_path)
+    assert plan.methods == ("rex",)
+    assert len(plan.candidates) == 64
+    assert plan.expected_run_counts.tuning == 192
+    assert plan.expected_run_counts.final == 20
+    assert {item.penalty_weight for item in plan.candidates} == set(
+        APPROVED_REX_PENALTY_WEIGHTS
+    )
+    assert {item.requested_rank for item in plan.candidates} == {None}
+    resolved = materialize_cmnist_candidate_config(
+        plan, plan.candidates[0], CmnistSelector.PRIMARY_ROBUST
+    )
+    assert resolved.algorithm.kind == "rex"
     assert resolved.artifact_lineage is not None
     assert resolved.artifact_lineage.pair_manifest_digest is None
     assert resolved.scientific_config_digest() == (

@@ -1,4 +1,4 @@
-"""Frozen-feature linear-probe training for CMNIST ERM, GRIT, and GroupDRO."""
+"""Frozen-feature linear-probe training for implemented CMNIST methods."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import hashlib
 import math
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Literal, Protocol, cast
 
@@ -14,7 +15,11 @@ import torch
 from numpy.typing import NDArray
 from pydantic import StrictInt, StrictStr
 
-from grit.config import GroupDroAlgorithmConfig, LinearProbeTrainingConfig
+from grit.config import (
+    GroupDroAlgorithmConfig,
+    LinearProbeTrainingConfig,
+    RexAlgorithmConfig,
+)
 from grit.features.cmnist import FeatureTable
 from grit.methods.checkpoints import CheckpointStore, StoredCheckpoint
 from grit.methods.groupdro import (
@@ -22,6 +27,11 @@ from grit.methods.groupdro import (
     GroupDroObjective,
     cmnist_group_ids,
     group_balanced_epoch_indices,
+)
+from grit.methods.invariance import (
+    annealed_penalty_weight,
+    environment_balanced_epoch_batches,
+    vrex_objective,
 )
 from grit.methods.projection import FittedLinearProjection
 from grit.methods.types import MethodId
@@ -179,21 +189,27 @@ def train_linear_probe(
     projection: FittedLinearProjection | None,
     projection_rank: int | None,
     groupdro: GroupDroAlgorithmConfig | None = None,
+    rex: RexAlgorithmConfig | None = None,
+    environment_ids: torch.Tensor | None = None,
 ) -> TrainedLinearProbeRun:
     """Run trainer-owned epoch/batch iteration and emit validation every epoch."""
 
-    if method_id in ("erm", "groupdro") and projection is not None:
-        raise ValueError("ERM and GroupDRO must train on unprojected features")
+    if method_id in ("erm", "groupdro", "rex") and projection is not None:
+        raise ValueError("ERM, GroupDRO, and REx must train on unprojected features")
     if method_id == "grit" and projection is None:
         raise ValueError("GRIT requires a fitted projection")
-    if method_id in ("erm", "groupdro") and projection_rank is not None:
-        raise ValueError("ERM and GroupDRO cannot declare a projection rank")
+    if method_id in ("erm", "groupdro", "rex") and projection_rank is not None:
+        raise ValueError("ERM, GroupDRO, and REx cannot declare a projection rank")
     if method_id == "grit" and projection_rank is None:
         raise ValueError("GRIT must declare its projection rank")
     if (method_id == "groupdro") != (groupdro is not None):
         raise ValueError("GroupDRO runs require exactly one GroupDRO configuration")
     if groupdro is not None and groupdro.group_definition != "target_color":
         raise ValueError("CMNIST GroupDRO requires target-color groups")
+    if (method_id == "rex") != (rex is not None):
+        raise ValueError("REx runs require exactly one REx configuration")
+    if (rex is not None) != (environment_ids is not None):
+        raise ValueError("REx runs require explicit training-environment IDs")
     torch.use_deterministic_algorithms(True)
     algorithm = LinearProbeAlgorithm(config, model_seed=seed, projection=projection)
     train_features = torch.cat(
@@ -212,6 +228,16 @@ def train_linear_probe(
     )
     if int(train_features.shape[0]) == 0:
         raise ValueError("linear probe training data must be non-empty")
+    train_environments = (
+        environment_ids.detach().cpu().to(torch.int64)
+        if environment_ids is not None
+        else None
+    )
+    if (
+        train_environments is not None
+        and train_environments.shape != train_targets.shape
+    ):
+        raise ValueError("training-environment IDs must align with training rows")
 
     generator = torch.Generator(device="cpu").manual_seed(seed)
     groupdro_objective = (
@@ -225,20 +251,49 @@ def train_linear_probe(
     store = InMemoryLinearCheckpointStore(store_id=f"memory:{run_id}")
     metrics: list[ValidationMetricRecord] = []
     epoch_losses: list[float] = []
+    update_count = 0
     for epoch in range(1, config.max_epochs + 1):
-        permutation = (
-            torch.randperm(int(train_features.shape[0]), generator=generator)
-            if train_groups is None
-            else group_balanced_epoch_indices(
-                train_groups,
-                group_count=CMNIST_GROUP_COUNT,
+        if train_environments is not None:
+            row_batches = environment_balanced_epoch_batches(
+                train_environments,
+                batch_size=int(config.batch_size),
                 generator=generator,
             )
-        )
+        else:
+            permutation = (
+                torch.randperm(int(train_features.shape[0]), generator=generator)
+                if train_groups is None
+                else group_balanced_epoch_indices(
+                    train_groups,
+                    group_count=CMNIST_GROUP_COUNT,
+                    generator=generator,
+                )
+            )
+            row_batches = tuple(
+                permutation[start : start + config.batch_size]
+                for start in range(0, len(permutation), config.batch_size)
+            )
         batch_losses: list[float] = []
-        for start in range(0, len(permutation), config.batch_size):
-            rows = permutation[start : start + config.batch_size]
-            if train_groups is None or groupdro_objective is None:
+        for rows in row_batches:
+            if rex is not None and train_environments is not None:
+                batch_environments = train_environments[rows]
+                penalty_weight = annealed_penalty_weight(
+                    float(rex.penalty_weight),
+                    anneal_updates=int(rex.penalty_anneal_updates),
+                    update_count=update_count,
+                )
+
+                batch_loss = algorithm.update_with_objective(
+                    train_features[rows],
+                    train_targets[rows],
+                    partial(
+                        vrex_objective,
+                        environment_ids=batch_environments,
+                        penalty_weight=penalty_weight,
+                    ),
+                )
+                update_count += 1
+            elif train_groups is None or groupdro_objective is None:
                 batch_loss = algorithm.update(
                     train_features[rows], train_targets[rows]
                 )

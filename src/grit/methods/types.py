@@ -2,7 +2,12 @@
 
 from typing import Final, Literal, TypeAlias
 
-MethodId: TypeAlias = Literal["erm", "grit", "groupdro"]
+MethodId: TypeAlias = Literal["erm", "grit", "groupdro", "rex"]
 
 # This order is part of deterministic candidate planning and presentation.
-IMPLEMENTED_METHODS: Final[tuple[MethodId, ...]] = ("erm", "grit", "groupdro")
+IMPLEMENTED_METHODS: Final[tuple[MethodId, ...]] = (
+    "erm",
+    "grit",
+    "groupdro",
+    "rex",
+)

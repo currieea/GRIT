@@ -7,13 +7,22 @@ from pathlib import Path
 import pytest
 import torch
 
-from grit.config import GroupDroAlgorithmConfig, LinearProbeTrainingConfig
+from grit.config import (
+    GroupDroAlgorithmConfig,
+    LinearProbeTrainingConfig,
+    RexAlgorithmConfig,
+)
 from grit.features.cmnist import FeatureTable, TableRole
 from grit.methods.checkpoints import restore_checkpoint
 from grit.methods.groupdro import (
     GroupDroObjective,
     cmnist_group_ids,
     group_balanced_epoch_indices,
+)
+from grit.methods.invariance import (
+    environment_balanced_epoch_batches,
+    environment_mean_losses,
+    vrex_objective,
 )
 from grit.methods.projection import fit_linear_projection
 from grit.methods.training import (
@@ -102,6 +111,18 @@ def _groupdro_config() -> GroupDroAlgorithmConfig:
         sampling="inverse_group_frequency_with_replacement",
         generalization_adjustment=0.0,
         normalize_loss=False,
+    )
+
+
+def _rex_config() -> RexAlgorithmConfig:
+    return RexAlgorithmConfig(
+        kind="rex",
+        environment_names=("train_e01", "train_e02"),
+        penalty_weight=10.0,
+        penalty_anneal_updates=1,
+        risk_variance="population",
+        sampling="environment_balanced_without_replacement",
+        loss_rescaling="divide_by_penalty_weight_above_one",
     )
 
 
@@ -272,3 +293,70 @@ def test_cmnist_groupdro_training_is_deterministic() -> None:
         torch.tensor([0, 0, 1, 1]), torch.tensor([0, 1, 0, 1])
     )
     assert torch.equal(groups, torch.tensor([0, 1, 2, 3]))
+
+
+def test_vrex_objective_uses_environment_risks() -> None:
+    losses = torch.tensor([1.0, 3.0, 5.0, 9.0])
+    environment_ids = torch.tensor([0, 0, 1, 1])
+    risks = environment_mean_losses(losses, environment_ids)
+    objective = vrex_objective(losses, environment_ids, penalty_weight=2.0)
+    assert torch.equal(risks, torch.tensor([2.0, 7.0]))
+    # mean risk = 4.5, population variance = 6.25, then reference rescaling / 2.
+    assert objective.item() == 8.5
+
+
+def test_environment_balanced_batches_are_deterministic_and_exhaustive() -> None:
+    environment_ids = torch.tensor([0, 0, 0, 0, 1, 1, 1, 1])
+    batches = tuple(
+        environment_balanced_epoch_batches(
+            environment_ids,
+            batch_size=4,
+            generator=torch.Generator(device="cpu").manual_seed(17),
+        )
+        for _ in range(2)
+    )
+    assert all(torch.equal(left, right) for left, right in zip(*batches, strict=True))
+    rows = torch.cat(batches[0])
+    assert torch.equal(rows.sort().values, torch.arange(8))
+    assert all(
+        torch.equal(
+            torch.bincount(environment_ids[batch], minlength=2),
+            torch.tensor([2, 2]),
+        )
+        for batch in batches[0]
+    )
+
+
+def test_cmnist_rex_training_is_deterministic() -> None:
+    training, validation = _tables()
+    environment_ids = torch.cat(
+        (
+            torch.zeros(16, dtype=torch.int64),
+            torch.ones(16, dtype=torch.int64),
+        )
+    )
+    runs = tuple(
+        train_linear_probe(
+            training,
+            validation,
+            _training_config(),
+            run_id=f"run:rex:{index}",
+            candidate_id="candidate:rex",
+            method_id="rex",
+            scientific_config_digest="sha256:rex",
+            seed_stage=SeedStage.TUNING,
+            seed=101,
+            projection=None,
+            projection_rank=None,
+            rex=_rex_config(),
+            environment_ids=environment_ids,
+        )
+        for index in range(2)
+    )
+    first, second = runs
+    assert first.epoch_losses == second.epoch_losses
+    assert torch.equal(
+        first.algorithm.capture_inference_state().weight,
+        second.algorithm.capture_inference_state().weight,
+    )
+    assert {metric.method_id for metric in first.validation_metrics} == {"rex"}

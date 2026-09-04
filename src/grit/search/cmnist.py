@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, TypeAlias, cast
 
+import torch
+
 from grit.config import (
     OPENAI_CLIP_PREPROCESSING_ID,
     OPENAI_CLIP_REVISION,
@@ -26,6 +28,7 @@ from grit.config import (
     OraclePairsConfig,
     OrdinaryExperimentConfig,
     OrdinarySelectionConfig,
+    RexAlgorithmConfig,
 )
 from grit.data.cmnist import CmnistOraclePairManifest
 from grit.features.cmnist import (
@@ -505,6 +508,23 @@ def materialize_cmnist_candidate_config(
             normalize_loss=False,
         )
         pair_digest = None
+    elif candidate.method_id == "rex":
+        penalty_weight = candidate.penalty_weight
+        anneal_updates = config.search_space.rex_penalty_anneal_updates
+        if penalty_weight is None or anneal_updates is None:
+            raise AssertionError("planned REx candidate lacks its settings")
+        pairs = DisabledPairsConfig(kind="disabled")
+        projection = DisabledProjectionConfig(kind="disabled")
+        algorithm = RexAlgorithmConfig(
+            kind="rex",
+            environment_names=("train_e01", "train_e02"),
+            penalty_weight=penalty_weight,
+            penalty_anneal_updates=anneal_updates,
+            risk_variance="population",
+            sampling="environment_balanced_without_replacement",
+            loss_rescaling="divide_by_penalty_weight_above_one",
+        )
+        pair_digest = None
     else:
         raise AssertionError(
             f"CMNIST config materializer is missing {candidate.method_id}"
@@ -561,8 +581,25 @@ def _train_cmnist_task(
     runtime: _CmnistRuntimeCandidate,
     task: SearchRunTask,
 ) -> TrainedLinearProbeRun:
+    training_tables = cache.training_tables()
+    rex = (
+        runtime.config.algorithm
+        if isinstance(runtime.config.algorithm, RexAlgorithmConfig)
+        else None
+    )
+    environment_ids: torch.Tensor | None = None
+    if rex is not None:
+        names = tuple(table.name for table in training_tables)
+        if names != rex.environment_names:
+            raise ValueError("REx training tables do not match configured environments")
+        environment_ids = torch.cat(
+            [
+                torch.full((len(table.source_ids),), index, dtype=torch.int64)
+                for index, table in enumerate(training_tables)
+            ]
+        )
     return train_linear_probe(
-        cache.training_tables(),
+        training_tables,
         cache.validation_tables(),
         runtime.config.training,
         run_id=f"run:{task.task_id}",
@@ -578,6 +615,8 @@ def _train_cmnist_task(
             if isinstance(runtime.config.algorithm, GroupDroAlgorithmConfig)
             else None
         ),
+        rex=rex,
+        environment_ids=environment_ids,
     )
 
 def _cmnist_result_artifacts(

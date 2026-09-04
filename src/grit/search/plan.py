@@ -41,6 +41,7 @@ from grit.config import (
     OraclePairsConfig,
     OrdinaryExperimentConfig,
     OrdinarySelectionConfig,
+    RexAlgorithmConfig,
     SeedSets,
 )
 from grit.data.cmnist import (
@@ -79,6 +80,13 @@ APPROVED_WEIGHT_DECAYS: tuple[float, float, float, float] = (
 )
 APPROVED_RANKS: tuple[int, ...] = tuple(range(2, 25))
 APPROVED_GROUPDRO_STEP_SIZES: tuple[float, float, float] = (0.001, 0.01, 0.1)
+APPROVED_REX_PENALTY_WEIGHTS: tuple[float, float, float, float] = (
+    10.0,
+    100.0,
+    1_000.0,
+    10_000.0,
+)
+INVARIANCE_PENALTY_ANNEAL_UPDATES = 100
 
 
 class _YamlModule(Protocol):
@@ -112,6 +120,12 @@ class SearchSpaceConfig(StrictBoundaryModel):
     groupdro_step_sizes: tuple[StrictFloat, ...] = Field(
         default=(), exclude_if=lambda values: not values
     )
+    rex_penalty_weights: tuple[StrictFloat, ...] = Field(
+        default=(), exclude_if=lambda values: not values
+    )
+    rex_penalty_anneal_updates: Annotated[StrictInt, Field(ge=0)] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @model_validator(mode="after")
     def _validate_space(self) -> SearchSpaceConfig:
@@ -124,6 +138,7 @@ class SearchSpaceConfig(StrictBoundaryModel):
             ("weight_decays", self.weight_decays),
             ("projection_ranks", self.projection_ranks),
             ("groupdro_step_sizes", self.groupdro_step_sizes),
+            ("rex_penalty_weights", self.rex_penalty_weights),
         ):
             if len(set(values)) != len(values):
                 raise ValueError(f"{name} contains duplicate values")
@@ -135,6 +150,8 @@ class SearchSpaceConfig(StrictBoundaryModel):
             raise ValueError("projection_ranks must be non-negative")
         if any(value <= 0 for value in self.groupdro_step_sizes):
             raise ValueError("groupdro_step_sizes must be positive")
+        if any(value <= 0 for value in self.rex_penalty_weights):
+            raise ValueError("rex_penalty_weights must be positive")
         if ("grit" in self.methods) != bool(self.projection_ranks):
             raise ValueError(
                 "projection_ranks must be non-empty exactly when GRIT is selected"
@@ -143,6 +160,15 @@ class SearchSpaceConfig(StrictBoundaryModel):
             raise ValueError(
                 "groupdro_step_sizes must be non-empty exactly when GroupDRO is "
                 "selected"
+            )
+        rex_selected = "rex" in self.methods
+        if rex_selected != bool(self.rex_penalty_weights):
+            raise ValueError(
+                "rex_penalty_weights must be non-empty exactly when REx is selected"
+            )
+        if rex_selected != (self.rex_penalty_anneal_updates is not None):
+            raise ValueError(
+                "rex_penalty_anneal_updates must be set exactly when REx is selected"
             )
         return self
 
@@ -202,8 +228,12 @@ class WaterbirdsProductionSearchConfig(_CommonProductionSearchConfig):
 
     @model_validator(mode="after")
     def _validate_grid_fits(self) -> WaterbirdsProductionSearchConfig:
-        if "groupdro" in self.search_space.methods:
-            raise ValueError("Waterbirds GroupDRO is specified but not implemented")
+        unsupported = set(self.search_space.methods) - {"erm", "grit"}
+        if unsupported:
+            raise ValueError(
+                "Waterbirds methods are specified but not implemented: "
+                f"{sorted(unsupported)}"
+            )
         _require_runnable_grid(self.search_space, self.pair_count)
         return self
 
@@ -228,7 +258,12 @@ def _require_runnable_grid(space: SearchSpaceConfig, pair_count: int) -> None:
         for method in space.methods
     }
     if min(counts.values()) < FINALIST_COUNT:
-        labels = {"erm": "ERM", "grit": "GRIT", "groupdro": "GroupDRO"}
+        labels = {
+            "erm": "ERM",
+            "grit": "GRIT",
+            "groupdro": "GroupDRO",
+            "rex": "REx",
+        }
         formatted = " and ".join(
             f"{count} {labels[method]}" for method, count in counts.items()
         )
@@ -245,6 +280,8 @@ def _method_setting_count(space: SearchSpaceConfig, method: MethodId) -> int:
         return len(space.projection_ranks)
     if method == "groupdro":
         return len(space.groupdro_step_sizes)
+    if method == "rex":
+        return len(space.rex_penalty_weights)
     raise AssertionError(f"candidate grid is missing method {method}")
 
 
@@ -350,16 +387,38 @@ class SearchCandidate(StrictBoundaryModel):
     groupdro_step_size: Annotated[StrictFloat, Field(gt=0.0)] | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    penalty_weight: Annotated[StrictFloat, Field(gt=0.0)] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @model_validator(mode="after")
     def _validate_method_settings(self) -> SearchCandidate:
         if self.method_id == "grit":
-            if self.requested_rank is None or self.groupdro_step_size is not None:
+            if (
+                self.requested_rank is None
+                or self.groupdro_step_size is not None
+                or self.penalty_weight is not None
+            ):
                 raise ValueError("GRIT candidates require only a projection rank")
         elif self.method_id == "groupdro":
-            if self.requested_rank is not None or self.groupdro_step_size is None:
+            if (
+                self.requested_rank is not None
+                or self.groupdro_step_size is None
+                or self.penalty_weight is not None
+            ):
                 raise ValueError("GroupDRO candidates require only an adversarial step")
-        elif self.requested_rank is not None or self.groupdro_step_size is not None:
+        elif self.method_id == "rex":
+            if (
+                self.requested_rank is not None
+                or self.groupdro_step_size is not None
+                or self.penalty_weight is None
+            ):
+                raise ValueError("REx candidates require only a penalty weight")
+        elif (
+            self.requested_rank is not None
+            or self.groupdro_step_size is not None
+            or self.penalty_weight is not None
+        ):
             raise ValueError("ERM candidates cannot carry method-specific settings")
         return self
 
@@ -437,6 +496,7 @@ _FLOAT_FIELDS = frozenset(
         "learning_rates",
         "weight_decays",
         "groupdro_step_sizes",
+        "rex_penalty_weights",
         "relative_singular_value_tolerance",
     }
 )
@@ -755,16 +815,23 @@ def _candidate_grid(
     candidates: list[SearchCandidate] = []
     for method in config.search_space.methods:
         if method == "erm":
-            settings: tuple[tuple[int | None, float | None], ...] = ((None, None),)
+            settings: tuple[
+                tuple[int | None, float | None, float | None], ...
+            ] = ((None, None, None),)
         elif method == "grit":
             settings = tuple(
-                (int(rank), None)
+                (int(rank), None, None)
                 for rank in sorted(config.search_space.projection_ranks)
             )
         elif method == "groupdro":
             settings = tuple(
-                (None, float(step_size))
+                (None, float(step_size), None)
                 for step_size in sorted(config.search_space.groupdro_step_sizes)
+            )
+        elif method == "rex":
+            settings = tuple(
+                (None, None, float(penalty_weight))
+                for penalty_weight in sorted(config.search_space.rex_penalty_weights)
             )
         else:
             raise AssertionError(f"candidate grid is missing method {method}")
@@ -774,7 +841,7 @@ def _candidate_grid(
             for weight_decay in sorted(
                 float(value) for value in config.search_space.weight_decays
             ):
-                for requested_rank, groupdro_step_size in settings:
+                for requested_rank, groupdro_step_size, penalty_weight in settings:
                     scientific = _candidate_scientific_digest(
                         config,
                         lineage,
@@ -783,6 +850,7 @@ def _candidate_grid(
                         weight_decay,
                         requested_rank,
                         groupdro_step_size,
+                        penalty_weight,
                     )
                     candidate_id = _candidate_id(config.dataset, method, scientific)
                     candidates.append(
@@ -794,6 +862,7 @@ def _candidate_grid(
                             weight_decay=weight_decay,
                             requested_rank=requested_rank,
                             groupdro_step_size=groupdro_step_size,
+                            penalty_weight=penalty_weight,
                         )
                     )
     candidate_ids = [candidate.candidate_id for candidate in candidates]
@@ -813,6 +882,7 @@ def _candidate_scientific_digest(
     weight_decay: float,
     requested_rank: int | None,
     groupdro_step_size: float | None,
+    penalty_weight: float | None,
 ) -> str:
     training = LinearProbeTrainingConfig(
         optimizer="adam",
@@ -865,6 +935,22 @@ def _candidate_scientific_digest(
                 sampling="inverse_group_frequency_with_replacement",
                 generalization_adjustment=0.0,
                 normalize_loss=False,
+            )
+            pair_digest = None
+        elif method == "rex":
+            anneal_updates = config.search_space.rex_penalty_anneal_updates
+            if penalty_weight is None or anneal_updates is None:
+                raise AssertionError("planned CMNIST REx candidate lacks its settings")
+            pairs = DisabledPairsConfig(kind="disabled")
+            projection = DisabledProjectionConfig(kind="disabled")
+            algorithm = RexAlgorithmConfig(
+                kind="rex",
+                environment_names=("train_e01", "train_e02"),
+                penalty_weight=penalty_weight,
+                penalty_anneal_updates=anneal_updates,
+                risk_variance="population",
+                sampling="environment_balanced_without_replacement",
+                loss_rescaling="divide_by_penalty_weight_above_one",
             )
             pair_digest = None
         else:
@@ -964,7 +1050,7 @@ def _candidate_id(dataset: str, method: MethodId, digest: str) -> str:
 
 def _candidate_order_key(
     candidate: SearchCandidate,
-) -> tuple[int, float, float, int, float]:
+) -> tuple[int, float, float, int, float, float]:
     rank = -1 if candidate.requested_rank is None else candidate.requested_rank
     return (
         IMPLEMENTED_METHODS.index(candidate.method_id),
@@ -974,6 +1060,7 @@ def _candidate_order_key(
         -1.0
         if candidate.groupdro_step_size is None
         else float(candidate.groupdro_step_size),
+        -1.0 if candidate.penalty_weight is None else float(candidate.penalty_weight),
     )
 
 
