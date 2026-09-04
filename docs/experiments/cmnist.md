@@ -1,7 +1,8 @@
 # ColoredMNIST experiment protocol
 
-Status: **Implemented for ERM, oracle GRIT, and GroupDRO. Conditional and
-nearest-neighbor pair definitions are still open.**
+Status: **Implemented for ERM, oracle GRIT, and GroupDRO. V-REx and IRMv1 are
+specified for implementation. Conditional and nearest-neighbor pair definitions are
+still open.**
 
 ## Purpose
 
@@ -24,9 +25,11 @@ The initial vertical slice compares:
 - ERM
 - GRIT/ECMP with clean oracle invariant pairs
 - GroupDRO with noisy-target/color training groups
+- V-REx with the two training sources as environments
+- IRMv1 with the two training sources as environments
 
 Conditional/random and nearest-neighbor pair construction are subsequent GRIT variants.
-REx, IRM, and any additional domain-generalization baselines remain deferred.
+Additional domain-generalization baselines remain deferred.
 
 ## Construction semantics
 
@@ -429,6 +432,69 @@ reference default `0.01` with one decade on either side. They are crossed with t
 learning-rate and weight-decay grid as ERM and selected using the same validation-only
 selectors. See the [reference GroupDRO implementation](https://github.com/kohpangwei/group_DRO).
 
+## V-REx baseline
+
+V-REx trains the same unprojected linear probe over frozen CLIP features as ERM. It
+receives no pair identities. Its environments are the rendered training sources:
+environment 0 is exactly `train_e01` and environment 1 is exactly `train_e02`. Target,
+color, validation, and test fields do not define or alter these environment IDs.
+
+Each deterministic minibatch contains the same number of examples from both environments.
+Within an epoch, each environment is shuffled independently from the run seed and sampled
+without replacement; the canonical batch size 256 therefore contributes 128 examples per
+environment. Both 25,000-example environments are exhausted once per epoch, including one
+equal 40-plus-40 remainder batch.
+
+For mean cross-entropy risks $R_0$ and $R_1$ on the two environment halves of a minibatch,
+the V-REx objective is
+
+$$
+\bar R + \lambda\operatorname{Var}(R_0,R_1), \qquad
+\bar R=\frac{R_0+R_1}{2},
+$$
+
+where `Var` is the population variance (mean squared deviation, denominator two). This is
+the variance-risk objective from the [REx paper](https://proceedings.mlr.press/v139/krueger21a.html),
+not variance over individual-example losses as in the inherited implementation.
+
+The penalty coefficient is 1 for updates 0 through 99 and the selected coefficient from
+update 100 onward. As in the authors' official CMNIST implementation, when the active
+coefficient exceeds 1 the whole objective is divided by that coefficient to keep gradient
+magnitudes controlled; this leaves its minimizer unchanged. The anneal point is fixed at
+100 rather than searched. The approved first-pass penalty grid is `10`, `100`, `1000`, and
+`10000`, spanning the DomainBed reference default through the official CMNIST code's
+default. Only the penalty coefficient is method-specific; the optimizer grid, epochs,
+seeds, checkpoint selection, and validation-only selectors are unchanged.
+
+## IRMv1 baseline
+
+IRMv1 uses the identical unprojected features, explicit environment IDs, deterministic
+environment-balanced minibatches, and fixed update-100 anneal schedule as V-REx. For
+environment $e$, introduce a scalar dummy classifier scale $s$, compute
+
+$$
+R_e(s)=\operatorname{CE}(s f_\theta(x_e),y_e), \qquad
+P_e=\left\lVert\left.\frac{\partial R_e(s)}{\partial s}\right|_{s=1}\right\rVert^2,
+$$
+
+and optimize
+
+$$
+\frac{R_0(1)+R_1(1)}{2} + \lambda\frac{P_0+P_1}{2}.
+$$
+
+This is the scalar-classifier IRMv1 penalty used by the
+[original IRM ColoredMNIST code](https://github.com/facebookresearch/InvariantRiskMinimization/tree/main/code/colored_mnist).
+It is computed separately inside the actual `train_e01` and `train_e02` minibatches; it
+does not split one already-mixed batch in half. The coefficient is 1 before update 100 and
+the selected value thereafter, with the same whole-objective rescaling above 1 used by the
+authors' implementation. The approved first-pass penalty grid is `100`, `1000`, `10000`,
+and `100000`: it starts at the DomainBed reference default and covers the neighborhood of
+the roughly 91,000 coefficient selected by the original CMNIST study. The original study
+searched anneal points from 50 through 249; fixing 100 keeps the rewrite's method search
+focused on penalty strength and matches the official REx CMNIST default and inherited
+launcher without inheriting the latter's batching or test-selection errors.
+
 ## Parameter search
 
 The search is configuration-driven and applies the same saved candidate results to both
@@ -439,6 +505,10 @@ selectors.
 - GRIT searches that optimizer grid jointly with ranks 2 through 24.
 - GroupDRO searches that optimizer grid jointly with adversarial step sizes `0.001`,
   `0.01`, and `0.1`.
+- V-REx searches that optimizer grid jointly with penalty coefficients `10`, `100`,
+  `1000`, and `10000`; its anneal point is fixed at update 100.
+- IRMv1 searches that optimizer grid jointly with penalty coefficients `100`, `1000`,
+  `10000`, and `100000`; its anneal point is fixed at update 100.
 - Every candidate runs on three tuning seeds.
 - The top three configurations receive two confirmation seeds.
 - The five-seed validation mean selects the frozen configuration.
@@ -449,8 +519,8 @@ selectors.
 The search runner saves every resolved candidate and per-seed validation metric. W&B may
 mirror the search, but local structured results define selection semantics.
 
-The production lifecycle implements the approved ERM/oracle-GRIT grid and an independent
-GroupDRO grid locally. The production schema
+The production lifecycle implements the approved ERM/oracle-GRIT grid and independent
+GroupDRO, V-REx, and IRMv1 grids locally. The production schema
 requires explicit dataset, feature-cache, and 256-pair manifest paths; the canonical
 production inventory; pinned official OpenAI CLIP identity; one matching normalization;
 and explicit construction, pair, 3 tuning, 2 confirmation, and 10 final seeds. Planning
@@ -458,8 +528,10 @@ emits all 384 ordered candidates (16 ERM and 368 GRIT) and expected stage counts
 loading arrays, training, checkpoints, or final-test access. The primary unnormalized
 experiment and the named L2 sensitivity are distinct configurations and caches. The
 GroupDRO configuration emits 48 candidates (16 optimizer settings crossed with three
-adversarial step sizes) into a separate output tree, so it does not invalidate or rerun
-the ERM/GRIT search.
+adversarial step sizes). The V-REx and IRMv1 configurations each emit 64 candidates (16
+optimizer settings crossed with four penalty weights). Each baseline uses a separate
+output tree, so it does not invalidate or rerun the ERM/GRIT search, while the shared ten
+final seeds preserve paired comparisons across trees.
 
 The run scheduler applies both selectors to the same saved tuning runs, confirms the
 ordered union of their method-specific top threes once, and freezes separate winners.
@@ -468,7 +540,8 @@ frozen-winner artifact, then train on a fresh final seed, select an epoch from v
 persist and restore that checkpoint, and only then open `test_ood`. Canonical stage results,
 selection artifacts, ten-seed summaries, per-seed paired differences, and the verified
 experiment index are local authority. No real 1,152-run tuning stage was executed while
-implementing this system, so this status makes no scientific performance claim.
+implementing this system, nor were the V-REx or IRMv1 searches, so this status makes no
+scientific performance claim.
 
 Final results report mean, standard deviation, and a 95% t-interval across final seeds.
 Because methods use the same final seeds, comparisons also report paired per-seed
