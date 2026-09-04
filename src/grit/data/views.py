@@ -39,18 +39,25 @@ class TrainingSplitDescriptor(_SplitDescriptor):
     @model_validator(mode="after")
     def _validate_cmnist_role(self) -> TrainingSplitDescriptor:
         allowed = {
-            "train_e01": "train_e01_sources",
-            "train_e02": "train_e02_sources",
+            "cmnist": {
+                "train_e01": "train_e01_sources",
+                "train_e02": "train_e02_sources",
+            },
+            "rotated_mnist": {
+                "train_r0": "train_r0_sources",
+                "train_r45": "train_r45_sources",
+            },
         }
         if (
-            self.dataset_id != "cmnist"
-            or allowed.get(self.name) != self.source_partition_id
+            self.dataset_id not in allowed
+            or allowed[self.dataset_id].get(self.name) != self.source_partition_id
         ):
             raise ValueError(
-                "training descriptors must name an approved CMNIST training split"
+                "training descriptors must name an approved CMNIST training split or "
+                "approved RotatedMNIST training split"
             )
         if self.view_id != self.name:
-            raise ValueError("CMNIST training view_id must equal the split name")
+            raise ValueError("training view_id must equal the split name")
         return self
 
 
@@ -59,17 +66,20 @@ class ValidationSplitDescriptor(_SplitDescriptor):
 
     @model_validator(mode="after")
     def _validate_cmnist_role(self) -> ValidationSplitDescriptor:
-        allowed = {"val_e01", "val_e02", "val_e05"}
+        allowed = {
+            "cmnist": {"val_e01", "val_e02", "val_e05"},
+            "rotated_mnist": {"val_r0", "val_r45", "val_r60"},
+        }
         if (
-            self.dataset_id != "cmnist"
-            or self.name not in allowed
+            self.dataset_id not in allowed
+            or self.name not in allowed[self.dataset_id]
             or self.source_partition_id != "validation_sources"
         ):
             raise ValueError(
-                "validation descriptors must name an approved CMNIST validation split"
+                "validation descriptors must name an approved dataset validation split"
             )
         if self.view_id != self.name:
-            raise ValueError("CMNIST validation view_id must equal the split name")
+            raise ValueError("validation view_id must equal the split name")
         return self
 
 
@@ -78,16 +88,24 @@ class FinalTestSplitDescriptor(_SplitDescriptor):
 
     @model_validator(mode="after")
     def _validate_cmnist_role(self) -> FinalTestSplitDescriptor:
-        expected = ("cmnist", "test_ood", "test_sources", "test_ood")
+        expected_by_dataset = {
+            "cmnist": ("cmnist", "test_ood", "test_sources", "test_ood"),
+            "rotated_mnist": (
+                "rotated_mnist",
+                "test_r90",
+                "test_sources",
+                "test_r90",
+            ),
+        }
         observed = (
             self.dataset_id,
             self.name,
             self.source_partition_id,
             self.view_id,
         )
-        if observed != expected:
+        if observed != expected_by_dataset.get(self.dataset_id):
             raise ValueError(
-                "final-test descriptors must name the CMNIST test_ood split"
+                "final-test descriptors must name an approved dataset final split"
             )
         return self
 
@@ -369,3 +387,31 @@ def validate_cmnist_repeated_validation_views(
         raise ValueError(
             "CMNIST validation renderings require distinct view identities"
         )
+
+
+def validate_rotated_mnist_repeated_validation_views(
+    views: tuple[ValidationView, ValidationView, ValidationView],
+) -> None:
+    """Validate exact source reuse across RotatedMNIST validation rotations."""
+
+    if any(type(view) is not ValidationView for view in views):
+        raise TypeError("repeated validation checks accept ValidationView values only")
+    expected_names = ("val_r0", "val_r45", "val_r60")
+    if tuple(view.descriptor.name for view in views) != expected_names:
+        raise ValueError(f"validation views must be ordered as {expected_names!r}")
+    if {view.descriptor.dataset_id for view in views} != {"rotated_mnist"}:
+        raise ValueError("RotatedMNIST validation views have the wrong dataset")
+    if len({view.descriptor.manifest_id for view in views}) != 1:
+        raise ValueError("validation views must share one manifest identity")
+    if {view.descriptor.source_partition_id for view in views} != {
+        "validation_sources"
+    }:
+        raise ValueError("validation views must share the validation partition")
+    source_orders = {
+        tuple(example.source_id for example in view.examples) for view in views
+    }
+    if len(source_orders) != 1:
+        raise ValueError("validation rotations must share ordered source identities")
+    example_ids = [example.example_id for view in views for example in view.examples]
+    if len(example_ids) != len(set(example_ids)):
+        raise ValueError("validation rotations require distinct example identities")

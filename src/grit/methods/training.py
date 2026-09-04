@@ -16,7 +16,6 @@ from numpy.typing import NDArray
 from pydantic import StrictInt, StrictStr
 
 from grit.config import LinearProbeTrainingConfig
-from grit.features.cmnist import FeatureTable
 from grit.methods.checkpoints import CheckpointStore, StoredCheckpoint
 from grit.methods.groupdro import (
     GroupDroObjective,
@@ -41,7 +40,7 @@ class LinearProbeState:
 
 
 class LinearProbeAlgorithm:
-    """Own a two-class linear model, Adam, and one bounded update operation."""
+    """Own a fixed-class linear model, Adam, and one bounded update operation."""
 
     def __init__(
         self,
@@ -49,16 +48,23 @@ class LinearProbeAlgorithm:
         *,
         model_seed: int,
         projection: FittedLinearProjection | None,
+        num_classes: int = 2,
     ) -> None:
-        self._model = torch.nn.Linear(512, 2, bias=True, device="cpu")
+        if num_classes <= 1:
+            raise ValueError("linear probe requires at least two output classes")
+        self._model = torch.nn.Linear(512, num_classes, bias=True, device="cpu")
         generator = torch.Generator(device="cpu").manual_seed(model_seed)
         bound = 1.0 / math.sqrt(512)
-        weight = torch.rand(
-            (2, 512), generator=generator, dtype=torch.float32
-        ).mul(2 * bound).sub(bound)
-        bias = torch.rand((2,), generator=generator, dtype=torch.float32).mul(
-            2 * bound
-        ).sub(bound)
+        weight = (
+            torch.rand((num_classes, 512), generator=generator, dtype=torch.float32)
+            .mul(2 * bound)
+            .sub(bound)
+        )
+        bias = (
+            torch.rand((num_classes,), generator=generator, dtype=torch.float32)
+            .mul(2 * bound)
+            .sub(bound)
+        )
         with torch.no_grad():
             self._model.weight.copy_(weight)
             self._model.bias.copy_(bias)
@@ -138,7 +144,10 @@ class LinearProbeAlgorithm:
         )
 
     def restore_inference_state(self, state: LinearProbeState) -> None:
-        if state.weight.shape != (2, 512) or state.bias.shape != (2,):
+        if (
+            state.weight.shape != self._model.weight.shape
+            or state.bias.shape != self._model.bias.shape
+        ):
             raise ValueError("linear checkpoint state has incompatible shapes")
         with torch.no_grad():
             self._model.weight.copy_(state.weight.to(torch.float32))
@@ -180,6 +189,22 @@ class LinearProbeTrainingMethod(Protocol):
         targets: torch.Tensor,
         rows: torch.Tensor,
     ) -> float: ...
+
+
+class FeatureTableLike(Protocol):
+    """Minimal frozen-feature table consumed by shared training/evaluation."""
+
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def source_ids(self) -> tuple[str, ...]: ...
+
+    @property
+    def features(self) -> torch.Tensor: ...
+
+    @property
+    def targets(self) -> torch.Tensor: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -466,6 +491,7 @@ def train_linear_probe_epochs(
     seed: int,
     method: LinearProbeTrainingMethod,
     validate_epoch: Callable[[LinearProbeAlgorithm, CheckpointIdentity], None],
+    num_classes: int = 2,
 ) -> TrainedLinearProbeCore:
     """Train one method and hand each saved epoch to dataset-specific validation."""
 
@@ -480,6 +506,7 @@ def train_linear_probe_epochs(
         config,
         model_seed=seed,
         projection=method.projection,
+        num_classes=num_classes,
     )
     generator = torch.Generator(device="cpu").manual_seed(seed)
     store = InMemoryLinearCheckpointStore(store_id=f"memory:{run_id}")
@@ -494,8 +521,7 @@ def train_linear_probe_epochs(
         if not row_batches:
             raise ValueError("linear-probe method produced an empty epoch")
         batch_losses = tuple(
-            method.update(algorithm, features, targets, rows)
-            for rows in row_batches
+            method.update(algorithm, features, targets, rows) for rows in row_batches
         )
         epoch_losses.append(sum(batch_losses) / len(batch_losses))
         identity = CheckpointIdentity(
@@ -515,8 +541,8 @@ def train_linear_probe_epochs(
 
 
 def train_linear_probe(
-    training_tables: tuple[FeatureTable, FeatureTable],
-    validation_tables: tuple[FeatureTable, FeatureTable, FeatureTable],
+    training_tables: tuple[FeatureTableLike, FeatureTableLike],
+    validation_tables: tuple[FeatureTableLike, FeatureTableLike, FeatureTableLike],
     config: LinearProbeTrainingConfig,
     *,
     run_id: str,
@@ -525,15 +551,16 @@ def train_linear_probe(
     seed_stage: SeedStage,
     seed: int,
     method: LinearProbeTrainingMethod,
+    num_classes: int = 2,
 ) -> TrainedLinearProbeRun:
     """Run trainer-owned epoch/batch iteration and emit validation every epoch."""
 
-    train_features = torch.cat(
-        [table.features for table in training_tables], dim=0
-    ).to(torch.float32)
-    train_targets = torch.cat(
-        [table.targets for table in training_tables], dim=0
-    ).to(torch.int64)
+    train_features = torch.cat([table.features for table in training_tables], dim=0).to(
+        torch.float32
+    )
+    train_targets = torch.cat([table.targets for table in training_tables], dim=0).to(
+        torch.int64
+    )
     metrics: list[ValidationMetricRecord] = []
 
     def validate_epoch(
@@ -565,6 +592,7 @@ def train_linear_probe(
         seed=seed,
         method=method,
         validate_epoch=validate_epoch,
+        num_classes=num_classes,
     )
     return TrainedLinearProbeRun(
         run_id=run_id,
@@ -580,14 +608,16 @@ def train_linear_probe(
     )
 
 
-def evaluate_accuracy(algorithm: LinearProbeAlgorithm, table: FeatureTable) -> float:
+def evaluate_accuracy(
+    algorithm: LinearProbeAlgorithm, table: FeatureTableLike
+) -> float:
     predictions = algorithm.predict(table.features)
     return float((predictions == table.targets).to(torch.float64).mean().item())
 
 
 def _validation_metrics(
     algorithm: LinearProbeAlgorithm,
-    tables: tuple[FeatureTable, FeatureTable, FeatureTable],
+    tables: tuple[FeatureTableLike, FeatureTableLike, FeatureTableLike],
     *,
     run_id: str,
     candidate_id: str,
@@ -614,7 +644,15 @@ def _validation_metrics(
             metric_kind="validation",
             seed_stage=seed_stage,
             split_name=cast(
-                Literal["val_e01", "val_e02", "val_e05"], table.name
+                Literal[
+                    "val_e01",
+                    "val_e02",
+                    "val_e05",
+                    "val_r0",
+                    "val_r45",
+                    "val_r60",
+                ],
+                table.name,
             ),
             metric_name="accuracy",
             projection_rank=projection_rank,

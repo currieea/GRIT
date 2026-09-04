@@ -36,6 +36,13 @@ class CmnistSourceCounts(StrictBoundaryModel):
     test: PositiveInt
 
 
+class RotatedMnistSourceCounts(StrictBoundaryModel):
+    train_r0: PositiveInt
+    train_r45: PositiveInt
+    validation: PositiveInt
+    test: PositiveInt
+
+
 class CmnistDatasetConfig(StrictBoundaryModel):
     """Dataset identity bound to the approved deterministic partition algorithm."""
 
@@ -56,6 +63,24 @@ class CmnistDatasetConfig(StrictBoundaryModel):
             raise ValueError(f"training_split_names must be {expected_training!r}")
         if self.validation_split_names != expected_validation:
             raise ValueError(f"validation_split_names must be {expected_validation!r}")
+        return self
+
+
+class RotatedMnistDatasetConfig(StrictBoundaryModel):
+    dataset_id: Literal["rotated_mnist"]
+    construction_method_id: Literal["rotated-mnist-stratified-hash-v1"]
+    construction_seed: StrictInt
+    source_counts: RotatedMnistSourceCounts
+    training_split_names: tuple[Literal["train_r0", "train_r45"], ...]
+    validation_split_names: tuple[Literal["val_r0", "val_r45", "val_r60"], ...]
+    final_test_split_name: Literal["test_r90"]
+
+    @model_validator(mode="after")
+    def _validate_required_splits(self) -> RotatedMnistDatasetConfig:
+        if self.training_split_names != ("train_r0", "train_r45"):
+            raise ValueError("RotatedMNIST training splits must be 0 and 45 degrees")
+        if self.validation_split_names != ("val_r0", "val_r45", "val_r60"):
+            raise ValueError("RotatedMNIST validation splits must be 0, 45, and 60")
         return self
 
 
@@ -96,6 +121,17 @@ class OraclePairsConfig(StrictBoundaryModel):
         return self
 
 
+class RotatedMnistOraclePairsConfig(StrictBoundaryModel):
+    kind: Literal["oracle"]
+    construction_id: Literal["rotated-mnist-exact-source-oracle-pairs-v1"]
+    source_partition_ids: tuple[
+        Literal["train_r0_sources"], Literal["train_r45_sources"]
+    ]
+    pair_count: PositiveInt
+    pair_seed: StrictInt
+    orientation: Literal["rotation_0_minus_45"]
+
+
 PairsConfig: TypeAlias = Annotated[
     DisabledPairsConfig | OraclePairsConfig,
     Field(discriminator="kind"),
@@ -112,9 +148,7 @@ class LinearProjectionConfig(StrictBoundaryModel):
     kind: Literal["linear_pair_difference"]
     requested_rank: Annotated[StrictInt, Field(ge=0, le=24)]
     center_differences: Literal[False]
-    relative_singular_value_tolerance: Annotated[
-        StrictFloat, Field(gt=0.0)
-    ]
+    relative_singular_value_tolerance: Annotated[StrictFloat, Field(gt=0.0)]
 
 
 ProjectionConfig: TypeAlias = Annotated[
@@ -228,6 +262,12 @@ class CmnistTestOracleSelectionConfig(StrictBoundaryModel):
 class CmnistArtifactLineageConfig(StrictBoundaryModel):
     """Prepared-artifact identity required by reportable CMNIST runs."""
 
+    dataset_manifest_digest: NonEmptyStr
+    feature_cache_manifest_digest: NonEmptyStr
+    pair_manifest_digest: NonEmptyStr | None
+
+
+class RotatedMnistArtifactLineageConfig(StrictBoundaryModel):
     dataset_manifest_digest: NonEmptyStr
     feature_cache_manifest_digest: NonEmptyStr
     pair_manifest_digest: NonEmptyStr | None
@@ -347,8 +387,82 @@ class CmnistTestOracleExperimentConfig(_CommonCmnistExperimentConfig):
     diagnostic_selection: CmnistTestOracleSelectionConfig
 
 
+class RotatedMnistExperimentConfig(StrictBoundaryModel):
+    schema_version: Literal["grit.experiment/v1"]
+    run_kind: Literal["rotated_mnist_ordinary"]
+    experiment_name: NonEmptyStr
+    protocol_id: Literal["rotated_mnist/v1"]
+    reportable: StrictBool
+    dataset: RotatedMnistDatasetConfig
+    representation: FrozenFeatureConfig
+    pairs: DisabledPairsConfig | RotatedMnistOraclePairsConfig
+    projection: ProjectionConfig
+    algorithm: ErmAlgorithmConfig | GritAlgorithmConfig
+    training: LinearProbeTrainingConfig
+    runtime: CpuRuntimeConfig
+    seed_sets: SeedSets
+    artifact_lineage: RotatedMnistArtifactLineageConfig | None = None
+    selection: OrdinarySelectionConfig
+
+    def scientific_config_digest(self) -> str:
+        candidate_fields = self.model_dump(
+            mode="json",
+            exclude={"experiment_name", "run_kind", "seed_sets", "selection"},
+        )
+        return canonical_digest_value(candidate_fields)
+
+    @model_validator(mode="after")
+    def _validate_protocol(self) -> RotatedMnistExperimentConfig:
+        if isinstance(self.algorithm, ErmAlgorithmConfig):
+            if not isinstance(self.pairs, DisabledPairsConfig) or not isinstance(
+                self.projection, DisabledProjectionConfig
+            ):
+                raise ValueError("RotatedMNIST ERM cannot use pairs or a projection")
+        elif not isinstance(
+            self.pairs, RotatedMnistOraclePairsConfig
+        ) or not isinstance(self.projection, LinearProjectionConfig):
+            raise ValueError(
+                "RotatedMNIST GRIT requires exact oracle pairs and projection"
+            )
+        if not self.reportable:
+            return self
+        if self.artifact_lineage is None:
+            raise ValueError("reportable RotatedMNIST requires artifact lineage")
+        pair_digest = self.artifact_lineage.pair_manifest_digest
+        if isinstance(self.algorithm, ErmAlgorithmConfig) and pair_digest is not None:
+            raise ValueError("reportable RotatedMNIST ERM cannot bind oracle pairs")
+        if isinstance(self.algorithm, GritAlgorithmConfig) and pair_digest is None:
+            raise ValueError("reportable RotatedMNIST GRIT requires pair lineage")
+        counts = self.dataset.source_counts
+        if (counts.train_r0, counts.train_r45, counts.validation, counts.test) != (
+            25_000,
+            25_000,
+            10_000,
+            10_000,
+        ):
+            raise ValueError(
+                "reportable RotatedMNIST requires production source counts"
+            )
+        representation_identity = (
+            self.representation.encoder_id,
+            self.representation.encoder_revision,
+            self.representation.weights_identity,
+            self.representation.preprocessing_identity,
+        )
+        if representation_identity != (
+            "openai-clip-vit-b32",
+            OPENAI_CLIP_REVISION,
+            OPENAI_CLIP_WEIGHTS_IDENTITY,
+            OPENAI_CLIP_PREPROCESSING_ID,
+        ):
+            raise ValueError("reportable RotatedMNIST requires pinned official CLIP")
+        return self
+
+
 ExperimentConfig: TypeAlias = Annotated[
-    OrdinaryExperimentConfig | CmnistTestOracleExperimentConfig,
+    OrdinaryExperimentConfig
+    | CmnistTestOracleExperimentConfig
+    | RotatedMnistExperimentConfig,
     Field(discriminator="run_kind"),
 ]
 

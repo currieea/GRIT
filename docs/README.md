@@ -2,6 +2,8 @@
 
 - [`experiments/cmnist.md`](experiments/cmnist.md): ColoredMNIST construction, splits,
   pairs, projection, search grid, and selection protocol.
+- [`experiments/rotated_mnist.md`](experiments/rotated_mnist.md): RotatedMNIST source
+  partitions, exact-source oracle pairs, rotations, and validation-only selection.
 - [`experiments/waterbirds.md`](experiments/waterbirds.md): Waterbirds-CF reconstruction,
   groups, and worst-group selection protocol.
 - [`history/`](history/): the original staged rewrite plan, architecture notes, contract

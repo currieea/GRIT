@@ -1,8 +1,8 @@
 """Dataset-neutral search entry points: plan, run, status, pilot, and outputs.
 
-Dataset-specific orchestration lives in `grit.search.cmnist` and
-`grit.search.waterbirds`; this module dispatches to them and owns everything
-both datasets share.
+Dataset-specific orchestration lives in `grit.search.cmnist`,
+`grit.search.rotated_mnist`, and `grit.search.waterbirds`; this module dispatches
+to them and owns everything the datasets share.
 """
 
 from __future__ import annotations
@@ -22,6 +22,8 @@ from grit.search.outputs import (
     CmnistProductionSummary,
     ExperimentIndex,
     IndexedArtifact,
+    RotatedMnistPairedSelectorSummary,
+    RotatedMnistProductionSummary,
     WaterbirdsPairedSummaryArtifact,
     WaterbirdsProductionSummary,
     verify_experiment_index,
@@ -29,6 +31,7 @@ from grit.search.outputs import (
 from grit.search.plan import (
     CmnistProductionSearchConfig,
     ResolvedProductionSearchConfig,
+    RotatedMnistProductionSearchConfig,
     SearchCandidate,
     SearchPlan,
     load_production_search_config,
@@ -40,7 +43,7 @@ NonEmptyStr: TypeAlias = str
 
 class ProductionSearchStatus(StrictBoundaryModel):
     schema_version: Literal["grit.production-search-status/v1"]
-    dataset: Literal["cmnist", "waterbirds_cf"]
+    dataset: Literal["cmnist", "waterbirds_cf", "rotated_mnist"]
     plan_digest: StrictStr = Field(min_length=1)
     phase: Literal[
         "tuning",
@@ -66,6 +69,7 @@ class ProductionSearchStatus(StrictBoundaryModel):
             raise ValueError("production search status exceeds its planned work")
         return self
 
+
 @dataclass(frozen=True, slots=True)
 class ProductionExecutionLimits:
     """Operational task limits that never participate in scientific identity."""
@@ -76,15 +80,17 @@ class ProductionExecutionLimits:
     tuning_seed: int | None = None
     max_new_runs: int | None = None
 
+
 class PilotCandidateSelection(StrictBoundaryModel):
     """Read-only deterministic presentation of the two recommended pilot tasks."""
 
     schema_version: Literal["grit.production-pilot-candidates/v1"]
-    dataset: Literal["cmnist", "waterbirds_cf"]
+    dataset: Literal["cmnist", "waterbirds_cf", "rotated_mnist"]
     plan_digest: StrictStr = Field(min_length=1)
     tuning_seed: StrictInt
     erm: SearchCandidate
     grit_nonzero_rank: SearchCandidate
+
 
 def plan_production_search(config_path: Path) -> SearchPlan:
     """Validate all production inputs and atomically write or reuse the plan."""
@@ -92,10 +98,16 @@ def plan_production_search(config_path: Path) -> SearchPlan:
     config = load_production_search_config(config_path)
     return write_search_plan(config, config_path=config_path)
 
+
 def run_production_search(
     config_path: Path,
     limits: ProductionExecutionLimits | None = None,
-) -> CmnistProductionSummary | WaterbirdsProductionSummary | ProductionSearchStatus:
+) -> (
+    CmnistProductionSummary
+    | WaterbirdsProductionSummary
+    | RotatedMnistProductionSummary
+    | ProductionSearchStatus
+):
     """Run or continue the dataset-specific search selected by strict YAML."""
 
     plan = plan_production_search(config_path)
@@ -104,9 +116,14 @@ def run_production_search(
         from grit.search.cmnist import run_cmnist_search
 
         return run_cmnist_search(plan, checked_limits)
+    if isinstance(plan.resolved_config.config, RotatedMnistProductionSearchConfig):
+        from grit.search.rotated_mnist import run_rotated_mnist_search
+
+        return run_rotated_mnist_search(plan, checked_limits)
     from grit.search.waterbirds import run_waterbirds_production_search
 
     return run_waterbirds_production_search(plan, checked_limits)
+
 
 def production_pilot_candidates(config_path: Path) -> PilotCandidateSelection:
     """Present canonical ERM/nonzero-GRIT pilot candidates from an existing plan."""
@@ -149,6 +166,7 @@ def pilot_candidates(plan: SearchPlan) -> tuple[SearchCandidate, ...]:
         )
     return tuple(selected)
 
+
 def production_search_status(config_path: Path) -> ProductionSearchStatus:
     """Report canonical completed work without invoking a trainer."""
 
@@ -157,9 +175,14 @@ def production_search_status(config_path: Path) -> ProductionSearchStatus:
         from grit.search.cmnist import cmnist_status_from_plan
 
         return cmnist_status_from_plan(plan)
+    if isinstance(plan.resolved_config.config, RotatedMnistProductionSearchConfig):
+        from grit.search.rotated_mnist import rotated_mnist_status_from_plan
+
+        return rotated_mnist_status_from_plan(plan)
     from grit.search.waterbirds import waterbirds_status_from_plan
 
     return waterbirds_status_from_plan(plan)
+
 
 def _load_existing_search_plan(config_path: Path) -> SearchPlan:
     """Load one compatible planning triplet without resolving inputs or writing."""
@@ -184,9 +207,7 @@ def _load_existing_search_plan(config_path: Path) -> SearchPlan:
     stored_resolved = ResolvedProductionSearchConfig.model_validate_json(
         resolved_path.read_text(encoding="utf-8")
     )
-    stored_plan = SearchPlan.model_validate_json(
-        plan_path.read_text(encoding="utf-8")
-    )
+    stored_plan = SearchPlan.model_validate_json(plan_path.read_text(encoding="utf-8"))
     if stored_authored != supplied:
         raise ValueError("saved authored config does not match the supplied YAML")
     if (
@@ -199,6 +220,7 @@ def _load_existing_search_plan(config_path: Path) -> SearchPlan:
         )
     return stored_plan
 
+
 def validate_execution_limits(
     plan: SearchPlan,
     limits: ProductionExecutionLimits | None,
@@ -210,21 +232,15 @@ def validate_execution_limits(
     if limits.method != "all" and limits.method not in plan.methods:
         choices = ", ".join((*plan.methods, "all"))
         raise ValueError(f"method must be one of: {choices}")
-    max_new_runs = _validate_optional_exact_integer(
-        limits.max_new_runs, "max_new_runs"
-    )
-    tuning_seed = _validate_optional_exact_integer(
-        limits.tuning_seed, "tuning_seed"
-    )
+    max_new_runs = _validate_optional_exact_integer(limits.max_new_runs, "max_new_runs")
+    tuning_seed = _validate_optional_exact_integer(limits.tuning_seed, "tuning_seed")
     candidate_ids = _validate_candidate_ids(limits.candidate_ids)
     if max_new_runs is not None and max_new_runs <= 0:
         raise ValueError("max_new_runs must be positive")
     if len(candidate_ids) != len(set(candidate_ids)):
         raise ValueError("candidate_id filters must be unique")
     uses_tuning_filter = (
-        limits.method != "all"
-        or bool(candidate_ids)
-        or tuning_seed is not None
+        limits.method != "all" or bool(candidate_ids) or tuning_seed is not None
     )
     if uses_tuning_filter and limits.stop_after != "tuning":
         raise ValueError(
@@ -232,9 +248,7 @@ def validate_execution_limits(
         )
     by_id = {candidate.candidate_id: candidate for candidate in plan.candidates}
     unknown = tuple(
-        candidate_id
-        for candidate_id in candidate_ids
-        if candidate_id not in by_id
+        candidate_id for candidate_id in candidate_ids if candidate_id not in by_id
     )
     if unknown:
         raise ValueError(f"candidate IDs are not present in the plan: {unknown}")
@@ -246,12 +260,12 @@ def validate_execution_limits(
         )
         if wrong_method:
             raise ValueError(
-                "candidate IDs do not agree with the method filter: "
-                f"{wrong_method}"
+                f"candidate IDs do not agree with the method filter: {wrong_method}"
             )
     if tuning_seed is not None and tuning_seed not in plan.seeds.stages.tuning:
         raise ValueError("tuning_seed is not one of the configured tuning seeds")
     return limits
+
 
 def _validate_optional_exact_integer(value: object, field_name: str) -> int | None:
     if value is None:
@@ -260,6 +274,7 @@ def _validate_optional_exact_integer(value: object, field_name: str) -> int | No
         raise ValueError(f"{field_name} must be an integer")
     return value
 
+
 def _validate_candidate_ids(values: tuple[object, ...]) -> tuple[str, ...]:
     validated: list[str] = []
     for value in values:
@@ -267,6 +282,7 @@ def _validate_candidate_ids(values: tuple[object, ...]) -> tuple[str, ...]:
             raise ValueError("candidate IDs must be nonempty strings")
         validated.append(value)
     return tuple(validated)
+
 
 def limited_tuning_candidates(
     plan: SearchPlan,
@@ -285,6 +301,7 @@ def limited_tuning_candidates(
         raise ValueError("tuning filters select no canonical plan candidates")
     return candidates
 
+
 def planned_candidate(
     candidates: dict[str, SearchCandidate], candidate_id: str
 ) -> SearchCandidate:
@@ -295,6 +312,7 @@ def planned_candidate(
         )
     return candidate
 
+
 def complete_outputs_valid(plan: SearchPlan) -> bool:
     root = Path(plan.resolved_config.output_root)
     index_path = root / "experiment-index.json"
@@ -302,9 +320,7 @@ def complete_outputs_valid(plan: SearchPlan) -> bool:
         summary_path = root / "summaries" / "cmnist-summary.json"
         paired_paths = (
             tuple(
-                root
-                / "summaries"
-                / f"cmnist-{selector.value}-paired-differences.json"
+                root / "summaries" / f"cmnist-{selector.value}-paired-differences.json"
                 for selector in (
                     CmnistSelector.PRIMARY_ROBUST,
                     CmnistSelector.SECONDARY_SOURCE,
@@ -331,6 +347,35 @@ def complete_outputs_valid(plan: SearchPlan) -> bool:
             or summary.paired_selectors != paired
         ):
             raise ValueError("CMNIST completion summary is inconsistent")
+    elif plan.dataset == "rotated_mnist":
+        summary_path = root / "summaries" / "rotated-mnist-summary.json"
+        paired_paths = tuple(
+            root
+            / "summaries"
+            / f"rotated-mnist-{selector.value}-paired-differences.json"
+            for selector in (
+                CmnistSelector.PRIMARY_ROBUST,
+                CmnistSelector.SECONDARY_SOURCE,
+            )
+        )
+        required = (summary_path, *paired_paths, index_path)
+        if not all(path.is_file() for path in required):
+            return False
+        rotated_summary = RotatedMnistProductionSummary.model_validate_json(
+            summary_path.read_text(encoding="utf-8")
+        )
+        rotated_paired = tuple(
+            RotatedMnistPairedSelectorSummary.model_validate_json(
+                path.read_text(encoding="utf-8")
+            )
+            for path in paired_paths
+        )
+        if (
+            rotated_summary.plan_digest != plan.canonical_digest()
+            or rotated_summary.lineage != plan.resolved_config.lineage
+            or rotated_summary.paired_selectors != rotated_paired
+        ):
+            raise ValueError("RotatedMNIST completion summary is inconsistent")
     else:
         summary_path = root / "summaries" / "waterbirds-summary.json"
         paired_path = root / "summaries" / "waterbirds-paired-differences.json"
@@ -346,17 +391,14 @@ def complete_outputs_valid(plan: SearchPlan) -> bool:
             summary.plan_digest != plan.canonical_digest()
             or summary.lineage != plan.resolved_config.lineage
             or paired.configured_final_seeds != plan.seeds.stages.final
-            or paired.paired_worst_group_by_seed
-            != summary.paired_worst_group_by_seed
-            or paired.paired_worst_group_summary
-            != summary.paired_worst_group_summary
+            or paired.paired_worst_group_by_seed != summary.paired_worst_group_by_seed
+            or paired.paired_worst_group_summary != summary.paired_worst_group_summary
         ):
             raise ValueError("Waterbirds completion summary is inconsistent")
-    index = ExperimentIndex.model_validate_json(
-        index_path.read_text(encoding="utf-8")
-    )
+    index = ExperimentIndex.model_validate_json(index_path.read_text(encoding="utf-8"))
     verify_experiment_index(root, index)
     return True
+
 
 def persist_canonical_artifact(path: Path, model: StrictBoundaryModel) -> None:
     payload = model.canonical_json() + "\n"
@@ -369,16 +411,14 @@ def persist_canonical_artifact(path: Path, model: StrictBoundaryModel) -> None:
     temporary.write_text(payload, encoding="utf-8")
     temporary.replace(path)
 
+
 def write_experiment_index(plan: SearchPlan, output_root: Path) -> ExperimentIndex:
     index_path = output_root / "experiment-index.json"
     artifacts: list[IndexedArtifact] = []
-    paths = tuple(output_root.rglob("*.json")) + tuple(
-        output_root.rglob("*.yaml")
-    )
+    paths = tuple(output_root.rglob("*.json")) + tuple(output_root.rglob("*.yaml"))
     for path in sorted(paths):
         if path == index_path or any(
-            ".incomplete" in part or ".interrupted-" in part
-            for part in path.parts
+            ".incomplete" in part or ".interrupted-" in part for part in path.parts
         ):
             continue
         relative = path.relative_to(output_root).as_posix()
@@ -411,6 +451,7 @@ def write_experiment_index(plan: SearchPlan, output_root: Path) -> ExperimentInd
     persist_canonical_artifact(index_path, index)
     return verify_experiment_index(output_root, index)
 
+
 def _artifact_kind(relative: str) -> str:
     name = Path(relative).name
     if name == "result.json":
@@ -433,12 +474,14 @@ def _artifact_kind(relative: str) -> str:
         return "resolved_config"
     return "canonical_json"
 
+
 def _file_sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(block)
     return f"sha256:{digest.hexdigest()}"
+
 
 def completed_task_revisions(output_root: Path) -> dict[str, int]:
     """Count completed task results by the code revision that produced them."""

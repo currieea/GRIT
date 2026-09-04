@@ -50,6 +50,26 @@ independent GroupDRO grid has 48 candidates (16 by three adversarial step sizes)
 use 3 tuning seeds, top-3 confirmation with 2 more seeds, and 10 final seeds for the
 winner. Selection uses validation only; see `docs/experiments/cmnist.md`.
 
+## RotatedMNIST
+
+The first RotatedMNIST slice uses disjoint MNIST source partitions, 0- and 45-degree
+training environments, validation at 0, 45, and 60 degrees, and the official MNIST test
+sources only for final 90-degree evaluation. Oracle pairs are the exact same training
+image rendered at 0 and 45 degrees.
+
+```bash
+uv run scripts/prepare_rotated_mnist.py
+uv run scripts/run_search.py configs/rotated_mnist/production-search.yaml --pilot
+uv run scripts/run_search.py configs/rotated_mnist/production-search.yaml
+uv run scripts/search_status.py configs/rotated_mnist/production-search.yaml
+```
+
+Prepared artifacts default to
+`$PROJECT_SCRATCH/artifacts/rotated-mnist-none/`; production outputs default to
+`$PROJECT_SCRATCH/outputs/rotated-mnist-primary-r2-24/`. The grid has the same 16 ERM
+and 368 oracle-GRIT candidates as the primary CMNIST comparison. See
+`docs/experiments/rotated_mnist.md` for the protocol and leakage boundary.
+
 ## Waterbirds
 
 Waterbirds-CF is rebuilt from released Waterbirds-95, CUB images and masks, and four

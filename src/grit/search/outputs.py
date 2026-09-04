@@ -28,9 +28,7 @@ class CmnistAccuracySummary(StrictBoundaryModel):
 
 
 def make_cmnist_accuracy_summary(
-    metric_name: Literal[
-        "test_ood_accuracy", "grit_minus_erm_test_ood_accuracy"
-    ],
+    metric_name: Literal["test_ood_accuracy", "grit_minus_erm_test_ood_accuracy"],
     values: tuple[float, ...],
 ) -> CmnistAccuracySummary:
     if len(values) != 10:
@@ -89,9 +87,10 @@ class CmnistMethodSelectorSummary(StrictBoundaryModel):
             for item in self.final_observations
         ):
             raise ValueError("CMNIST final observation identity is inconsistent")
-        if len({item.result_path for item in self.final_observations}) != 10 or len(
-            {item.metric_record_id for item in self.final_observations}
-        ) != 10:
+        if (
+            len({item.result_path for item in self.final_observations}) != 10
+            or len({item.metric_record_id for item in self.final_observations}) != 10
+        ):
             raise ValueError("CMNIST final observations must be uniquely attributable")
         values = tuple(
             float(item.test_ood_accuracy) for item in self.final_observations
@@ -146,9 +145,7 @@ class CmnistProductionSummary(StrictBoundaryModel):
     reportable: Literal[True]
     plan_digest: NonEmptyStr
     lineage: SearchLineage
-    methods: Annotated[
-        tuple[CmnistMethodSelectorSummary, ...], Field(min_length=1)
-    ]
+    methods: Annotated[tuple[CmnistMethodSelectorSummary, ...], Field(min_length=1)]
     paired_selectors: tuple[CmnistPairedSelectorSummary, ...]
 
     @model_validator(mode="after")
@@ -182,9 +179,7 @@ class CmnistProductionSummary(StrictBoundaryModel):
             expected_paired_selectors
         ):
             raise ValueError("CMNIST paired selector summaries are misordered")
-        by_identity = {
-            (item.method_id, item.selector): item for item in self.methods
-        }
+        by_identity = {(item.method_id, item.selector): item for item in self.methods}
         for paired in self.paired_selectors:
             erm = by_identity[("erm", paired.selector)]
             grit = by_identity[("grit", paired.selector)]
@@ -210,6 +205,191 @@ class CmnistProductionSummary(StrictBoundaryModel):
             )
             if paired.paired_differences != expected_pairs:
                 raise ValueError("CMNIST paired differences are inconsistent")
+        return self
+
+
+class RotatedMnistAccuracySummary(StrictBoundaryModel):
+    metric_name: Literal["test_r90_accuracy", "grit_minus_erm_test_r90_accuracy"]
+    seed_count: Literal[10]
+    mean: FiniteFloat
+    sample_standard_deviation: Annotated[FiniteFloat, Field(ge=0.0)]
+    ci95_lower: FiniteFloat
+    ci95_upper: FiniteFloat
+
+
+def make_rotated_mnist_accuracy_summary(
+    metric_name: Literal["test_r90_accuracy", "grit_minus_erm_test_r90_accuracy"],
+    values: tuple[float, ...],
+) -> RotatedMnistAccuracySummary:
+    if len(values) != 10:
+        raise ValueError("RotatedMNIST final summary requires ten seeds")
+    mean = fmean(values)
+    deviation = stdev(values)
+    half_width = 2.2621571627409915 * deviation / math.sqrt(10)
+    return RotatedMnistAccuracySummary(
+        metric_name=metric_name,
+        seed_count=10,
+        mean=mean,
+        sample_standard_deviation=deviation,
+        ci95_lower=mean - half_width,
+        ci95_upper=mean + half_width,
+    )
+
+
+class RotatedMnistFinalSeedObservation(StrictBoundaryModel):
+    seed: StrictInt
+    method_id: MethodId
+    selector: CmnistSelector
+    result_path: NonEmptyStr
+    metric_record_id: NonEmptyStr
+    test_r90_accuracy: FiniteFloat
+
+
+class RotatedMnistMethodSelectorSummary(StrictBoundaryModel):
+    method_id: MethodId
+    selector: CmnistSelector
+    lineage: SearchLineage
+    selected_candidate_id: NonEmptyStr
+    finalist_candidate_ids: tuple[NonEmptyStr, NonEmptyStr, NonEmptyStr]
+    configured_final_seeds: Annotated[
+        tuple[StrictInt, ...], Field(min_length=10, max_length=10)
+    ]
+    final_observations: Annotated[
+        tuple[RotatedMnistFinalSeedObservation, ...],
+        Field(min_length=10, max_length=10),
+    ]
+    accuracy_summary: RotatedMnistAccuracySummary
+
+    @model_validator(mode="after")
+    def _validate_summary(self) -> RotatedMnistMethodSelectorSummary:
+        if (
+            len(set(self.finalist_candidate_ids)) != 3
+            or self.selected_candidate_id not in self.finalist_candidate_ids
+        ):
+            raise ValueError("selected candidate must be one of three finalists")
+        if tuple(item.seed for item in self.final_observations) != (
+            self.configured_final_seeds
+        ):
+            raise ValueError("final observations must align by configured seed")
+        if any(
+            item.method_id != self.method_id or item.selector is not self.selector
+            for item in self.final_observations
+        ):
+            raise ValueError("final observation identity is inconsistent")
+        if (
+            len({item.result_path for item in self.final_observations}) != 10
+            or len({item.metric_record_id for item in self.final_observations}) != 10
+        ):
+            raise ValueError("final observations must be uniquely attributable")
+        values = tuple(
+            float(item.test_r90_accuracy) for item in self.final_observations
+        )
+        if self.accuracy_summary != make_rotated_mnist_accuracy_summary(
+            "test_r90_accuracy", values
+        ):
+            raise ValueError("RotatedMNIST accuracy summary is inconsistent")
+        return self
+
+
+class RotatedMnistPairedSeedDifference(StrictBoundaryModel):
+    seed: StrictInt
+    selector: CmnistSelector
+    grit_minus_erm_test_r90_accuracy: FiniteFloat
+
+
+class RotatedMnistPairedSelectorSummary(StrictBoundaryModel):
+    schema_version: Literal["grit.rotated-mnist-paired-summary/v1"] = (
+        "grit.rotated-mnist-paired-summary/v1"
+    )
+    selector: CmnistSelector
+    configured_final_seeds: Annotated[
+        tuple[StrictInt, ...], Field(min_length=10, max_length=10)
+    ]
+    paired_differences: Annotated[
+        tuple[RotatedMnistPairedSeedDifference, ...],
+        Field(min_length=10, max_length=10),
+    ]
+    difference_summary: RotatedMnistAccuracySummary
+
+    @model_validator(mode="after")
+    def _validate_pairs(self) -> RotatedMnistPairedSelectorSummary:
+        if tuple(item.seed for item in self.paired_differences) != (
+            self.configured_final_seeds
+        ) or any(
+            item.selector is not self.selector for item in self.paired_differences
+        ):
+            raise ValueError("paired differences must align by configured seed")
+        values = tuple(
+            float(item.grit_minus_erm_test_r90_accuracy)
+            for item in self.paired_differences
+        )
+        if self.difference_summary != make_rotated_mnist_accuracy_summary(
+            "grit_minus_erm_test_r90_accuracy", values
+        ):
+            raise ValueError("RotatedMNIST paired summary is inconsistent")
+        return self
+
+
+class RotatedMnistProductionSummary(StrictBoundaryModel):
+    schema_version: Literal["grit.rotated-mnist-production-summary/v1"]
+    reportable: Literal[True]
+    plan_digest: NonEmptyStr
+    lineage: SearchLineage
+    methods: tuple[
+        RotatedMnistMethodSelectorSummary,
+        RotatedMnistMethodSelectorSummary,
+        RotatedMnistMethodSelectorSummary,
+        RotatedMnistMethodSelectorSummary,
+    ]
+    paired_selectors: tuple[
+        RotatedMnistPairedSelectorSummary, RotatedMnistPairedSelectorSummary
+    ]
+
+    @model_validator(mode="after")
+    def _validate_methods(self) -> RotatedMnistProductionSummary:
+        expected = tuple(
+            (method, selector)
+            for method in ("erm", "grit")
+            for selector in (
+                CmnistSelector.PRIMARY_ROBUST,
+                CmnistSelector.SECONDARY_SOURCE,
+            )
+        )
+        if tuple((item.method_id, item.selector) for item in self.methods) != expected:
+            raise ValueError("RotatedMNIST summaries must be ERM then GRIT")
+        if any(item.lineage != self.lineage for item in self.methods):
+            raise ValueError("RotatedMNIST summary lineage is inconsistent")
+        if tuple(item.selector for item in self.paired_selectors) != (
+            CmnistSelector.PRIMARY_ROBUST,
+            CmnistSelector.SECONDARY_SOURCE,
+        ):
+            raise ValueError("RotatedMNIST paired selectors are misordered")
+        by_identity = {(item.method_id, item.selector): item for item in self.methods}
+        for paired in self.paired_selectors:
+            erm = by_identity[("erm", paired.selector)]
+            grit = by_identity[("grit", paired.selector)]
+            if erm.configured_final_seeds != grit.configured_final_seeds:
+                raise ValueError("paired methods require identical final seeds")
+            erm_values = {
+                item.seed: float(item.test_r90_accuracy)
+                for item in erm.final_observations
+            }
+            grit_values = {
+                item.seed: float(item.test_r90_accuracy)
+                for item in grit.final_observations
+            }
+            expected_pairs = tuple(
+                RotatedMnistPairedSeedDifference(
+                    seed=seed,
+                    selector=paired.selector,
+                    grit_minus_erm_test_r90_accuracy=(
+                        grit_values[seed] - erm_values[seed]
+                    ),
+                )
+                for seed in erm.configured_final_seeds
+            )
+            if paired.paired_differences != expected_pairs:
+                raise ValueError("RotatedMNIST paired differences are inconsistent")
         return self
 
 
@@ -366,7 +546,7 @@ class IndexedArtifact(StrictBoundaryModel):
 
 class ExperimentIndex(StrictBoundaryModel):
     schema_version: Literal["grit.experiment-index/v1"]
-    dataset: Literal["cmnist", "waterbirds_cf"]
+    dataset: Literal["cmnist", "waterbirds_cf", "rotated_mnist"]
     reportable: Literal[True]
     plan_digest: NonEmptyStr
     resolved_config_digest: NonEmptyStr
@@ -398,8 +578,7 @@ def verify_experiment_index(root: Path, index: ExperimentIndex) -> ExperimentInd
         for path in (*root.rglob("*.json"), *root.rglob("*.yaml"))
         if path != root / "experiment-index.json"
         and not any(
-            ".incomplete" in part or ".interrupted-" in part
-            for part in path.parts
+            ".incomplete" in part or ".interrupted-" in part for part in path.parts
         )
     }
     if set(by_path) != actual_paths:

@@ -11,6 +11,7 @@ from grit.config import (
     CmnistTestOracleExperimentConfig,
     LinearProjectionConfig,
     OrdinaryExperimentConfig,
+    RotatedMnistExperimentConfig,
 )
 from grit.methods.checkpoints import RestorationReceipt
 from grit.schemas import StrictBoundaryModel
@@ -74,7 +75,7 @@ class OrdinaryRunResult(StrictBoundaryModel):
     schema_version: Literal["grit.run-result/v1"]
     result_kind: Literal["ordinary"]
     run_id: NonEmptyStr
-    resolved_config: OrdinaryExperimentConfig
+    resolved_config: OrdinaryExperimentConfig | RotatedMnistExperimentConfig
     resolved_config_digest: NonEmptyStr
     status: RunStatus
     code: CodeProvenance
@@ -211,10 +212,15 @@ class OrdinaryRunResult(StrictBoundaryModel):
         contributors = tuple(
             validation_by_id[record_id] for record_id in contributor_ids
         )
+        rotated = self.resolved_config.protocol_id == "rotated_mnist/v1"
         expected_splits = (
-            ("val_e01", "val_e02", "val_e05")
+            (
+                ("val_r0", "val_r45", "val_r60")
+                if rotated
+                else ("val_e01", "val_e02", "val_e05")
+            )
             if checkpoint.selector.value == "primary_robust"
-            else ("val_e01", "val_e02")
+            else (("val_r0", "val_r45") if rotated else ("val_e01", "val_e02"))
         )
         contributor_identity = {
             (metric.checkpoint_id, metric.epoch) for metric in contributors
@@ -238,6 +244,9 @@ class OrdinaryRunResult(StrictBoundaryModel):
         if fmean(contributor_values) != float(checkpoint.decision.mean_accuracy):
             raise ValueError("checkpoint mean does not match validation contributors")
         for metric in metrics:
+            expected_final_split = "test_r90" if rotated else "test_ood"
+            if metric.split_name != expected_final_split:
+                raise ValueError("final metric uses the wrong protocol split")
             identity = (
                 metric.run_id,
                 metric.candidate_id,
@@ -261,21 +270,20 @@ class OrdinaryRunResult(StrictBoundaryModel):
                     "final metric identity does not match selected result state"
                 )
         if self.resolved_config.reportable:
-            self._validate_reportable_cmnist_artifacts()
+            self._validate_reportable_artifacts()
         return self
 
-    def _validate_reportable_cmnist_artifacts(self) -> None:
+    def _validate_reportable_artifacts(self) -> None:
         lineage = self.resolved_config.artifact_lineage
         if lineage is None:
-            raise ValueError("reportable CMNIST result lacks artifact lineage")
+            raise ValueError("reportable result lacks artifact lineage")
         by_kind = {artifact.kind: artifact for artifact in self.artifacts}
         if len(by_kind) != len(self.artifacts):
             raise ValueError("CMNIST result artifact kinds must be unique")
-        if (
-            len({artifact.artifact_id for artifact in self.artifacts})
-            != len(self.artifacts)
-            or len({artifact.relative_uri for artifact in self.artifacts})
-            != len(self.artifacts)
+        if len({artifact.artifact_id for artifact in self.artifacts}) != len(
+            self.artifacts
+        ) or len({artifact.relative_uri for artifact in self.artifacts}) != len(
+            self.artifacts
         ):
             raise ValueError("CMNIST result artifact references must be unique")
         required = {
@@ -288,8 +296,7 @@ class OrdinaryRunResult(StrictBoundaryModel):
         if set(by_kind) != required:
             raise ValueError("CMNIST result required artifact references are missing")
         if (
-            by_kind["dataset_manifest"].digest
-            != lineage.dataset_manifest_digest
+            by_kind["dataset_manifest"].digest != lineage.dataset_manifest_digest
             or by_kind["feature_manifest"].digest
             != lineage.feature_cache_manifest_digest
         ):

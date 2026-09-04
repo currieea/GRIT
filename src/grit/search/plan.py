@@ -43,6 +43,11 @@ from grit.config import (
     OrdinaryExperimentConfig,
     OrdinarySelectionConfig,
     RexAlgorithmConfig,
+    RotatedMnistArtifactLineageConfig,
+    RotatedMnistDatasetConfig,
+    RotatedMnistExperimentConfig,
+    RotatedMnistOraclePairsConfig,
+    RotatedMnistSourceCounts,
     SeedSets,
 )
 from grit.data.cmnist import (
@@ -50,12 +55,18 @@ from grit.data.cmnist import (
     CmnistDatasetManifest,
     CmnistOraclePairManifest,
 )
+from grit.data.rotated_mnist import (
+    ROTATED_MNIST_ENVIRONMENT_SPECS,
+    RotatedMnistDatasetManifest,
+    RotatedMnistOraclePairManifest,
+)
 from grit.data.waterbirds import (
     WaterbirdsDatasetManifest,
     mint_waterbirds_adjusted_weight_spec,
 )
 from grit.data.waterbirds_pairs import WaterbirdsOraclePairManifest
 from grit.features.cmnist import CmnistFeatureCacheManifest, EncoderIdentity
+from grit.features.rotated_mnist import RotatedMnistFeatureCacheManifest
 from grit.features.waterbirds import WaterbirdsFeatureCacheManifest
 from grit.methods.types import IMPLEMENTED_METHODS, MethodId
 from grit.paths import REPO_ROOT, expand_config_path
@@ -232,9 +243,7 @@ class CmnistProductionSearchConfig(_CommonProductionSearchConfig):
     dataset: Literal["cmnist"]
     protocol_id: Literal["cmnist/v1"]
     pair_count: PositiveInt
-    selectors: tuple[
-        Literal["primary_robust"], Literal["secondary_source"]
-    ]
+    selectors: tuple[Literal["primary_robust"], Literal["secondary_source"]]
     batch_size: PositiveInt
     max_epochs: PositiveInt
 
@@ -259,6 +268,28 @@ class WaterbirdsProductionSearchConfig(_CommonProductionSearchConfig):
             raise ValueError(
                 "Waterbirds methods are specified but not implemented: "
                 f"{sorted(unsupported)}"
+            )
+        _require_runnable_grid(self.search_space, self.pair_count)
+        return self
+
+
+class RotatedMnistProductionSearchConfig(_CommonProductionSearchConfig):
+    dataset: Literal["rotated_mnist"]
+    protocol_id: Literal["rotated_mnist/v1"]
+    pair_count: PositiveInt
+    selectors: tuple[Literal["primary_robust"], Literal["secondary_source"]]
+    batch_size: PositiveInt
+    max_epochs: PositiveInt
+
+    @model_validator(mode="after")
+    def _validate_grid_fits(self) -> RotatedMnistProductionSearchConfig:
+        if self.search_space.methods != ("erm", "grit"):
+            raise ValueError(
+                "RotatedMNIST vertical slice requires ERM followed by GRIT"
+            )
+        if self.selectors != ("primary_robust", "secondary_source"):
+            raise ValueError(
+                "RotatedMNIST requires the primary and secondary selectors"
             )
         _require_runnable_grid(self.search_space, self.pair_count)
         return self
@@ -315,7 +346,9 @@ def _method_setting_count(space: SearchSpaceConfig, method: MethodId) -> int:
 
 
 ProductionSearchConfig: TypeAlias = Annotated[
-    CmnistProductionSearchConfig | WaterbirdsProductionSearchConfig,
+    CmnistProductionSearchConfig
+    | WaterbirdsProductionSearchConfig
+    | RotatedMnistProductionSearchConfig,
     Field(discriminator="dataset"),
 ]
 _SEARCH_CONFIG_ADAPTER: TypeAdapter[ProductionSearchConfig] = TypeAdapter(
@@ -368,12 +401,10 @@ class ResolvedProductionSearchConfig(StrictBoundaryModel):
             raise ValueError("resolved search input manifest paths must be unique")
         by_kind = {item.kind: item for item in self.input_artifacts}
         if (
-            by_kind["dataset_manifest"].digest
-            != self.lineage.dataset_manifest_digest
+            by_kind["dataset_manifest"].digest != self.lineage.dataset_manifest_digest
             or by_kind["feature_manifest"].digest
             != self.lineage.feature_cache_manifest_digest
-            or by_kind["pair_manifest"].digest
-            != self.lineage.pair_manifest_digest
+            or by_kind["pair_manifest"].digest != self.lineage.pair_manifest_digest
         ):
             raise ValueError("resolved search input digests do not match lineage")
         if isinstance(self.config, CmnistProductionSearchConfig):
@@ -384,6 +415,14 @@ class ResolvedProductionSearchConfig(StrictBoundaryModel):
             )
             if self.lineage.adjusted_weight_spec_digest is not None:
                 raise ValueError("CMNIST search cannot carry Waterbirds weights")
+        elif isinstance(self.config, RotatedMnistProductionSearchConfig):
+            expected_versions = (
+                "grit.rotated-mnist-dataset/v1",
+                "grit.rotated-mnist-features/v1",
+                "grit.rotated-mnist-oracle-pairs/v1",
+            )
+            if self.lineage.adjusted_weight_spec_digest is not None:
+                raise ValueError("RotatedMNIST search cannot carry Waterbirds weights")
         else:
             expected_versions = (
                 "grit.waterbirds-cf-dataset/v2",
@@ -466,8 +505,8 @@ class OutputSchemaVersion(StrictBoundaryModel):
 
 class SearchPlan(StrictBoundaryModel):
     schema_version: Literal["grit.search-plan/v1"]
-    protocol_id: Literal["cmnist/v1", "waterbirds_cf/v1"]
-    dataset: Literal["cmnist", "waterbirds_cf"]
+    protocol_id: Literal["cmnist/v1", "waterbirds_cf/v1", "rotated_mnist/v1"]
+    dataset: Literal["cmnist", "waterbirds_cf", "rotated_mnist"]
     experiment_name: NonEmptyStr
     experiment_variant: Literal["primary_unnormalized", "l2_normalized_sensitivity"]
     normalization: Normalization
@@ -598,6 +637,10 @@ def resolve_production_search_config(
         lineage, artifacts = _verify_cmnist_artifacts(
             validated, dataset_path, feature_path, pair_path
         )
+    elif isinstance(validated, RotatedMnistProductionSearchConfig):
+        lineage, artifacts = _verify_rotated_mnist_artifacts(
+            validated, dataset_path, feature_path, pair_path
+        )
     else:
         lineage, artifacts = _verify_waterbirds_artifacts(
             validated, dataset_path, feature_path, pair_path
@@ -660,14 +703,9 @@ def _expected_run_counts(config: ProductionSearchConfig) -> ExpectedRunCounts:
     final_seed_count = len(config.seeds.stages.final)
     return ExpectedRunCounts(
         tuning=candidate_count * len(config.seeds.stages.tuning),
-        confirmation_minimum=(
-            method_count * FINALIST_COUNT * confirmation_seed_count
-        ),
+        confirmation_minimum=(method_count * FINALIST_COUNT * confirmation_seed_count),
         confirmation_maximum=(
-            method_count
-            * selector_count
-            * FINALIST_COUNT
-            * confirmation_seed_count
+            method_count * selector_count * FINALIST_COUNT * confirmation_seed_count
         ),
         final=method_count * selector_count * final_seed_count,
     )
@@ -711,6 +749,36 @@ def _expected_output_schemas(
                 if "erm" in config.search_space.methods
                 and "grit" in config.search_space.methods
                 else ()
+            ),
+        )
+    elif isinstance(config, RotatedMnistProductionSearchConfig):
+        dataset_specific = (
+            OutputSchemaVersion(
+                artifact_kind="stage_run",
+                schema_version="grit.rotated-mnist-search-stage-run/v1",
+            ),
+            OutputSchemaVersion(
+                artifact_kind="final_result", schema_version="grit.run-result/v1"
+            ),
+            OutputSchemaVersion(
+                artifact_kind="tuning_finalists",
+                schema_version="grit.rotated-mnist-tuning-finalists/v1",
+            ),
+            OutputSchemaVersion(
+                artifact_kind="finalist_union",
+                schema_version="grit.rotated-mnist-finalist-union/v1",
+            ),
+            OutputSchemaVersion(
+                artifact_kind="frozen_candidate",
+                schema_version="grit.rotated-mnist-frozen-candidate/v1",
+            ),
+            OutputSchemaVersion(
+                artifact_kind="production_summary",
+                schema_version="grit.rotated-mnist-production-summary/v1",
+            ),
+            OutputSchemaVersion(
+                artifact_kind="paired_summary",
+                schema_version="grit.rotated-mnist-paired-summary/v1",
             ),
         )
     else:
@@ -845,9 +913,9 @@ def _candidate_grid(
     candidates: list[SearchCandidate] = []
     for method in config.search_space.methods:
         if method == "erm":
-            settings: tuple[
-                tuple[int | None, float | None, float | None], ...
-            ] = ((None, None, None),)
+            settings: tuple[tuple[int | None, float | None, float | None], ...] = (
+                (None, None, None),
+            )
         elif method == "grit":
             settings = tuple(
                 (int(rank), None, None)
@@ -1042,20 +1110,94 @@ def _candidate_scientific_digest(
             projection=projection,
             algorithm=algorithm,
             training=training,
-            runtime=CpuRuntimeConfig(
-                device="cpu", deterministic_algorithms=True
-            ),
+            runtime=CpuRuntimeConfig(device="cpu", deterministic_algorithms=True),
             seed_sets=config.seeds.stages,
             artifact_lineage=CmnistArtifactLineageConfig(
                 dataset_manifest_digest=lineage.dataset_manifest_digest,
                 feature_cache_manifest_digest=lineage.feature_cache_manifest_digest,
                 pair_manifest_digest=pair_digest,
             ),
-            selection=OrdinarySelectionConfig(
-                selector=CmnistSelector.PRIMARY_ROBUST
-            ),
+            selection=OrdinarySelectionConfig(selector=CmnistSelector.PRIMARY_ROBUST),
         )
         return candidate.scientific_config_digest()
+    if isinstance(config, RotatedMnistProductionSearchConfig):
+        rotated_pairs: DisabledPairsConfig | RotatedMnistOraclePairsConfig
+        rotated_projection: DisabledProjectionConfig | LinearProjectionConfig
+        rotated_algorithm: ErmAlgorithmConfig | GritAlgorithmConfig
+        rotated_pair_digest: str | None
+        if method == "erm":
+            rotated_pairs = DisabledPairsConfig(kind="disabled")
+            rotated_projection = DisabledProjectionConfig(kind="disabled")
+            rotated_algorithm = ErmAlgorithmConfig(kind="erm")
+            rotated_pair_digest = None
+        elif method == "grit":
+            if requested_rank is None:
+                raise AssertionError("planned RotatedMNIST GRIT candidate lacks a rank")
+            rotated_pairs = RotatedMnistOraclePairsConfig(
+                kind="oracle",
+                construction_id="rotated-mnist-exact-source-oracle-pairs-v1",
+                source_partition_ids=("train_r0_sources", "train_r45_sources"),
+                pair_count=config.pair_count,
+                pair_seed=config.seeds.pairs,
+                orientation="rotation_0_minus_45",
+            )
+            rotated_projection = LinearProjectionConfig(
+                kind="linear_pair_difference",
+                requested_rank=requested_rank,
+                center_differences=False,
+                relative_singular_value_tolerance=(
+                    config.relative_singular_value_tolerance
+                ),
+            )
+            rotated_algorithm = GritAlgorithmConfig(kind="grit")
+            rotated_pair_digest = lineage.pair_manifest_digest
+        else:
+            raise AssertionError(
+                f"RotatedMNIST config materializer is missing method {method}"
+            )
+        rotated_candidate = RotatedMnistExperimentConfig(
+            schema_version="grit.experiment/v1",
+            run_kind="rotated_mnist_ordinary",
+            experiment_name=config.experiment_name,
+            protocol_id="rotated_mnist/v1",
+            reportable=True,
+            dataset=RotatedMnistDatasetConfig(
+                dataset_id="rotated_mnist",
+                construction_method_id="rotated-mnist-stratified-hash-v1",
+                construction_seed=config.seeds.construction,
+                source_counts=RotatedMnistSourceCounts(
+                    train_r0=25_000,
+                    train_r45=25_000,
+                    validation=10_000,
+                    test=10_000,
+                ),
+                training_split_names=("train_r0", "train_r45"),
+                validation_split_names=("val_r0", "val_r45", "val_r60"),
+                final_test_split_name="test_r90",
+            ),
+            representation=FrozenFeatureConfig(
+                kind="frozen_features",
+                encoder_id="openai-clip-vit-b32",
+                encoder_revision=OPENAI_CLIP_REVISION,
+                weights_identity=OPENAI_CLIP_WEIGHTS_IDENTITY,
+                preprocessing_identity=OPENAI_CLIP_PREPROCESSING_ID,
+                feature_dimension=512,
+                normalization=config.normalization,
+            ),
+            pairs=rotated_pairs,
+            projection=rotated_projection,
+            algorithm=rotated_algorithm,
+            training=training,
+            runtime=CpuRuntimeConfig(device="cpu", deterministic_algorithms=True),
+            seed_sets=config.seeds.stages,
+            artifact_lineage=RotatedMnistArtifactLineageConfig(
+                dataset_manifest_digest=lineage.dataset_manifest_digest,
+                feature_cache_manifest_digest=lineage.feature_cache_manifest_digest,
+                pair_manifest_digest=rotated_pair_digest,
+            ),
+            selection=OrdinarySelectionConfig(selector=CmnistSelector.PRIMARY_ROBUST),
+        )
+        return rotated_candidate.scientific_config_digest()
     projection_digest = None
     pair_digest = None
     tolerance: float | None = None
@@ -1124,9 +1266,7 @@ def _verify_cmnist_artifacts(
     SearchLineage,
     tuple[VerifiedInputArtifact, VerifiedInputArtifact, VerifiedInputArtifact],
 ]:
-    dataset = CmnistDatasetManifest.model_validate_json(
-        _read_manifest(dataset_path)
-    )
+    dataset = CmnistDatasetManifest.model_validate_json(_read_manifest(dataset_path))
     feature = CmnistFeatureCacheManifest.model_validate_json(
         _read_manifest(feature_path)
     )
@@ -1139,13 +1279,11 @@ def _verify_cmnist_artifacts(
         10_000,
     ) or float(dataset.label_flip_prob) != 0.25:
         raise ValueError("production CMNIST search requires the canonical dataset")
-    partitions = {
-        item.name: item for item in dataset.partition_manifest.partitions
-    }
-    training_universe = set(
-        partitions["train_e01_sources"].source_indices
-    ) | set(partitions["train_e02_sources"].source_indices) | set(
-        partitions["validation_sources"].source_indices
+    partitions = {item.name: item for item in dataset.partition_manifest.partitions}
+    training_universe = (
+        set(partitions["train_e01_sources"].source_indices)
+        | set(partitions["train_e02_sources"].source_indices)
+        | set(partitions["validation_sources"].source_indices)
     )
     if training_universe != set(range(60_000)) or set(
         partitions["test_sources"].source_indices
@@ -1176,6 +1314,83 @@ def _verify_cmnist_artifacts(
         )
     _require_official_clip(feature.encoder)
     _validate_cmnist_feature_manifest(dataset, pairs, feature, feature_path.parent)
+    return (
+        SearchLineage(
+            dataset_manifest_digest=dataset_digest,
+            feature_cache_manifest_digest=feature.canonical_digest(),
+            pair_manifest_digest=pair_digest,
+            normalization=config.normalization,
+            adjusted_weight_spec_digest=None,
+        ),
+        _artifact_records(
+            dataset_path, dataset, feature_path, feature, pair_path, pairs
+        ),
+    )
+
+
+def _verify_rotated_mnist_artifacts(
+    config: RotatedMnistProductionSearchConfig,
+    dataset_path: Path,
+    feature_path: Path,
+    pair_path: Path,
+) -> tuple[
+    SearchLineage,
+    tuple[VerifiedInputArtifact, VerifiedInputArtifact, VerifiedInputArtifact],
+]:
+    dataset = RotatedMnistDatasetManifest.model_validate_json(
+        _read_manifest(dataset_path)
+    )
+    feature = RotatedMnistFeatureCacheManifest.model_validate_json(
+        _read_manifest(feature_path)
+    )
+    pairs = RotatedMnistOraclePairManifest.model_validate_json(
+        _read_manifest(pair_path)
+    )
+    targets = dataset.partition_manifest.targets
+    if (targets.train_r0, targets.train_r45, targets.validation, targets.test) != (
+        25_000,
+        25_000,
+        10_000,
+        10_000,
+    ):
+        raise ValueError("production RotatedMNIST requires canonical source counts")
+    partitions = {
+        partition.name: partition for partition in dataset.partition_manifest.partitions
+    }
+    train_universe = {
+        index
+        for name in ("train_r0_sources", "train_r45_sources", "validation_sources")
+        for index in partitions[name].source_indices
+    }
+    if train_universe != set(range(60_000)) or set(
+        partitions["test_sources"].source_indices
+    ) != set(range(10_000)):
+        raise ValueError("RotatedMNIST source universes are not official MNIST")
+    if dataset.construction_seed != config.seeds.construction:
+        raise ValueError("RotatedMNIST construction seed does not match")
+    dataset_digest = dataset.canonical_digest()
+    pair_digest = pairs.canonical_digest()
+    if (
+        pairs.dataset_manifest_digest != dataset_digest
+        or pairs.pair_seed != config.seeds.pairs
+    ):
+        raise ValueError("RotatedMNIST pair lineage is inconsistent")
+    if pairs.realized_count < config.pair_count:
+        raise ValueError(
+            f"config asks for {config.pair_count} oracle pairs but the prepared bank "
+            f"holds {pairs.realized_count}; rerun scripts/prepare_rotated_mnist.py "
+            f"--pair-count {config.pair_count}"
+        )
+    if (
+        feature.source_manifest_digest != dataset_digest
+        or feature.pair_manifest_digest != pair_digest
+        or feature.normalization != config.normalization
+    ):
+        raise ValueError("RotatedMNIST feature lineage is inconsistent")
+    _require_official_clip(feature.encoder)
+    _validate_rotated_mnist_feature_manifest(
+        dataset, pairs, feature, feature_path.parent
+    )
     return (
         SearchLineage(
             dataset_manifest_digest=dataset_digest,
@@ -1258,14 +1473,22 @@ def _validate_cmnist_feature_manifest(
     feature: CmnistFeatureCacheManifest,
     feature_root: Path,
 ) -> None:
-    expected_counts = (25_000, 25_000, 10_000, 10_000, 10_000, 10_000, 256, 256)
+    expected_counts = (
+        25_000,
+        25_000,
+        10_000,
+        10_000,
+        10_000,
+        10_000,
+        pairs.realized_count,
+        pairs.realized_count,
+    )
     if tuple(table.row_count for table in feature.tables) != expected_counts:
         raise ValueError(
             "production CMNIST feature-cache table counts are inconsistent"
         )
     partitions = {
-        partition.name: partition
-        for partition in dataset.partition_manifest.partitions
+        partition.name: partition for partition in dataset.partition_manifest.partitions
     }
     expected_environment_sources: dict[str, tuple[str, ...]] = {}
     for spec, environment in zip(
@@ -1349,6 +1572,68 @@ def _validate_waterbirds_feature_manifest(
     )
 
 
+def _validate_rotated_mnist_feature_manifest(
+    dataset: RotatedMnistDatasetManifest,
+    pairs: RotatedMnistOraclePairManifest,
+    feature: RotatedMnistFeatureCacheManifest,
+    feature_root: Path,
+) -> None:
+    expected_counts = (25_000, 25_000, 10_000, 10_000, 10_000, 10_000, 256, 256)
+    if tuple(table.row_count for table in feature.tables) != expected_counts:
+        raise ValueError("RotatedMNIST feature table counts are inconsistent")
+    partitions = {
+        partition.name: partition for partition in dataset.partition_manifest.partitions
+    }
+    expected_sources: dict[str, tuple[str, ...]] = {}
+    for spec, environment in zip(
+        ROTATED_MNIST_ENVIRONMENT_SPECS, dataset.environments, strict=True
+    ):
+        partition = partitions[spec.source_partition_id]
+        source_ids = tuple(
+            f"mnist:{partition.official_split}:{index}"
+            for index in partition.source_indices
+        )
+        if (
+            environment.name != spec.name
+            or environment.role != spec.role
+            or environment.source_partition_id != spec.source_partition_id
+            or environment.angle_degrees != spec.angle_degrees
+            or environment.count != len(source_ids)
+            or environment.source_membership_digest
+            != canonical_digest_value(source_ids)
+        ):
+            raise ValueError("RotatedMNIST environment lineage is inconsistent")
+        expected_sources[spec.name] = source_ids
+    for table in feature.tables[:6]:
+        if table.source_ids != expected_sources[table.table_name]:
+            raise ValueError("RotatedMNIST feature source lineage is inconsistent")
+    pair_sources = tuple(record.source_id for record in pairs.records)
+    if (
+        feature.tables[6].source_ids != pair_sources
+        or feature.tables[7].source_ids != pair_sources
+    ):
+        raise ValueError("RotatedMNIST feature pairs do not match pair manifest")
+    training_by_partition = {
+        name: set(partitions[name].source_indices)
+        for name in ("train_r0_sources", "train_r45_sources")
+    }
+    if any(
+        record.official_source_index
+        not in training_by_partition[record.source_partition_id]
+        or record.source_id != f"mnist:train:{record.official_source_index}"
+        for record in pairs.records
+    ):
+        raise ValueError("RotatedMNIST oracle pairs are outside training partitions")
+    _verify_referenced_files(
+        feature_root,
+        tuple(
+            (file.relative_path, file.sha256)
+            for table in feature.tables
+            for file in table.files
+        ),
+    )
+
+
 def _require_official_clip(identity: EncoderIdentity) -> None:
     observed = (
         identity.implementation,
@@ -1372,11 +1657,21 @@ def _require_official_clip(identity: EncoderIdentity) -> None:
 
 def _artifact_records(
     dataset_path: Path,
-    dataset: CmnistDatasetManifest | WaterbirdsDatasetManifest,
+    dataset: (
+        CmnistDatasetManifest | WaterbirdsDatasetManifest | RotatedMnistDatasetManifest
+    ),
     feature_path: Path,
-    feature: CmnistFeatureCacheManifest | WaterbirdsFeatureCacheManifest,
+    feature: (
+        CmnistFeatureCacheManifest
+        | WaterbirdsFeatureCacheManifest
+        | RotatedMnistFeatureCacheManifest
+    ),
     pair_path: Path,
-    pairs: CmnistOraclePairManifest | WaterbirdsOraclePairManifest,
+    pairs: (
+        CmnistOraclePairManifest
+        | WaterbirdsOraclePairManifest
+        | RotatedMnistOraclePairManifest
+    ),
 ) -> tuple[VerifiedInputArtifact, VerifiedInputArtifact, VerifiedInputArtifact]:
     return (
         VerifiedInputArtifact(

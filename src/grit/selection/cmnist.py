@@ -1,4 +1,4 @@
-"""Validation-only selection contracts for the CMNIST contract spine."""
+"""Validation-only selection contracts for repeated-view linear-probe studies."""
 
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ class ValidationMetricRecord(_MetricIdentity):
 
     metric_kind: Literal["validation"]
     seed_stage: SeedStage
-    split_name: Literal["val_e01", "val_e02", "val_e05"]
+    split_name: Literal["val_e01", "val_e02", "val_e05", "val_r0", "val_r45", "val_r60"]
     metric_name: Literal["accuracy"]
     projection_rank: NonNegativeInt | None
 
@@ -49,7 +49,7 @@ class ValidationMetricRecord(_MetricIdentity):
 class FinalTestMetricRecord(_MetricIdentity):
     metric_kind: Literal["final_test"]
     seed_stage: Literal[SeedStage.FINAL]
-    split_name: Literal["test_ood"]
+    split_name: Literal["test_ood", "test_r90"]
     metric_name: Literal["accuracy"]
 
 
@@ -152,9 +152,10 @@ class CandidateSelectionDecision(StrictBoundaryModel):
 class TuningFinalistsArtifact(StrictBoundaryModel):
     """Durable ordered top three for one method and ordinary selector."""
 
-    schema_version: Literal["grit.cmnist-tuning-finalists/v1"] = (
-        "grit.cmnist-tuning-finalists/v1"
-    )
+    schema_version: Literal[
+        "grit.cmnist-tuning-finalists/v1",
+        "grit.rotated-mnist-tuning-finalists/v1",
+    ] = "grit.cmnist-tuning-finalists/v1"
     artifact_id: NonEmptyStr
     selector: CmnistSelector
     method_id: NonEmptyStr
@@ -194,9 +195,10 @@ class TuningFinalistsArtifact(StrictBoundaryModel):
 
 
 class FrozenCandidateSelection(StrictBoundaryModel):
-    schema_version: Literal["grit.cmnist-frozen-candidate/v1"] = (
-        "grit.cmnist-frozen-candidate/v1"
-    )
+    schema_version: Literal[
+        "grit.cmnist-frozen-candidate/v1",
+        "grit.rotated-mnist-frozen-candidate/v1",
+    ] = "grit.cmnist-frozen-candidate/v1"
     frozen_selection_id: NonEmptyStr
     selector: CmnistSelector
     method_id: NonEmptyStr
@@ -282,9 +284,10 @@ class FrozenCheckpointSelection(StrictBoundaryModel):
 class FinalistUnion(StrictBoundaryModel):
     """Primary/secondary top sets confirmed once without merging their winners."""
 
-    schema_version: Literal["grit.cmnist-finalist-union/v1"] = (
-        "grit.cmnist-finalist-union/v1"
-    )
+    schema_version: Literal[
+        "grit.cmnist-finalist-union/v1",
+        "grit.rotated-mnist-finalist-union/v1",
+    ] = "grit.cmnist-finalist-union/v1"
     method_id: NonEmptyStr
     primary: TuningFinalistsArtifact
     secondary: TuningFinalistsArtifact
@@ -505,10 +508,24 @@ def select_test_oracle(
     )
 
 
-def _selector_splits(selector: CmnistSelector) -> tuple[str, ...]:
-    if selector is CmnistSelector.PRIMARY_ROBUST:
-        return ("val_e01", "val_e02", "val_e05")
-    return ("val_e01", "val_e02")
+def _selector_splits(
+    selector: CmnistSelector, observed_splits: set[str]
+) -> tuple[str, ...]:
+    cmnist = {"val_e01", "val_e02", "val_e05"}
+    rotated = {"val_r0", "val_r45", "val_r60"}
+    if observed_splits <= cmnist:
+        return (
+            ("val_e01", "val_e02", "val_e05")
+            if selector is CmnistSelector.PRIMARY_ROBUST
+            else ("val_e01", "val_e02")
+        )
+    if observed_splits <= rotated:
+        return (
+            ("val_r0", "val_r45", "val_r60")
+            if selector is CmnistSelector.PRIMARY_ROBUST
+            else ("val_r0", "val_r45")
+        )
+    raise ValueError("validation records mix or use unsupported split namespaces")
 
 
 def _checkpoint_sort_key(
@@ -561,7 +578,9 @@ def select_checkpoint(
     for record in validation_records:
         grouped[record.checkpoint_id].append(record)
 
-    required_splits = _selector_splits(selector)
+    required_splits = _selector_splits(
+        selector, {record.split_name for record in validation_records}
+    )
     candidates: list[
         tuple[CheckpointIdentity, float, float, int | None, tuple[str, ...]]
     ] = []
@@ -744,8 +763,7 @@ def select_confirmed_candidate(
         raise ValueError("finalist artifact tuning seeds do not match configuration")
     validation_records = _require_validation_records(confirmation_records)
     if any(
-        record.seed_stage is not SeedStage.CONFIRMATION
-        for record in validation_records
+        record.seed_stage is not SeedStage.CONFIRMATION for record in validation_records
     ):
         raise ValueError(
             "confirmation comparison accepts confirmation-stage records only"
@@ -765,8 +783,7 @@ def select_confirmed_candidate(
     ):
         raise ValueError("confirmation records do not match finalist method")
     expected_confirmation = {
-        (SeedStage.CONFIRMATION, seed)
-        for seed in validated_seed_sets.confirmation
+        (SeedStage.CONFIRMATION, seed) for seed in validated_seed_sets.confirmation
     }
     confirmation_decisions = _rank_candidates_for_seed_keys(
         validation_records,
@@ -779,8 +796,7 @@ def select_confirmed_candidate(
         if (
             confirmation_decision.scientific_config_digest
             != tuning_decision.scientific_config_digest
-            or confirmation_decision.projection_rank
-            != tuning_decision.projection_rank
+            or confirmation_decision.projection_rank != tuning_decision.projection_rank
         ):
             raise ValueError(
                 "confirmation candidate identity does not match tuning finalist"
@@ -805,8 +821,7 @@ def select_confirmed_candidate(
                     for decision in contributing_decisions
                 ),
                 mean_accuracy=fmean(
-                    float(decision.mean_accuracy)
-                    for decision in contributing_decisions
+                    float(decision.mean_accuracy) for decision in contributing_decisions
                 ),
                 projection_rank=tuning_decision.projection_rank,
                 contributing_checkpoint_decisions=contributing_decisions,

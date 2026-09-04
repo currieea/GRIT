@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal, cast
+
 from pydantic import FiniteFloat, PositiveInt
 
 from grit.data.views import FinalTestHandle, FinalTestView
@@ -47,6 +49,6 @@ def record_final_accuracy(
         sample_count=sample_count,
         metric_kind="final_test",
         seed_stage=SeedStage.FINAL,
-        split_name="test_ood",
+        split_name=cast(Literal["test_ood", "test_r90"], view.descriptor.name),
         metric_name="accuracy",
     )

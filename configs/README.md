@@ -1,7 +1,8 @@
 # Experiment configurations
 
-- `cmnist/production-search.yaml` and `waterbirds/production-search.yaml`: the primary
-  unnormalized studies. Paths use `${PROJECT_SCRATCH}` so they run unmodified after
+- `cmnist/production-search.yaml`, `rotated_mnist/production-search.yaml`, and
+  `waterbirds/production-search.yaml`: the primary unnormalized studies. Paths use
+  `${PROJECT_SCRATCH}` so they run unmodified after
   `scratch-project`. Copy and edit for other machines or for the L2 sensitivity (which
   needs `--normalization l2` at prepare time, a separate artifact root, and
   `experiment_variant: l2_normalized_sensitivity`).

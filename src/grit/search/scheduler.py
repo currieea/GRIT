@@ -42,7 +42,7 @@ RunStage: TypeAlias = Literal[
 class FrozenWinnerReference(StrictBoundaryModel):
     """Shared scheduling reference to a dataset-specific validated winner."""
 
-    dataset: Literal["cmnist", "waterbirds_cf"]
+    dataset: Literal["cmnist", "waterbirds_cf", "rotated_mnist"]
     selector: NonEmptyStr
     method_id: MethodId
     candidate_id: NonEmptyStr
@@ -56,7 +56,7 @@ class SearchRunTask(StrictBoundaryModel):
 
     task_id: NonEmptyStr
     plan_digest: NonEmptyStr
-    dataset: Literal["cmnist", "waterbirds_cf"]
+    dataset: Literal["cmnist", "waterbirds_cf", "rotated_mnist"]
     lineage: SearchLineage
     candidate: SearchCandidate
     stage: RunStage
@@ -120,8 +120,11 @@ class SearchRunTask(StrictBoundaryModel):
 
 
 class CmnistCompletedStageRun(StrictBoundaryModel):
-    schema_version: Literal["grit.cmnist-search-stage-run/v1"]
-    dataset: Literal["cmnist"]
+    schema_version: Literal[
+        "grit.cmnist-search-stage-run/v1",
+        "grit.rotated-mnist-search-stage-run/v1",
+    ]
+    dataset: Literal["cmnist", "rotated_mnist"]
     status: Literal["complete"]
     task: SearchRunTask
     lineage: SearchLineage
@@ -135,8 +138,14 @@ class CmnistCompletedStageRun(StrictBoundaryModel):
 
     @model_validator(mode="after")
     def _validate_run(self) -> CmnistCompletedStageRun:
-        if self.task.dataset != "cmnist":
-            raise ValueError("CMNIST stage result has another dataset task")
+        if self.task.dataset != self.dataset:
+            raise ValueError("linear-probe stage result has another dataset task")
+        expected_schema = {
+            "cmnist": "grit.cmnist-search-stage-run/v1",
+            "rotated_mnist": "grit.rotated-mnist-search-stage-run/v1",
+        }[self.dataset]
+        if self.schema_version != expected_schema:
+            raise ValueError("linear-probe stage schema does not match its dataset")
         if self.lineage != self.task.lineage:
             raise ValueError("CMNIST stage result lineage does not match its task")
         if not self.validation_metrics or not self.checkpoint_decisions:
@@ -199,8 +208,7 @@ class CmnistCompletedStageRun(StrictBoundaryModel):
                 raise ValueError("CMNIST final result lacks its frozen candidate")
             if (
                 self.final_result_digest != result.canonical_digest()
-                or result.run_id
-                != self.checkpoint_decisions[0].checkpoint.run_id
+                or result.run_id != self.checkpoint_decisions[0].checkpoint.run_id
                 or selected_candidate.frozen_selection_id
                 != frozen_winner.frozen_selection_id
                 or result.resolved_config.scientific_config_digest()
@@ -344,7 +352,7 @@ def make_final_search_task(
         if frozen.method_id not in plan.methods:
             raise ValueError("CMNIST frozen winner has an unsupported method")
         reference = FrozenWinnerReference(
-            dataset="cmnist",
+            dataset=plan.dataset,
             selector=frozen.selector.value,
             method_id=frozen.method_id,
             candidate_id=frozen.candidate_id,
