@@ -26,6 +26,7 @@ from grit.features.waterbirds import (
 )
 from grit.methods.projection import FittedLinearProjection
 from grit.methods.training import (
+    OrdinaryLinearProbeMethod,
     PersistedLinearCheckpointStore,
     persist_selected_linear_checkpoint,
 )
@@ -36,6 +37,12 @@ from grit.methods.waterbirds_training import (
     train_waterbirds_linear_probe,
 )
 from grit.schemas import SeedStage
+from grit.search.lifecycle import (
+    ProductionLifecycleHooks,
+    ProductionStatusHooks,
+    production_lifecycle_status,
+    run_production_lifecycle,
+)
 from grit.search.outputs import (
     WaterbirdsPairedSummaryArtifact,
     WaterbirdsProductionMethodSummary,
@@ -51,15 +58,10 @@ from grit.search.plan import (
 from grit.search.run import (
     ProductionExecutionLimits,
     ProductionSearchStatus,
-    complete_outputs_valid,
-    limited_tuning_candidates,
     persist_canonical_artifact,
-    planned_candidate,
-    write_experiment_index,
 )
 from grit.search.scheduler import (
     CompletedStageRun,
-    LocalRunScheduler,
     SearchRunTask,
     StageExecutor,
     WaterbirdsCompletedStageRun,
@@ -115,23 +117,6 @@ def run_waterbirds_production_search(
     ):
         raise ValueError("Waterbirds adjusted weights changed after planning")
     projections: dict[int, FittedLinearProjection] = {}
-    scheduler = LocalRunScheduler(output_root, plan)
-    remaining = None if limits is None else limits.max_new_runs
-
-    def run_stage(
-        tasks: tuple[SearchRunTask, ...],
-        execute: StageExecutor,
-    ) -> tuple[CompletedStageRun, ...]:
-        nonlocal remaining
-        if limits is None:
-            return scheduler.run_tasks(tasks, execute)
-        allowance = len(tasks) if remaining is None else remaining
-        results, newly_executed = scheduler.run_tasks_bounded(
-            tasks, execute, max_new_runs=allowance
-        )
-        if remaining is not None:
-            remaining -= newly_executed
-        return results
 
     def runtime_candidate(candidate: SearchCandidate) -> _RuntimeCandidate:
         projection: FittedLinearProjection | None = None
@@ -175,159 +160,167 @@ def run_waterbirds_production_search(
             checkpoint_decision=decision,
         )
 
-    tuning_candidates = limited_tuning_candidates(plan, limits)
-    tuning_seeds = (
-        config.seeds.stages.tuning
-        if limits is None or limits.tuning_seed is None
-        else (limits.tuning_seed,)
-    )
-    tuning_tasks = tuple(
-        make_search_task(plan, candidate, SeedStage.TUNING, seed)
-        for candidate in tuning_candidates
-        for seed in tuning_seeds
-    )
-    tuning_runs = cast(
-        tuple[WaterbirdsCompletedStageRun, ...],
-        run_stage(tuning_tasks, execute_pre_final),
-    )
-    if limits is not None and (
-        limits.stop_after == "tuning" or len(tuning_runs) != len(tuning_tasks)
-    ):
-        return waterbirds_status_from_plan(plan)
-    finalists = _finalists(plan, tuning_runs, output_root)
     candidates_by_id = {item.candidate_id: item for item in plan.candidates}
-    confirmation_tasks = tuple(
-        make_search_task(
-            plan,
-            candidates_by_id[item.candidate_id],
-            SeedStage.CONFIRMATION,
-            seed,
-        )
-        for method in plan.methods
-        for item in finalists[method].ordered_candidates
-        for seed in config.seeds.stages.confirmation
-    )
-    confirmation_runs = cast(
-        tuple[WaterbirdsCompletedStageRun, ...],
-        run_stage(confirmation_tasks, execute_pre_final),
-    )
-    if limits is not None and len(confirmation_runs) != len(confirmation_tasks):
-        return waterbirds_status_from_plan(plan)
-    winners = _freeze_winners(
-        plan, finalists, confirmation_runs, output_root
-    )
-    if isinstance(cache, WaterbirdsTuningFeatureCache):
-        raise AssertionError("tuning-only Waterbirds execution reached final stage")
 
-    def execute_final(task: SearchRunTask, run_root: Path) -> CompletedStageRun:
-        frozen = winners[task.candidate.method_id]
-        runtime = runtime_candidate(task.candidate)
-        trained = _train_task(cache, weights, runtime, task)
-        decision = select_waterbirds_checkpoint(trained.validation_metrics)
-        frozen_checkpoint = freeze_waterbirds_final_checkpoint(decision, frozen)
-        selected = trained.store.load(frozen_checkpoint.checkpoint.checkpoint_id)
-        checkpoint_root = run_root / "selected-checkpoint"
-        checkpoint_manifest = persist_selected_linear_checkpoint(
-            selected, checkpoint_root
-        )
-        persisted = PersistedLinearCheckpointStore(checkpoint_root)
-        restoration = restore_waterbirds_checkpoint(
-            frozen_checkpoint, persisted, trained.algorithm
-        )
-        handle = cache.issue_final_handle(
-            run_id=trained.run_id,
-            candidate_id=task.candidate.candidate_id,
-            method_id=task.candidate.method_id,
-            scientific_config_digest=task.candidate.scientific_config_digest,
-            seed=task.seed,
-            projection_rank=task.candidate.requested_rank,
-        )
-        final_view = handle.open(frozen, frozen_checkpoint, restoration)
-        final_table = cache.verify_final_view(final_view)
-        predictions = trained.algorithm.predict(final_table.features)
-        from grit.selection.waterbirds import compute_waterbirds_final_metric
+    def coerce_runs(
+        runs: tuple[CompletedStageRun, ...],
+    ) -> tuple[WaterbirdsCompletedStageRun, ...]:
+        if any(not isinstance(run, WaterbirdsCompletedStageRun) for run in runs):
+            raise ValueError("Waterbirds lifecycle received another dataset result")
+        return cast(tuple[WaterbirdsCompletedStageRun, ...], runs)
 
-        final_metric = compute_waterbirds_final_metric(
-            final_view,
-            predictions,
-            adjusted_weights=weights,
-            record_id=f"metric:{trained.run_id}:test",
-        )
-        result = WaterbirdsRunResult(
-            schema_version="grit.waterbirds-run-result/v2",
-            result_kind="ordinary_waterbirds",
-            status="succeeded",
-            run_id=trained.run_id,
-            final_seed=task.seed,
-            resolved_config=runtime.config,
-            resolved_config_digest=runtime.config.canonical_digest(),
-            code=current_code_provenance(),
-            environment=current_environment_provenance(),
-            validation_metrics=trained.validation_metrics,
-            candidate_selection=frozen,
-            checkpoint_selection=frozen_checkpoint,
-            restoration=restoration,
-            final_test_metric=final_metric,
-            selected_checkpoint_manifest_digest=(
-                checkpoint_manifest.canonical_digest()
-            ),
-            artifacts=_result_artifacts(
+    def confirmation_tasks(
+        finalists: dict[WaterbirdsMethod, WaterbirdsTuningFinalists],
+    ) -> tuple[SearchRunTask, ...]:
+        return tuple(
+            make_search_task(
                 plan,
-                task,
-                checkpoint_manifest.canonical_digest(),
-                runtime,
-                frozen_checkpoint.checkpoint,
+                candidates_by_id[item.candidate_id],
+                SeedStage.CONFIRMATION,
+                seed,
+            )
+            for method in plan.methods
+            for item in finalists[method].ordered_candidates
+            for seed in config.seeds.stages.confirmation
+        )
+
+    def make_winners(
+        finalists: dict[WaterbirdsMethod, WaterbirdsTuningFinalists],
+        runs: tuple[WaterbirdsCompletedStageRun, ...],
+        root: Path,
+    ) -> dict[WaterbirdsMethod, FrozenWaterbirdsCandidate]:
+        return _freeze_winners(plan, finalists, runs, root)
+
+    def final_tasks(
+        winners: dict[WaterbirdsMethod, FrozenWaterbirdsCandidate],
+    ) -> tuple[SearchRunTask, ...]:
+        return tuple(
+            make_final_search_task(
+                plan,
+                candidates_by_id[winners[method].candidate_id],
+                seed,
+                winners[method],
+            )
+            for method in plan.methods
+            for seed in config.seeds.stages.final
+        )
+
+    def final_executor(
+        winners: dict[WaterbirdsMethod, FrozenWaterbirdsCandidate],
+    ) -> StageExecutor:
+        if isinstance(cache, WaterbirdsTuningFeatureCache):
+            raise AssertionError("tuning-only Waterbirds execution reached final stage")
+        full_cache = cache
+
+        def execute_final(task: SearchRunTask, run_root: Path) -> CompletedStageRun:
+            frozen = winners[task.candidate.method_id]
+            runtime = runtime_candidate(task.candidate)
+            trained = _train_task(full_cache, weights, runtime, task)
+            decision = select_waterbirds_checkpoint(trained.validation_metrics)
+            frozen_checkpoint = freeze_waterbirds_final_checkpoint(decision, frozen)
+            selected = trained.store.load(frozen_checkpoint.checkpoint.checkpoint_id)
+            checkpoint_root = run_root / "selected-checkpoint"
+            checkpoint_manifest = persist_selected_linear_checkpoint(
+                selected, checkpoint_root
+            )
+            persisted = PersistedLinearCheckpointStore(checkpoint_root)
+            restoration = restore_waterbirds_checkpoint(
+                frozen_checkpoint, persisted, trained.algorithm
+            )
+            handle = full_cache.issue_final_handle(
+                run_id=trained.run_id,
+                candidate_id=task.candidate.candidate_id,
+                method_id=task.candidate.method_id,
+                scientific_config_digest=task.candidate.scientific_config_digest,
+                seed=task.seed,
+                projection_rank=task.candidate.requested_rank,
+            )
+            final_view = handle.open(frozen, frozen_checkpoint, restoration)
+            final_table = full_cache.verify_final_view(final_view)
+            predictions = trained.algorithm.predict(final_table.features)
+            from grit.selection.waterbirds import compute_waterbirds_final_metric
+
+            final_metric = compute_waterbirds_final_metric(
+                final_view,
+                predictions,
+                adjusted_weights=weights,
+                record_id=f"metric:{trained.run_id}:test",
+            )
+            result = WaterbirdsRunResult(
+                schema_version="grit.waterbirds-run-result/v2",
+                result_kind="ordinary_waterbirds",
+                status="succeeded",
+                run_id=trained.run_id,
+                final_seed=task.seed,
+                resolved_config=runtime.config,
+                resolved_config_digest=runtime.config.canonical_digest(),
+                code=current_code_provenance(),
+                environment=current_environment_provenance(),
+                validation_metrics=trained.validation_metrics,
+                candidate_selection=frozen,
+                checkpoint_selection=frozen_checkpoint,
+                restoration=restoration,
+                final_test_metric=final_metric,
+                selected_checkpoint_manifest_digest=(
+                    checkpoint_manifest.canonical_digest()
+                ),
+                artifacts=_result_artifacts(
+                    plan,
+                    task,
+                    checkpoint_manifest.canonical_digest(),
+                    runtime,
+                    frozen_checkpoint.checkpoint,
+                ),
+            )
+            persist_canonical_artifact(run_root / "final-result.json", result)
+            completed = WaterbirdsCompletedStageRun(
+                schema_version="grit.waterbirds-search-stage-run/v1",
+                dataset="waterbirds_cf",
+                status="complete",
+                task=task,
+                lineage=plan.resolved_config.lineage,
+                code=current_code_provenance(),
+                environment=current_environment_provenance(),
+                validation_metrics=trained.validation_metrics,
+                checkpoint_decision=decision,
+                final_result_relative_path="final-result.json",
+                final_result_digest=result.canonical_digest(),
+                final_result=result,
+            )
+            persist_canonical_artifact(run_root / "result.json", completed)
+            return completed
+
+        return execute_final
+
+    def persist_summary(summary: WaterbirdsProductionSummary, root: Path) -> None:
+        persist_canonical_artifact(
+            root / "summaries" / "waterbirds-summary.json", summary
+        )
+        persist_canonical_artifact(
+            root / "summaries" / "waterbirds-paired-differences.json",
+            WaterbirdsPairedSummaryArtifact(
+                schema_version="grit.waterbirds-paired-summary/v1",
+                configured_final_seeds=plan.seeds.stages.final,
+                paired_worst_group_by_seed=summary.paired_worst_group_by_seed,
+                paired_worst_group_summary=summary.paired_worst_group_summary,
             ),
         )
-        persist_canonical_artifact(run_root / "final-result.json", result)
-        completed = WaterbirdsCompletedStageRun(
-            schema_version="grit.waterbirds-search-stage-run/v1",
-            dataset="waterbirds_cf",
-            status="complete",
-            task=task,
-            lineage=plan.resolved_config.lineage,
-            code=current_code_provenance(),
-            environment=current_environment_provenance(),
-            validation_metrics=trained.validation_metrics,
-            checkpoint_decision=decision,
-            final_result_relative_path="final-result.json",
-            final_result_digest=result.canonical_digest(),
-            final_result=result,
-        )
-        persist_canonical_artifact(run_root / "result.json", completed)
-        return completed
 
-    final_tasks = tuple(
-        make_final_search_task(
-            plan,
-            candidates_by_id[winners[method].candidate_id],
-            seed,
-            winners[method],
-        )
-        for method in plan.methods
-        for seed in config.seeds.stages.final
-    )
-    final_runs = cast(
-        tuple[WaterbirdsCompletedStageRun, ...],
-        run_stage(final_tasks, execute_final),
-    )
-    if limits is not None:
-        return waterbirds_status_from_plan(plan)
-    summary = _summary(plan, finalists, winners, final_runs)
-    persist_canonical_artifact(
-        output_root / "summaries" / "waterbirds-summary.json", summary
-    )
-    persist_canonical_artifact(
-        output_root / "summaries" / "waterbirds-paired-differences.json",
-        WaterbirdsPairedSummaryArtifact(
-            schema_version="grit.waterbirds-paired-summary/v1",
-            configured_final_seeds=plan.seeds.stages.final,
-            paired_worst_group_by_seed=summary.paired_worst_group_by_seed,
-            paired_worst_group_summary=summary.paired_worst_group_summary,
+    hooks = ProductionLifecycleHooks(
+        coerce_runs=coerce_runs,
+        execute_pre_final=execute_pre_final,
+        make_finalists=lambda runs, root: _finalists(plan, runs, root),
+        confirmation_tasks=confirmation_tasks,
+        make_winners=make_winners,
+        final_tasks=final_tasks,
+        final_executor=final_executor,
+        make_summary=lambda finalists, winners, runs: _summary(
+            plan, finalists, winners, runs
         ),
+        persist_summary=persist_summary,
+        status=lambda: waterbirds_status_from_plan(plan),
     )
-    write_experiment_index(plan, output_root)
-    return summary
+    return run_production_lifecycle(plan, limits, hooks)
 
 
 def _finalists(
@@ -462,12 +455,14 @@ def _train_task(
         runtime.config.training,
         run_id=f"run:{task.task_id}",
         candidate_id=task.candidate.candidate_id,
-        method_id=task.candidate.method_id,
         scientific_config_digest=task.candidate.scientific_config_digest,
         seed_stage=task.stage,
         seed=task.seed,
-        projection=runtime.projection,
-        projection_rank=task.candidate.requested_rank,
+        method=OrdinaryLinearProbeMethod(
+            method_id=task.candidate.method_id,
+            projection=runtime.projection,
+            projection_rank=task.candidate.requested_rank,
+        ),
     )
 
 
@@ -694,162 +689,95 @@ def _search_config(plan: SearchPlan) -> WaterbirdsProductionSearchConfig:
 
 
 def waterbirds_status_from_plan(plan: SearchPlan) -> ProductionSearchStatus:
-    config = plan.resolved_config.config
-    if not isinstance(config, WaterbirdsProductionSearchConfig):
-        raise TypeError("Waterbirds status received another dataset")
-    scheduler = LocalRunScheduler(Path(plan.resolved_config.output_root), plan)
-    tuning = tuple(
-        make_search_task(plan, candidate, SeedStage.TUNING, seed)
-        for candidate in plan.candidates
-        for seed in config.seeds.stages.tuning
-    )
-    status = scheduler.status(tuning)
-    tuning_complete = len(status.complete_task_ids)
-    if tuning_complete != len(tuning):
-        return ProductionSearchStatus(
-            schema_version="grit.production-search-status/v1",
-            dataset="waterbirds_cf",
-            plan_digest=plan.canonical_digest(),
-            phase="tuning",
-            tuning_expected=len(tuning),
-            tuning_complete=tuning_complete,
-            confirmation_expected=0,
-            confirmation_complete=0,
-            frozen_winner_count=0,
-            final_expected=0,
-            final_complete=0,
-        )
-    tuning_runs_untyped = scheduler.completed_results(tuning)
-    if any(
-        not isinstance(run, WaterbirdsCompletedStageRun)
-        for run in tuning_runs_untyped
-    ):
-        raise ValueError("Waterbirds tuning stage contains another dataset result")
-    tuning_runs = cast(
-        tuple[WaterbirdsCompletedStageRun, ...], tuning_runs_untyped
-    )
-    expected_finalists = compute_waterbirds_finalists(plan, tuning_runs)
-    root = Path(plan.resolved_config.output_root)
-    finalist_count = 0
-    for method in plan.methods:
-        path = root / "selection" / method / "tuning-finalists.json"
-        if not path.exists():
-            continue
-        finalist_count += 1
-        observed = WaterbirdsTuningFinalists.model_validate_json(
-            path.read_text(encoding="utf-8")
-        )
-        if observed != expected_finalists[method]:
-            raise ValueError(
-                "Waterbirds finalist artifact does not match canonical tuning "
-                f"results: {path}"
-            )
-    if finalist_count != len(plan.methods):
-        return ProductionSearchStatus(
-            schema_version="grit.production-search-status/v1",
-            dataset="waterbirds_cf",
-            plan_digest=plan.canonical_digest(),
-            phase="confirmation",
-            tuning_expected=len(tuning),
-            tuning_complete=tuning_complete,
-            confirmation_expected=0,
-            confirmation_complete=0,
-            frozen_winner_count=0,
-            final_expected=0,
-            final_complete=0,
-        )
+    config = _search_config(plan)
     by_id = {item.candidate_id: item for item in plan.candidates}
-    confirmation = tuple(
-        make_search_task(
-            plan,
-            planned_candidate(by_id, item.candidate_id),
-            SeedStage.CONFIRMATION,
-            seed,
+
+    def coerce_runs(
+        runs: tuple[CompletedStageRun, ...],
+    ) -> tuple[WaterbirdsCompletedStageRun, ...]:
+        if any(not isinstance(run, WaterbirdsCompletedStageRun) for run in runs):
+            raise ValueError("Waterbirds status received another dataset result")
+        return cast(tuple[WaterbirdsCompletedStageRun, ...], runs)
+
+    def finalists_complete(
+        finalists: dict[WaterbirdsMethod, WaterbirdsTuningFinalists],
+        root: Path,
+    ) -> bool:
+        count = 0
+        for method, expected in finalists.items():
+            path = root / "selection" / method / "tuning-finalists.json"
+            if not path.exists():
+                continue
+            count += 1
+            observed = WaterbirdsTuningFinalists.model_validate_json(
+                path.read_text(encoding="utf-8")
+            )
+            if observed != expected:
+                raise ValueError(
+                    "Waterbirds finalist artifact does not match canonical tuning "
+                    f"results: {path}"
+                )
+        return count == len(plan.methods)
+
+    def confirmation_tasks(
+        finalists: dict[WaterbirdsMethod, WaterbirdsTuningFinalists],
+    ) -> tuple[SearchRunTask, ...]:
+        return tuple(
+            make_search_task(
+                plan,
+                by_id[item.candidate_id],
+                SeedStage.CONFIRMATION,
+                seed,
+            )
+            for method in plan.methods
+            for item in finalists[method].ordered_candidates
+            for seed in config.seeds.stages.confirmation
         )
-        for method in plan.methods
-        for item in expected_finalists[method].ordered_candidates
-        for seed in config.seeds.stages.confirmation
-    )
-    confirmation_status = scheduler.status(confirmation)
-    confirmation_complete = len(confirmation_status.complete_task_ids)
-    if confirmation_complete != len(confirmation):
-        return ProductionSearchStatus(
-            schema_version="grit.production-search-status/v1",
-            dataset="waterbirds_cf",
-            plan_digest=plan.canonical_digest(),
-            phase="confirmation",
-            tuning_expected=len(tuning),
-            tuning_complete=tuning_complete,
-            confirmation_expected=len(confirmation),
-            confirmation_complete=confirmation_complete,
-            frozen_winner_count=0,
-            final_expected=0,
-            final_complete=0,
-        )
-    confirmation_runs_untyped = scheduler.completed_results(confirmation)
-    if any(
-        not isinstance(run, WaterbirdsCompletedStageRun)
-        for run in confirmation_runs_untyped
-    ):
-        raise ValueError("Waterbirds confirmation contains another dataset result")
-    confirmation_runs = cast(
-        tuple[WaterbirdsCompletedStageRun, ...], confirmation_runs_untyped
-    )
-    expected_winners = compute_waterbirds_winners(
-        plan, expected_finalists, confirmation_runs
-    )
-    winner_count = 0
-    for method in plan.methods:
-        path = root / "selection" / method / "winner.json"
-        if path.exists():
-            winner_count += 1
+
+    def winner_count(
+        winners: dict[WaterbirdsMethod, FrozenWaterbirdsCandidate],
+        root: Path,
+    ) -> int:
+        count = 0
+        for method, expected in winners.items():
+            path = root / "selection" / method / "winner.json"
+            if not path.exists():
+                continue
+            count += 1
             observed = FrozenWaterbirdsCandidate.model_validate_json(
                 path.read_text(encoding="utf-8")
             )
-            if observed != expected_winners[method]:
+            if observed != expected:
                 raise ValueError(
                     "Waterbirds frozen winner does not match canonical confirmation "
                     f"results: {path}"
                 )
-    if winner_count != len(plan.methods):
-        return ProductionSearchStatus(
-            schema_version="grit.production-search-status/v1",
-            dataset="waterbirds_cf",
-            plan_digest=plan.canonical_digest(),
-            phase="final",
-            tuning_expected=len(tuning),
-            tuning_complete=tuning_complete,
-            confirmation_expected=len(confirmation),
-            confirmation_complete=confirmation_complete,
-            frozen_winner_count=winner_count,
-            final_expected=0,
-            final_complete=0,
+        return count
+
+    def final_tasks(
+        winners: dict[WaterbirdsMethod, FrozenWaterbirdsCandidate],
+    ) -> tuple[SearchRunTask, ...]:
+        return tuple(
+            make_final_search_task(
+                plan,
+                by_id[winner.candidate_id],
+                seed,
+                winner,
+            )
+            for winner in winners.values()
+            for seed in config.seeds.stages.final
         )
-    final = tuple(
-        make_final_search_task(
-            plan,
-            planned_candidate(by_id, winner.candidate_id),
-            seed,
-            winner,
-        )
-        for winner in expected_winners.values()
-        for seed in config.seeds.stages.final
+
+    hooks = ProductionStatusHooks(
+        coerce_runs=coerce_runs,
+        compute_finalists=lambda runs: compute_waterbirds_finalists(plan, runs),
+        finalists_complete=finalists_complete,
+        confirmation_tasks=confirmation_tasks,
+        compute_winners=lambda finalists, runs: compute_waterbirds_winners(
+            plan, finalists, runs
+        ),
+        winner_count=winner_count,
+        expected_winner_count=len(plan.methods),
+        final_tasks=final_tasks,
     )
-    final_status = scheduler.status(final)
-    final_complete = len(final_status.complete_task_ids)
-    phase = "final"
-    if final_complete == len(final) and complete_outputs_valid(plan):
-        phase = "complete"
-    return ProductionSearchStatus(
-        schema_version="grit.production-search-status/v1",
-        dataset="waterbirds_cf",
-        plan_digest=plan.canonical_digest(),
-        phase=phase,
-        tuning_expected=len(tuning),
-        tuning_complete=tuning_complete,
-        confirmation_expected=len(confirmation),
-        confirmation_complete=confirmation_complete,
-        frozen_winner_count=2,
-        final_expected=len(final),
-        final_complete=final_complete,
-    )
+    return production_lifecycle_status(plan, hooks)

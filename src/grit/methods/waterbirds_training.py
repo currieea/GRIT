@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TypeAlias
 
-import torch
 from pydantic import Field, StrictStr
 
 from grit.config import LinearProbeTrainingConfig
@@ -15,11 +14,12 @@ from grit.features.waterbirds import (
     WaterbirdsTrainingFeatureTable,
 )
 from grit.methods.checkpoints import CheckpointStore
-from grit.methods.projection import FittedLinearProjection
 from grit.methods.training import (
     InMemoryLinearCheckpointStore,
     LinearProbeAlgorithm,
     LinearProbeState,
+    LinearProbeTrainingMethod,
+    train_linear_probe_epochs,
 )
 from grit.methods.types import MethodId
 from grit.schemas import SeedStage, StrictBoundaryModel
@@ -62,12 +62,10 @@ def train_waterbirds_linear_probe(
     *,
     run_id: str,
     candidate_id: str,
-    method_id: WaterbirdsMethod,
     scientific_config_digest: str,
     seed_stage: SeedStage,
     seed: int,
-    projection: FittedLinearProjection | None,
-    projection_rank: int | None,
+    method: LinearProbeTrainingMethod,
 ) -> TrainedWaterbirdsRun:
     """Run trainer-owned epochs and emit one four-group validation record each."""
 
@@ -80,65 +78,54 @@ def train_waterbirds_linear_probe(
         raise ValueError("Waterbirds train and validation feature caches do not match")
     if training.normalization != validation.normalization:
         raise ValueError("Waterbirds train and validation normalizations do not match")
-    if method_id == "erm" and (projection is not None or projection_rank is not None):
-        raise ValueError("Waterbirds ERM cannot use a projection")
-    if method_id == "grit" and (projection is None or projection_rank is None):
-        raise ValueError("Waterbirds GRIT requires a projection and rank")
     if int(training.features.shape[0]) == 0:
         raise ValueError("Waterbirds training data must not be empty")
-    torch.use_deterministic_algorithms(True)
-    algorithm = LinearProbeAlgorithm(config, model_seed=seed, projection=projection)
-    generator = torch.Generator(device="cpu").manual_seed(seed)
-    store = InMemoryLinearCheckpointStore(store_id=f"memory:{run_id}")
     metrics: list[WaterbirdsValidationMetricRecord] = []
-    losses: list[float] = []
-    for epoch in range(1, config.max_epochs + 1):
-        permutation = torch.randperm(len(training.record_ids), generator=generator)
-        batch_losses: list[float] = []
-        for start in range(0, len(permutation), config.batch_size):
-            rows = permutation[start : start + config.batch_size]
-            batch_losses.append(
-                algorithm.update(training.features[rows], training.labels[rows])
-            )
-        losses.append(sum(batch_losses) / len(batch_losses))
-        checkpoint_id = f"checkpoint:{run_id}:epoch:{epoch}"
-        identity = CheckpointIdentity(
-            checkpoint_id=checkpoint_id,
-            candidate_id=candidate_id,
-            run_id=run_id,
-            scientific_config_digest=scientific_config_digest,
-            epoch=epoch,
-        )
-        store.save(identity, algorithm.capture_inference_state())
+
+    def validate_epoch(
+        algorithm: LinearProbeAlgorithm, identity: CheckpointIdentity
+    ) -> None:
         predictions = algorithm.predict(validation.features)
         metrics.append(
             compute_waterbirds_validation_metric(
                 validation,
                 predictions,
                 adjusted_weights=adjusted_weights,
-                record_id=f"metric:{checkpoint_id}:validation",
+                record_id=f"metric:{identity.checkpoint_id}:validation",
                 run_id=run_id,
                 candidate_id=candidate_id,
-                method_id=method_id,
+                method_id=method.method_id,
                 scientific_config_digest=scientific_config_digest,
-                checkpoint_id=checkpoint_id,
-                epoch=epoch,
+                checkpoint_id=identity.checkpoint_id,
+                epoch=identity.epoch,
                 seed_stage=seed_stage,
                 seed=seed,
-                projection_rank=projection_rank,
+                projection_rank=method.projection_rank,
             )
         )
+
+    core = train_linear_probe_epochs(
+        training.features,
+        training.labels,
+        config,
+        run_id=run_id,
+        candidate_id=candidate_id,
+        scientific_config_digest=scientific_config_digest,
+        seed=seed,
+        method=method,
+        validate_epoch=validate_epoch,
+    )
     return TrainedWaterbirdsRun(
         run_id=run_id,
         candidate_id=candidate_id,
-        method_id=method_id,
+        method_id=method.method_id,
         seed_stage=seed_stage,
         seed=seed,
-        projection_rank=projection_rank,
+        projection_rank=method.projection_rank,
         validation_metrics=tuple(metrics),
-        store=store,
-        algorithm=algorithm,
-        epoch_losses=tuple(losses),
+        store=core.store,
+        algorithm=core.algorithm,
+        epoch_losses=core.epoch_losses,
     )
 
 

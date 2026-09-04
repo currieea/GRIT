@@ -30,8 +30,12 @@ from grit.methods.invariance import (
 )
 from grit.methods.projection import fit_linear_projection
 from grit.methods.training import (
+    GroupDroLinearProbeMethod,
+    IrmLinearProbeMethod,
     LinearProbeState,
+    OrdinaryLinearProbeMethod,
     PersistedLinearCheckpointStore,
+    RexLinearProbeMethod,
     persist_selected_linear_checkpoint,
     train_linear_probe,
 )
@@ -118,6 +122,19 @@ def _groupdro_config() -> GroupDroAlgorithmConfig:
     )
 
 
+def _groupdro_method(
+    tables: tuple[FeatureTable, FeatureTable],
+) -> GroupDroLinearProbeMethod:
+    return GroupDroLinearProbeMethod(
+        group_ids=cmnist_group_ids(
+            torch.cat([table.targets for table in tables]),
+            torch.cat([table.colors for table in tables]),
+        ),
+        group_count=4,
+        step_size=float(_groupdro_config().adversarial_step_size),
+    )
+
+
 def _rex_config() -> RexAlgorithmConfig:
     return RexAlgorithmConfig(
         kind="rex",
@@ -150,12 +167,10 @@ def test_real_trainer_selects_persists_and_restores_checkpoint(tmp_path: Path) -
         _training_config(),
         run_id="run:erm:301",
         candidate_id="candidate:erm",
-        method_id="erm",
         scientific_config_digest="sha256:erm",
         seed_stage=SeedStage.FINAL,
         seed=301,
-        projection=None,
-        projection_rank=None,
+        method=OrdinaryLinearProbeMethod("erm", None, None),
     )
     assert len(run.validation_metrics) == 3 * 3
     decision = select_checkpoint(
@@ -209,12 +224,10 @@ def test_rank_zero_grit_and_erm_are_exactly_equivalent() -> None:
         _training_config(),
         run_id="run:erm",
         candidate_id="candidate:erm",
-        method_id="erm",
         scientific_config_digest="sha256:shared",
         seed_stage=SeedStage.TUNING,
         seed=101,
-        projection=None,
-        projection_rank=None,
+        method=OrdinaryLinearProbeMethod("erm", None, None),
     )
     grit = train_linear_probe(
         training,
@@ -222,12 +235,10 @@ def test_rank_zero_grit_and_erm_are_exactly_equivalent() -> None:
         _training_config(),
         run_id="run:grit",
         candidate_id="candidate:grit",
-        method_id="grit",
         scientific_config_digest="sha256:shared",
         seed_stage=SeedStage.TUNING,
         seed=101,
-        projection=identity,
-        projection_rank=0,
+        method=OrdinaryLinearProbeMethod("grit", identity, 0),
     )
     erm_state = erm.algorithm.capture_inference_state()
     grit_state = grit.algorithm.capture_inference_state()
@@ -280,21 +291,19 @@ def test_groupdro_sampler_uses_inverse_group_frequency(
 
 
 def test_cmnist_groupdro_training_is_deterministic() -> None:
+    training = _groupdro_training_tables()
     _, validation = _tables()
     runs = tuple(
         train_linear_probe(
-            _groupdro_training_tables(),
+            training,
             validation,
             _training_config(),
             run_id=f"run:groupdro:{index}",
             candidate_id="candidate:groupdro",
-            method_id="groupdro",
             scientific_config_digest="sha256:groupdro",
             seed_stage=SeedStage.TUNING,
             seed=101,
-            projection=None,
-            projection_rank=None,
-            groupdro=_groupdro_config(),
+            method=_groupdro_method(training),
         )
         for index in range(2)
     )
@@ -314,8 +323,15 @@ def test_cmnist_groupdro_training_is_deterministic() -> None:
 def test_vrex_objective_uses_environment_risks() -> None:
     losses = torch.tensor([1.0, 3.0, 5.0, 9.0])
     environment_ids = torch.tensor([0, 0, 1, 1])
-    risks = environment_mean_losses(losses, environment_ids)
-    objective = vrex_objective(losses, environment_ids, penalty_weight=2.0)
+    risks = environment_mean_losses(
+        losses, environment_ids, environment_count=2
+    )
+    objective = vrex_objective(
+        losses,
+        environment_ids,
+        environment_count=2,
+        penalty_weight=2.0,
+    )
     assert torch.equal(risks, torch.tensor([2.0, 7.0]))
     # mean risk = 4.5, population variance = 6.25, then reference rescaling / 2.
     assert objective.item() == 8.5
@@ -334,6 +350,7 @@ def test_environment_balanced_batches_are_deterministic_and_exhaustive() -> None
     batches = tuple(
         environment_balanced_epoch_batches(
             environment_ids,
+            environment_count=2,
             batch_size=4,
             generator=torch.Generator(device="cpu").manual_seed(17),
         )
@@ -348,6 +365,24 @@ def test_environment_balanced_batches_are_deterministic_and_exhaustive() -> None
             torch.tensor([2, 2]),
         )
         for batch in batches[0]
+    )
+
+
+def test_environment_balanced_batches_support_multiple_source_environments() -> None:
+    environment_ids = torch.tensor([0] * 4 + [1] * 4 + [2] * 4)
+    batches = environment_balanced_epoch_batches(
+        environment_ids,
+        environment_count=3,
+        batch_size=6,
+        generator=torch.Generator(device="cpu").manual_seed(17),
+    )
+    assert torch.equal(torch.cat(batches).sort().values, torch.arange(12))
+    assert all(
+        torch.equal(
+            torch.bincount(environment_ids[batch], minlength=3),
+            torch.tensor([2, 2, 2]),
+        )
+        for batch in batches
     )
 
 
@@ -366,14 +401,15 @@ def test_cmnist_rex_training_is_deterministic() -> None:
             _training_config(),
             run_id=f"run:rex:{index}",
             candidate_id="candidate:rex",
-            method_id="rex",
             scientific_config_digest="sha256:rex",
             seed_stage=SeedStage.TUNING,
             seed=101,
-            projection=None,
-            projection_rank=None,
-            rex=_rex_config(),
-            environment_ids=environment_ids,
+            method=RexLinearProbeMethod(
+                environment_ids=environment_ids,
+                environment_count=2,
+                penalty_weight=float(_rex_config().penalty_weight),
+                penalty_anneal_updates=_rex_config().penalty_anneal_updates,
+            ),
         )
         for index in range(2)
     )
@@ -395,6 +431,7 @@ def test_irmv1_objective_uses_one_dummy_scale_penalty_per_environment() -> None:
         logits,
         targets,
         environment_ids,
+        environment_count=2,
         penalty_weight=2.0,
     )
     mean_risk = (math.log(4.0 / 3.0) + math.log(4.0)) / 2.0
@@ -420,14 +457,15 @@ def test_cmnist_irm_training_is_deterministic() -> None:
             _training_config(),
             run_id=f"run:irm:{index}",
             candidate_id="candidate:irm",
-            method_id="irm",
             scientific_config_digest="sha256:irm",
             seed_stage=SeedStage.TUNING,
             seed=101,
-            projection=None,
-            projection_rank=None,
-            irm=_irm_config(),
-            environment_ids=environment_ids,
+            method=IrmLinearProbeMethod(
+                environment_ids=environment_ids,
+                environment_count=2,
+                penalty_weight=float(_irm_config().penalty_weight),
+                penalty_anneal_updates=_irm_config().penalty_anneal_updates,
+            ),
         )
         for index in range(2)
     )

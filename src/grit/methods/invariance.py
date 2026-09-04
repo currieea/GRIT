@@ -7,12 +7,11 @@ import math
 import torch
 import torch.nn.functional as functional
 
-CMNIST_TRAINING_ENVIRONMENT_COUNT = 2
-
 
 def environment_balanced_epoch_batches(
     environment_ids: torch.Tensor,
     *,
+    environment_count: int,
     batch_size: int,
     generator: torch.Generator,
 ) -> tuple[torch.Tensor, ...]:
@@ -21,16 +20,23 @@ def environment_balanced_epoch_batches(
     ids = environment_ids.detach().cpu().to(torch.int64)
     if ids.ndim != 1 or ids.numel() == 0:
         raise ValueError("environment IDs must be a non-empty vector")
-    if batch_size <= 0 or batch_size % CMNIST_TRAINING_ENVIRONMENT_COUNT != 0:
-        raise ValueError("environment-balanced batch size must be positive and even")
-    if not bool(((ids == 0) | (ids == 1)).all()) or any(
+    if environment_count <= 1:
+        raise ValueError("invariant training requires at least two environments")
+    if batch_size <= 0 or batch_size % environment_count != 0:
+        raise ValueError(
+            "environment-balanced batch size must be positive and divisible by "
+            "the environment count"
+        )
+    if bool(((ids < 0) | (ids >= environment_count)).any()) or any(
         not bool((ids == environment).any())
-        for environment in range(CMNIST_TRAINING_ENVIRONMENT_COUNT)
+        for environment in range(environment_count)
     ):
-        raise ValueError("CMNIST invariant training requires environment IDs 0 and 1")
+        raise ValueError(
+            "invariant training requires every contiguous environment ID"
+        )
     rows_by_environment = tuple(
         torch.nonzero(ids == environment, as_tuple=False).flatten()
-        for environment in range(CMNIST_TRAINING_ENVIRONMENT_COUNT)
+        for environment in range(environment_count)
     )
     counts = {int(rows.numel()) for rows in rows_by_environment}
     if len(counts) != 1:
@@ -39,7 +45,7 @@ def environment_balanced_epoch_batches(
         rows[torch.randperm(int(rows.numel()), generator=generator)]
         for rows in rows_by_environment
     )
-    per_environment = batch_size // CMNIST_TRAINING_ENVIRONMENT_COUNT
+    per_environment = batch_size // environment_count
     environment_size = int(shuffled[0].numel())
     return tuple(
         torch.cat(
@@ -52,24 +58,28 @@ def environment_balanced_epoch_batches(
 def environment_mean_losses(
     per_example_losses: torch.Tensor,
     environment_ids: torch.Tensor,
+    *,
+    environment_count: int,
 ) -> torch.Tensor:
-    """Return one mean loss for each required CMNIST training environment."""
+    """Return one mean loss for each required training environment."""
 
     if per_example_losses.ndim != 1:
         raise ValueError("per-example losses must be a vector")
     ids = environment_ids.to(device=per_example_losses.device, dtype=torch.int64)
     if ids.shape != per_example_losses.shape:
         raise ValueError("environment IDs must align with per-example losses")
+    if environment_count <= 1:
+        raise ValueError("invariant training requires at least two environments")
     risks: list[torch.Tensor] = []
-    for environment in range(CMNIST_TRAINING_ENVIRONMENT_COUNT):
+    for environment in range(environment_count):
         mask = ids == environment
         if not bool(mask.any()):
             raise ValueError(
-                "every invariant-training batch must contain both environments"
+                "every invariant-training batch must contain every environment"
             )
         risks.append(per_example_losses[mask].mean())
-    if not bool(((ids == 0) | (ids == 1)).all()):
-        raise ValueError("CMNIST invariant training requires environment IDs 0 and 1")
+    if bool(((ids < 0) | (ids >= environment_count)).any()):
+        raise ValueError("invariant-training environment ID is out of range")
     return torch.stack(risks)
 
 
@@ -90,11 +100,16 @@ def vrex_objective(
     per_example_losses: torch.Tensor,
     environment_ids: torch.Tensor,
     *,
+    environment_count: int,
     penalty_weight: float,
 ) -> torch.Tensor:
     """Compute mean environment risk plus population risk variance."""
 
-    risks = environment_mean_losses(per_example_losses, environment_ids)
+    risks = environment_mean_losses(
+        per_example_losses,
+        environment_ids,
+        environment_count=environment_count,
+    )
     mean_risk = risks.mean()
     penalty = ((risks - mean_risk) ** 2).mean()
     objective = mean_risk + penalty_weight * penalty
@@ -108,6 +123,7 @@ def irmv1_objective(
     targets: torch.Tensor,
     environment_ids: torch.Tensor,
     *,
+    environment_count: int,
     penalty_weight: float,
 ) -> torch.Tensor:
     """Compute the original scalar dummy-classifier IRMv1 objective."""
@@ -117,10 +133,14 @@ def irmv1_objective(
     if targets.ndim != 1 or int(targets.shape[0]) != int(logits.shape[0]):
         raise ValueError("IRMv1 targets must align with logits")
     per_example = functional.cross_entropy(logits, targets, reduction="none")
-    risks = environment_mean_losses(per_example, environment_ids)
+    risks = environment_mean_losses(
+        per_example,
+        environment_ids,
+        environment_count=environment_count,
+    )
     ids = environment_ids.to(device=logits.device, dtype=torch.int64)
     penalties: list[torch.Tensor] = []
-    for environment in range(CMNIST_TRAINING_ENVIRONMENT_COUNT):
+    for environment in range(environment_count):
         mask = ids == environment
         scale = torch.ones(
             (), device=logits.device, dtype=logits.dtype

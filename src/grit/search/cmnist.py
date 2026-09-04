@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, TypeAlias, cast
+from typing import cast
 
 import torch
 
@@ -40,10 +40,15 @@ from grit.features.cmnist import (
 )
 from grit.lifecycle import open_final_test, record_final_accuracy
 from grit.methods.checkpoints import restore_checkpoint
+from grit.methods.groupdro import CMNIST_GROUP_COUNT, cmnist_group_ids
 from grit.methods.projection import FittedLinearProjection, fit_linear_projection
 from grit.methods.training import (
+    GroupDroLinearProbeMethod,
+    IrmLinearProbeMethod,
     MethodId,
+    OrdinaryLinearProbeMethod,
     PersistedLinearCheckpointStore,
+    RexLinearProbeMethod,
     TrainedLinearProbeRun,
     evaluate_accuracy,
     persist_selected_linear_checkpoint,
@@ -51,6 +56,12 @@ from grit.methods.training import (
 )
 from grit.results import ArtifactReference, OrdinaryRunResult, SucceededStatus
 from grit.schemas import CmnistSelector, SeedStage
+from grit.search.lifecycle import (
+    ProductionLifecycleHooks,
+    ProductionStatusHooks,
+    production_lifecycle_status,
+    run_production_lifecycle,
+)
 from grit.search.outputs import (
     CmnistFinalSeedObservation,
     CmnistMethodSelectorSummary,
@@ -69,16 +80,11 @@ from grit.search.plan import (
 from grit.search.run import (
     ProductionExecutionLimits,
     ProductionSearchStatus,
-    complete_outputs_valid,
-    limited_tuning_candidates,
     persist_canonical_artifact,
-    planned_candidate,
-    write_experiment_index,
 )
 from grit.search.scheduler import (
     CmnistCompletedStageRun,
     CompletedStageRun,
-    LocalRunScheduler,
     SearchRunTask,
     StageExecutor,
     make_final_search_task,
@@ -95,8 +101,6 @@ from grit.selection.cmnist import (
     select_checkpoint,
     select_confirmed_candidate,
 )
-
-NonEmptyStr: TypeAlias = str
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,25 +120,6 @@ def run_cmnist_search(
     )
     pair_manifest = _cmnist_pair_manifest(plan) if "grit" in plan.methods else None
     projections: dict[int, FittedLinearProjection] = {}
-    scheduler = LocalRunScheduler(output_root, plan)
-    remaining = None if limits is None else limits.max_new_runs
-
-    def run_stage(
-        tasks: tuple[SearchRunTask, ...],
-        execute: StageExecutor,
-    ) -> tuple[CompletedStageRun, ...]:
-        nonlocal remaining
-        if limits is None:
-            return scheduler.run_tasks(tasks, execute)
-        allowance = len(tasks) if remaining is None else remaining
-        results, newly_executed = scheduler.run_tasks_bounded(
-            tasks,
-            execute,
-            max_new_runs=allowance,
-        )
-        if remaining is not None:
-            remaining -= newly_executed
-        return results
 
     def runtime_candidate(candidate: SearchCandidate) -> _CmnistRuntimeCandidate:
         projection: FittedLinearProjection | None = None
@@ -194,164 +179,186 @@ def run_cmnist_search(
             checkpoint_decisions=decisions,
         )
 
-    tuning_candidates = limited_tuning_candidates(plan, limits)
-    tuning_seeds = (
-        config.seeds.stages.tuning
-        if limits is None or limits.tuning_seed is None
-        else (limits.tuning_seed,)
-    )
-    tuning_tasks = tuple(
-        make_search_task(plan, candidate, SeedStage.TUNING, seed)
-        for candidate in tuning_candidates
-        for seed in tuning_seeds
-    )
-    tuning_runs = cast(
-        tuple[CmnistCompletedStageRun, ...],
-        run_stage(tuning_tasks, execute_pre_final),
-    )
-    if limits is not None and (
-        limits.stop_after == "tuning" or len(tuning_runs) != len(tuning_tasks)
-    ):
-        return cmnist_status_from_plan(plan)
-    finalists, unions = _cmnist_finalists(plan, tuning_runs, output_root)
     candidates_by_id = {item.candidate_id: item for item in plan.candidates}
-    confirmation_ids = {
-        method: union.confirmation_candidate_ids for method, union in unions.items()
-    }
-    confirmation_tasks = tuple(
-        make_search_task(
-            plan,
-            candidates_by_id[candidate_id],
-            SeedStage.CONFIRMATION,
-            seed,
-        )
-        for method in plan.methods
-        for candidate_id in confirmation_ids[method]
-        for seed in config.seeds.stages.confirmation
-    )
-    confirmation_runs = cast(
-        tuple[CmnistCompletedStageRun, ...],
-        run_stage(confirmation_tasks, execute_pre_final),
-    )
-    if limits is not None and len(confirmation_runs) != len(confirmation_tasks):
-        return cmnist_status_from_plan(plan)
-    winners = _freeze_cmnist_winners(
-        plan, finalists, confirmation_runs, output_root
-    )
-    if isinstance(cache, CmnistTuningFeatureCache):
-        raise AssertionError("tuning-only CMNIST execution reached final stage")
 
-    def execute_final(task: SearchRunTask, run_root: Path) -> CompletedStageRun:
-        selector = CmnistSelector(task.selector)
-        frozen = winners[(task.candidate.method_id, selector)]
-        runtime = runtime_candidate(task.candidate)
-        runtime = _CmnistRuntimeCandidate(
-            runtime.planned,
-            materialize_cmnist_candidate_config(plan, task.candidate, selector),
-            runtime.projection,
-        )
-        trained = _train_cmnist_task(cache, runtime, task)
-        decision = select_checkpoint(trained.validation_metrics, selector)
-        frozen_checkpoint = freeze_final_checkpoint(decision, frozen)
-        selected = trained.store.load(frozen_checkpoint.checkpoint.checkpoint_id)
-        checkpoint_root = run_root / "selected-checkpoint"
-        checkpoint_manifest = persist_selected_linear_checkpoint(
-            selected, checkpoint_root
-        )
-        persisted = PersistedLinearCheckpointStore(checkpoint_root)
-        restoration = restore_checkpoint(
-            frozen_checkpoint,
-            persisted,
-            trained.algorithm.restore_inference_state,
-        )
-        handle = cache.issue_final_handle(
-            run_id=trained.run_id,
-            candidate_id=task.candidate.candidate_id,
-            scientific_config_digest=task.candidate.scientific_config_digest,
-        )
-        final_view = open_final_test(
-            handle, frozen, frozen_checkpoint, restoration
-        )
-        final_table = cache.open_final_table(final_view)
-        final_metric = record_final_accuracy(
-            final_view,
-            record_id=f"metric:{trained.run_id}:test_ood",
-            value=evaluate_accuracy(trained.algorithm, final_table),
-            sample_count=len(final_table.source_ids),
-        )
-        result = OrdinaryRunResult(
-            schema_version="grit.run-result/v1",
-            result_kind="ordinary",
-            run_id=trained.run_id,
-            resolved_config=runtime.config,
-            resolved_config_digest=runtime.config.canonical_digest(),
-            status=SucceededStatus(kind="succeeded"),
-            code=current_code_provenance(),
-            environment=current_environment_provenance(),
-            validation_metrics=trained.validation_metrics,
-            candidate_selection=frozen,
-            checkpoint_selection=frozen_checkpoint,
-            restoration=restoration,
-            final_test_metrics=(final_metric,),
-            artifacts=_cmnist_result_artifacts(
+    def coerce_runs(
+        runs: tuple[CompletedStageRun, ...],
+    ) -> tuple[CmnistCompletedStageRun, ...]:
+        if any(not isinstance(run, CmnistCompletedStageRun) for run in runs):
+            raise ValueError("CMNIST lifecycle received another dataset result")
+        return cast(tuple[CmnistCompletedStageRun, ...], runs)
+
+    def confirmation_tasks(
+        state: tuple[
+            dict[tuple[MethodId, CmnistSelector], TuningFinalistsArtifact],
+            dict[MethodId, FinalistUnion],
+        ],
+    ) -> tuple[SearchRunTask, ...]:
+        _, unions = state
+        return tuple(
+            make_search_task(
                 plan,
-                task,
-                checkpoint_manifest.canonical_digest(),
-                runtime,
-            ),
+                candidates_by_id[candidate_id],
+                SeedStage.CONFIRMATION,
+                seed,
+            )
+            for method in plan.methods
+            for candidate_id in unions[method].confirmation_candidate_ids
+            for seed in config.seeds.stages.confirmation
         )
-        persist_canonical_artifact(run_root / "final-result.json", result)
-        completed = CmnistCompletedStageRun(
-            schema_version="grit.cmnist-search-stage-run/v1",
-            dataset="cmnist",
-            status="complete",
-            task=task,
-            lineage=plan.resolved_config.lineage,
-            code=current_code_provenance(),
-            environment=current_environment_provenance(),
-            validation_metrics=trained.validation_metrics,
-            checkpoint_decisions=(decision,),
-            final_result_relative_path="final-result.json",
-            final_result_digest=result.canonical_digest(),
-            final_result=result,
-        )
-        persist_canonical_artifact(run_root / "result.json", completed)
-        return completed
 
-    final_tasks = tuple(
-        make_final_search_task(
-            plan,
-            candidates_by_id[frozen.candidate_id],
-            seed,
-            frozen,
+    def make_winners(
+        state: tuple[
+            dict[tuple[MethodId, CmnistSelector], TuningFinalistsArtifact],
+            dict[MethodId, FinalistUnion],
+        ],
+        runs: tuple[CmnistCompletedStageRun, ...],
+        root: Path,
+    ) -> dict[tuple[MethodId, CmnistSelector], FrozenCandidateSelection]:
+        finalists, _ = state
+        return _freeze_cmnist_winners(plan, finalists, runs, root)
+
+    def final_tasks(
+        winners: dict[tuple[MethodId, CmnistSelector], FrozenCandidateSelection],
+    ) -> tuple[SearchRunTask, ...]:
+        return tuple(
+            make_final_search_task(
+                plan,
+                candidates_by_id[frozen.candidate_id],
+                seed,
+                frozen,
+            )
+            for method in plan.methods
+            for selector in (
+                CmnistSelector.PRIMARY_ROBUST,
+                CmnistSelector.SECONDARY_SOURCE,
+            )
+            for frozen in (winners[(method, selector)],)
+            for seed in config.seeds.stages.final
         )
-        for method in plan.methods
-        for selector in (
-            CmnistSelector.PRIMARY_ROBUST,
-            CmnistSelector.SECONDARY_SOURCE,
-        )
-        for frozen in (winners[(method, selector)],)
-        for seed in config.seeds.stages.final
-    )
-    final_runs = cast(
-        tuple[CmnistCompletedStageRun, ...],
-        run_stage(final_tasks, execute_final),
-    )
-    if limits is not None:
-        return cmnist_status_from_plan(plan)
-    summary = _cmnist_summary(plan, finalists, winners, final_runs)
-    persist_canonical_artifact(
-        output_root / "summaries" / "cmnist-summary.json", summary
-    )
-    for paired in summary.paired_selectors:
+
+    def final_executor(
+        winners: dict[tuple[MethodId, CmnistSelector], FrozenCandidateSelection],
+    ) -> StageExecutor:
+        if isinstance(cache, CmnistTuningFeatureCache):
+            raise AssertionError("tuning-only CMNIST execution reached final stage")
+        full_cache = cache
+
+        def execute_final(task: SearchRunTask, run_root: Path) -> CompletedStageRun:
+            selector = CmnistSelector(task.selector)
+            frozen = winners[(task.candidate.method_id, selector)]
+            runtime = runtime_candidate(task.candidate)
+            runtime = _CmnistRuntimeCandidate(
+                runtime.planned,
+                materialize_cmnist_candidate_config(plan, task.candidate, selector),
+                runtime.projection,
+            )
+            trained = _train_cmnist_task(full_cache, runtime, task)
+            decision = select_checkpoint(trained.validation_metrics, selector)
+            frozen_checkpoint = freeze_final_checkpoint(decision, frozen)
+            selected = trained.store.load(frozen_checkpoint.checkpoint.checkpoint_id)
+            checkpoint_root = run_root / "selected-checkpoint"
+            checkpoint_manifest = persist_selected_linear_checkpoint(
+                selected, checkpoint_root
+            )
+            persisted = PersistedLinearCheckpointStore(checkpoint_root)
+            restoration = restore_checkpoint(
+                frozen_checkpoint,
+                persisted,
+                trained.algorithm.restore_inference_state,
+            )
+            handle = full_cache.issue_final_handle(
+                run_id=trained.run_id,
+                candidate_id=task.candidate.candidate_id,
+                scientific_config_digest=task.candidate.scientific_config_digest,
+            )
+            final_view = open_final_test(
+                handle, frozen, frozen_checkpoint, restoration
+            )
+            final_table = full_cache.open_final_table(final_view)
+            final_metric = record_final_accuracy(
+                final_view,
+                record_id=f"metric:{trained.run_id}:test_ood",
+                value=evaluate_accuracy(trained.algorithm, final_table),
+                sample_count=len(final_table.source_ids),
+            )
+            result = OrdinaryRunResult(
+                schema_version="grit.run-result/v1",
+                result_kind="ordinary",
+                run_id=trained.run_id,
+                resolved_config=runtime.config,
+                resolved_config_digest=runtime.config.canonical_digest(),
+                status=SucceededStatus(kind="succeeded"),
+                code=current_code_provenance(),
+                environment=current_environment_provenance(),
+                validation_metrics=trained.validation_metrics,
+                candidate_selection=frozen,
+                checkpoint_selection=frozen_checkpoint,
+                restoration=restoration,
+                final_test_metrics=(final_metric,),
+                artifacts=_cmnist_result_artifacts(
+                    plan,
+                    task,
+                    checkpoint_manifest.canonical_digest(),
+                    runtime,
+                ),
+            )
+            persist_canonical_artifact(run_root / "final-result.json", result)
+            completed = CmnistCompletedStageRun(
+                schema_version="grit.cmnist-search-stage-run/v1",
+                dataset="cmnist",
+                status="complete",
+                task=task,
+                lineage=plan.resolved_config.lineage,
+                code=current_code_provenance(),
+                environment=current_environment_provenance(),
+                validation_metrics=trained.validation_metrics,
+                checkpoint_decisions=(decision,),
+                final_result_relative_path="final-result.json",
+                final_result_digest=result.canonical_digest(),
+                final_result=result,
+            )
+            persist_canonical_artifact(run_root / "result.json", completed)
+            return completed
+
+        return execute_final
+
+    def make_summary(
+        state: tuple[
+            dict[tuple[MethodId, CmnistSelector], TuningFinalistsArtifact],
+            dict[MethodId, FinalistUnion],
+        ],
+        winners: dict[tuple[MethodId, CmnistSelector], FrozenCandidateSelection],
+        runs: tuple[CmnistCompletedStageRun, ...],
+    ) -> CmnistProductionSummary:
+        finalists, _ = state
+        return _cmnist_summary(plan, finalists, winners, runs)
+
+    def persist_summary(summary: CmnistProductionSummary, root: Path) -> None:
         persist_canonical_artifact(
-            output_root
-            / "summaries"
-            / f"cmnist-{paired.selector.value}-paired-differences.json",
-            paired,
+            root / "summaries" / "cmnist-summary.json", summary
         )
-    write_experiment_index(plan, output_root)
-    return summary
+        for paired in summary.paired_selectors:
+            persist_canonical_artifact(
+                root
+                / "summaries"
+                / f"cmnist-{paired.selector.value}-paired-differences.json",
+                paired,
+            )
+
+    hooks = ProductionLifecycleHooks(
+        coerce_runs=coerce_runs,
+        execute_pre_final=execute_pre_final,
+        make_finalists=lambda runs, root: _cmnist_finalists(plan, runs, root),
+        confirmation_tasks=confirmation_tasks,
+        make_winners=make_winners,
+        final_tasks=final_tasks,
+        final_executor=final_executor,
+        make_summary=make_summary,
+        persist_summary=persist_summary,
+        status=lambda: cmnist_status_from_plan(plan),
+    )
+    return run_production_lifecycle(plan, limits, hooks)
 
 def _cmnist_finalists(
     plan: SearchPlan,
@@ -600,21 +607,10 @@ def _train_cmnist_task(
     task: SearchRunTask,
 ) -> TrainedLinearProbeRun:
     training_tables = cache.training_tables()
-    rex = (
-        runtime.config.algorithm
-        if isinstance(runtime.config.algorithm, RexAlgorithmConfig)
-        else None
-    )
-    irm = (
-        runtime.config.algorithm
-        if isinstance(runtime.config.algorithm, IrmAlgorithmConfig)
-        else None
-    )
-    environment_ids: torch.Tensor | None = None
-    invariant = rex if rex is not None else irm
-    if invariant is not None:
+    algorithm = runtime.config.algorithm
+    if isinstance(algorithm, (RexAlgorithmConfig, IrmAlgorithmConfig)):
         names = tuple(table.name for table in training_tables)
-        if names != invariant.environment_names:
+        if names != algorithm.environment_names:
             raise ValueError(
                 "invariant training tables do not match configured environments"
             )
@@ -624,26 +620,51 @@ def _train_cmnist_task(
                 for index, table in enumerate(training_tables)
             ]
         )
+        method = (
+            RexLinearProbeMethod(
+                environment_ids=environment_ids,
+                environment_count=len(training_tables),
+                penalty_weight=float(algorithm.penalty_weight),
+                penalty_anneal_updates=int(algorithm.penalty_anneal_updates),
+            )
+            if isinstance(algorithm, RexAlgorithmConfig)
+            else IrmLinearProbeMethod(
+                environment_ids=environment_ids,
+                environment_count=len(training_tables),
+                penalty_weight=float(algorithm.penalty_weight),
+                penalty_anneal_updates=int(algorithm.penalty_anneal_updates),
+            )
+        )
+    elif isinstance(algorithm, GroupDroAlgorithmConfig):
+        if algorithm.group_definition != "target_color":
+            raise ValueError("CMNIST GroupDRO requires target-color groups")
+        train_targets = torch.cat(
+            [table.targets for table in training_tables], dim=0
+        )
+        train_colors = torch.cat(
+            [table.colors for table in training_tables], dim=0
+        )
+        method = GroupDroLinearProbeMethod(
+            group_ids=cmnist_group_ids(train_targets, train_colors),
+            group_count=CMNIST_GROUP_COUNT,
+            step_size=float(algorithm.adversarial_step_size),
+        )
+    else:
+        method = OrdinaryLinearProbeMethod(
+            method_id=task.candidate.method_id,
+            projection=runtime.projection,
+            projection_rank=task.candidate.requested_rank,
+        )
     return train_linear_probe(
         training_tables,
         cache.validation_tables(),
         runtime.config.training,
         run_id=f"run:{task.task_id}",
         candidate_id=task.candidate.candidate_id,
-        method_id=task.candidate.method_id,
         scientific_config_digest=task.candidate.scientific_config_digest,
         seed_stage=task.stage,
         seed=task.seed,
-        projection=runtime.projection,
-        projection_rank=task.candidate.requested_rank,
-        groupdro=(
-            runtime.config.algorithm
-            if isinstance(runtime.config.algorithm, GroupDroAlgorithmConfig)
-            else None
-        ),
-        rex=rex,
-        irm=irm,
-        environment_ids=environment_ids,
+        method=method,
     )
 
 def _cmnist_result_artifacts(
@@ -865,181 +886,121 @@ def _cmnist_search_config(plan: SearchPlan) -> CmnistProductionSearchConfig:
 
 def cmnist_status_from_plan(plan: SearchPlan) -> ProductionSearchStatus:
     config = _cmnist_search_config(plan)
-    scheduler = LocalRunScheduler(Path(plan.resolved_config.output_root), plan)
-    tuning = tuple(
-        make_search_task(plan, candidate, SeedStage.TUNING, seed)
-        for candidate in plan.candidates
-        for seed in config.seeds.stages.tuning
-    )
-    status = scheduler.status(tuning)
-    complete = len(status.complete_task_ids)
-    if complete != len(tuning):
-        return ProductionSearchStatus(
-            schema_version="grit.production-search-status/v1",
-            dataset="cmnist",
-            plan_digest=plan.canonical_digest(),
-            phase="tuning",
-            tuning_expected=len(tuning),
-            tuning_complete=complete,
-            confirmation_expected=0,
-            confirmation_complete=0,
-            frozen_winner_count=0,
-            final_expected=0,
-            final_complete=0,
+    by_id = {item.candidate_id: item for item in plan.candidates}
+
+    def coerce_runs(
+        runs: tuple[CompletedStageRun, ...],
+    ) -> tuple[CmnistCompletedStageRun, ...]:
+        if any(not isinstance(run, CmnistCompletedStageRun) for run in runs):
+            raise ValueError("CMNIST status received another dataset result")
+        return cast(tuple[CmnistCompletedStageRun, ...], runs)
+
+    def finalists_complete(
+        state: tuple[
+            dict[tuple[MethodId, CmnistSelector], TuningFinalistsArtifact],
+            dict[MethodId, FinalistUnion],
+        ],
+        root: Path,
+    ) -> bool:
+        expected_finalists, expected_unions = state
+        count = 0
+        for method in plan.methods:
+            selection_root = root / "selection" / method
+            artifacts = (
+                (
+                    selection_root / "primary-tuning-finalists.json",
+                    TuningFinalistsArtifact,
+                    expected_finalists[(method, CmnistSelector.PRIMARY_ROBUST)],
+                ),
+                (
+                    selection_root / "secondary-tuning-finalists.json",
+                    TuningFinalistsArtifact,
+                    expected_finalists[(method, CmnistSelector.SECONDARY_SOURCE)],
+                ),
+                (
+                    selection_root / "confirmation-union.json",
+                    FinalistUnion,
+                    expected_unions[method],
+                ),
+            )
+            for path, artifact_type, expected in artifacts:
+                if not path.exists():
+                    continue
+                count += 1
+                observed = artifact_type.model_validate_json(
+                    path.read_text(encoding="utf-8")
+                )
+                if observed != expected:
+                    raise ValueError(
+                        "CMNIST selection artifact does not match canonical tuning "
+                        f"results: {path}"
+                    )
+        return count == len(plan.methods) * (len(config.selectors) + 1)
+
+    def confirmation_tasks(
+        state: tuple[
+            dict[tuple[MethodId, CmnistSelector], TuningFinalistsArtifact],
+            dict[MethodId, FinalistUnion],
+        ],
+    ) -> tuple[SearchRunTask, ...]:
+        _, unions = state
+        return tuple(
+            make_search_task(
+                plan,
+                by_id[candidate_id],
+                SeedStage.CONFIRMATION,
+                seed,
+            )
+            for method in plan.methods
+            for candidate_id in unions[method].confirmation_candidate_ids
+            for seed in config.seeds.stages.confirmation
         )
-    tuning_runs_untyped = scheduler.completed_results(tuning)
-    if any(
-        not isinstance(run, CmnistCompletedStageRun)
-        for run in tuning_runs_untyped
-    ):
-        raise ValueError("CMNIST tuning stage contains another dataset result")
-    tuning_runs = cast(tuple[CmnistCompletedStageRun, ...], tuning_runs_untyped)
-    expected_finalists, expected_unions = compute_cmnist_finalists(
-        plan, tuning_runs
-    )
-    root = Path(plan.resolved_config.output_root)
-    finalist_artifact_count = 0
-    for method in plan.methods:
-        selection_root = root / "selection" / method
-        finalist_paths = (
-            (
-                selection_root / "primary-tuning-finalists.json",
-                TuningFinalistsArtifact,
-                expected_finalists[(method, CmnistSelector.PRIMARY_ROBUST)],
-            ),
-            (
-                selection_root / "secondary-tuning-finalists.json",
-                TuningFinalistsArtifact,
-                expected_finalists[(method, CmnistSelector.SECONDARY_SOURCE)],
-            ),
-            (
-                selection_root / "confirmation-union.json",
-                FinalistUnion,
-                expected_unions[method],
-            ),
-        )
-        for path, artifact_type, expected in finalist_paths:
+
+    def winner_count(
+        winners: dict[tuple[MethodId, CmnistSelector], FrozenCandidateSelection],
+        root: Path,
+    ) -> int:
+        count = 0
+        for identity, expected in winners.items():
+            method, selector = identity
+            path = root / "selection" / method / f"{selector.value}-winner.json"
             if not path.exists():
                 continue
-            finalist_artifact_count += 1
-            observed = artifact_type.model_validate_json(
+            count += 1
+            observed = FrozenCandidateSelection.model_validate_json(
                 path.read_text(encoding="utf-8")
             )
             if observed != expected:
                 raise ValueError(
-                    f"CMNIST selection artifact does not match canonical tuning "
+                    "CMNIST frozen winner does not match canonical confirmation "
                     f"results: {path}"
                 )
-    if finalist_artifact_count != len(plan.methods) * (len(config.selectors) + 1):
-        return ProductionSearchStatus(
-            schema_version="grit.production-search-status/v1",
-            dataset="cmnist",
-            plan_digest=plan.canonical_digest(),
-            phase="confirmation",
-            tuning_expected=len(tuning),
-            tuning_complete=complete,
-            confirmation_expected=0,
-            confirmation_complete=0,
-            frozen_winner_count=0,
-            final_expected=0,
-            final_complete=0,
+        return count
+
+    def final_tasks(
+        winners: dict[tuple[MethodId, CmnistSelector], FrozenCandidateSelection],
+    ) -> tuple[SearchRunTask, ...]:
+        return tuple(
+            make_final_search_task(
+                plan,
+                by_id[winner.candidate_id],
+                seed,
+                winner,
+            )
+            for winner in winners.values()
+            for seed in config.seeds.stages.final
         )
-    by_id = {item.candidate_id: item for item in plan.candidates}
-    confirmation = tuple(
-        make_search_task(
-            plan,
-            planned_candidate(by_id, candidate_id),
-            SeedStage.CONFIRMATION,
-            seed,
-        )
-        for method in plan.methods
-        for candidate_id in expected_unions[method].confirmation_candidate_ids
-        for seed in config.seeds.stages.confirmation
+
+    hooks = ProductionStatusHooks(
+        coerce_runs=coerce_runs,
+        compute_finalists=lambda runs: compute_cmnist_finalists(plan, runs),
+        finalists_complete=finalists_complete,
+        confirmation_tasks=confirmation_tasks,
+        compute_winners=lambda state, runs: compute_cmnist_winners(
+            plan, state[0], runs
+        ),
+        winner_count=winner_count,
+        expected_winner_count=len(plan.methods) * len(config.selectors),
+        final_tasks=final_tasks,
     )
-    confirmation_status = scheduler.status(confirmation)
-    confirmation_complete = len(confirmation_status.complete_task_ids)
-    if confirmation_complete != len(confirmation):
-        return ProductionSearchStatus(
-            schema_version="grit.production-search-status/v1",
-            dataset="cmnist",
-            plan_digest=plan.canonical_digest(),
-            phase="confirmation",
-            tuning_expected=len(tuning),
-            tuning_complete=complete,
-            confirmation_expected=len(confirmation),
-            confirmation_complete=confirmation_complete,
-            frozen_winner_count=0,
-            final_expected=0,
-            final_complete=0,
-        )
-    confirmation_runs_untyped = scheduler.completed_results(confirmation)
-    if any(
-        not isinstance(run, CmnistCompletedStageRun)
-        for run in confirmation_runs_untyped
-    ):
-        raise ValueError("CMNIST confirmation stage contains another dataset result")
-    confirmation_runs = cast(
-        tuple[CmnistCompletedStageRun, ...], confirmation_runs_untyped
-    )
-    expected_winners = compute_cmnist_winners(
-        plan, expected_finalists, confirmation_runs
-    )
-    winner_count = 0
-    for method in plan.methods:
-        for selector in (
-            CmnistSelector.PRIMARY_ROBUST,
-            CmnistSelector.SECONDARY_SOURCE,
-        ):
-            path = root / "selection" / method / f"{selector.value}-winner.json"
-            if path.exists():
-                winner_count += 1
-                observed = FrozenCandidateSelection.model_validate_json(
-                    path.read_text(encoding="utf-8")
-                )
-                if observed != expected_winners[(method, selector)]:
-                    raise ValueError(
-                        "CMNIST frozen winner does not match canonical confirmation "
-                        f"results: {path}"
-                    )
-    if winner_count != len(plan.methods) * len(config.selectors):
-        return ProductionSearchStatus(
-            schema_version="grit.production-search-status/v1",
-            dataset="cmnist",
-            plan_digest=plan.canonical_digest(),
-            phase="final",
-            tuning_expected=len(tuning),
-            tuning_complete=complete,
-            confirmation_expected=len(confirmation),
-            confirmation_complete=confirmation_complete,
-            frozen_winner_count=winner_count,
-            final_expected=0,
-            final_complete=0,
-        )
-    final = tuple(
-        make_final_search_task(
-            plan,
-            planned_candidate(by_id, winner.candidate_id),
-            seed,
-            winner,
-        )
-        for winner in expected_winners.values()
-        for seed in config.seeds.stages.final
-    )
-    final_status = scheduler.status(final)
-    final_complete = len(final_status.complete_task_ids)
-    phase: Literal["final", "complete"] = "final"
-    if final_complete == len(final) and complete_outputs_valid(plan):
-        phase = "complete"
-    return ProductionSearchStatus(
-        schema_version="grit.production-search-status/v1",
-        dataset="cmnist",
-        plan_digest=plan.canonical_digest(),
-        phase=phase,
-        tuning_expected=len(tuning),
-        tuning_complete=complete,
-        confirmation_expected=len(confirmation),
-        confirmation_complete=confirmation_complete,
-        frozen_winner_count=4,
-        final_expected=len(final),
-        final_complete=final_complete,
-    )
+    return production_lifecycle_status(plan, hooks)

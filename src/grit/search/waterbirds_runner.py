@@ -47,6 +47,7 @@ from grit.features.waterbirds import (
 )
 from grit.methods.projection import FittedLinearProjection
 from grit.methods.training import (
+    OrdinaryLinearProbeMethod,
     PersistedLinearCheckpointStore,
     persist_selected_linear_checkpoint,
 )
@@ -493,12 +494,14 @@ def _train(
         candidate.config.training,
         run_id=run_id,
         candidate_id=candidate.candidate_id,
-        method_id=candidate.config.method_id,
         scientific_config_digest=candidate.config.scientific_config_digest(),
         seed_stage=stage,
         seed=seed,
-        projection=candidate.projection,
-        projection_rank=candidate.config.projection_rank,
+        method=OrdinaryLinearProbeMethod(
+            method_id=candidate.config.method_id,
+            projection=candidate.projection,
+            projection_rank=candidate.config.projection_rank,
+        ),
     )
 
 

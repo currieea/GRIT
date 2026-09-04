@@ -1,11 +1,11 @@
-"""Frozen-feature linear-probe training for implemented CMNIST methods."""
+"""Shared frozen-feature linear-probe methods, training, and checkpoints."""
 
 from __future__ import annotations
 
 import hashlib
 import math
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
 from typing import Literal, Protocol, cast
@@ -15,18 +15,11 @@ import torch
 from numpy.typing import NDArray
 from pydantic import StrictInt, StrictStr
 
-from grit.config import (
-    GroupDroAlgorithmConfig,
-    IrmAlgorithmConfig,
-    LinearProbeTrainingConfig,
-    RexAlgorithmConfig,
-)
+from grit.config import LinearProbeTrainingConfig
 from grit.features.cmnist import FeatureTable
 from grit.methods.checkpoints import CheckpointStore, StoredCheckpoint
 from grit.methods.groupdro import (
-    CMNIST_GROUP_COUNT,
     GroupDroObjective,
-    cmnist_group_ids,
     group_balanced_epoch_indices,
 )
 from grit.methods.invariance import (
@@ -160,6 +153,262 @@ class LinearProbeAlgorithm:
         return prepared
 
 
+class LinearProbeTrainingMethod(Protocol):
+    """One method's batching, objective, and projection for a linear-probe run."""
+
+    @property
+    def method_id(self) -> MethodId: ...
+
+    @property
+    def projection(self) -> FittedLinearProjection | None: ...
+
+    @property
+    def projection_rank(self) -> int | None: ...
+
+    def epoch_batches(
+        self,
+        *,
+        row_count: int,
+        batch_size: int,
+        generator: torch.Generator,
+    ) -> tuple[torch.Tensor, ...]: ...
+
+    def update(
+        self,
+        algorithm: LinearProbeAlgorithm,
+        features: torch.Tensor,
+        targets: torch.Tensor,
+        rows: torch.Tensor,
+    ) -> float: ...
+
+
+@dataclass(frozen=True, slots=True)
+class OrdinaryLinearProbeMethod:
+    """ERM-style minibatches, optionally preceded by a frozen GRIT projection."""
+
+    method_id: MethodId
+    projection: FittedLinearProjection | None
+    projection_rank: int | None
+
+    def __post_init__(self) -> None:
+        if self.method_id not in ("erm", "grit"):
+            raise ValueError("ordinary linear-probe updates support only ERM and GRIT")
+        projected = self.projection is not None and self.projection_rank is not None
+        if self.method_id == "erm" and (
+            self.projection is not None or self.projection_rank is not None
+        ):
+            raise ValueError("ERM cannot use a projection")
+        if self.method_id == "grit" and not projected:
+            raise ValueError("GRIT requires a fitted projection and rank")
+
+    def epoch_batches(
+        self,
+        *,
+        row_count: int,
+        batch_size: int,
+        generator: torch.Generator,
+    ) -> tuple[torch.Tensor, ...]:
+        return _random_epoch_batches(row_count, batch_size, generator)
+
+    def update(
+        self,
+        algorithm: LinearProbeAlgorithm,
+        features: torch.Tensor,
+        targets: torch.Tensor,
+        rows: torch.Tensor,
+    ) -> float:
+        return algorithm.update(features[rows], targets[rows])
+
+
+@dataclass(slots=True)
+class GroupDroLinearProbeMethod:
+    """Group-balanced epochs and the stateful GroupDRO robust objective."""
+
+    group_ids: torch.Tensor
+    group_count: int
+    step_size: float
+    method_id: Literal["groupdro"] = field(init=False, default="groupdro")
+    projection: None = field(init=False, default=None)
+    projection_rank: None = field(init=False, default=None)
+    _objective: GroupDroObjective = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self.group_ids = self.group_ids.detach().cpu().to(torch.int64)
+        self._objective = GroupDroObjective(
+            group_count=self.group_count,
+            step_size=self.step_size,
+        )
+
+    def epoch_batches(
+        self,
+        *,
+        row_count: int,
+        batch_size: int,
+        generator: torch.Generator,
+    ) -> tuple[torch.Tensor, ...]:
+        _require_aligned_ids(self.group_ids, row_count, "group")
+        permutation = group_balanced_epoch_indices(
+            self.group_ids,
+            group_count=self.group_count,
+            generator=generator,
+        )
+        return _batch_indices(permutation, batch_size)
+
+    def update(
+        self,
+        algorithm: LinearProbeAlgorithm,
+        features: torch.Tensor,
+        targets: torch.Tensor,
+        rows: torch.Tensor,
+    ) -> float:
+        batch_groups = self.group_ids[rows]
+        return algorithm.update_with_objective(
+            features[rows],
+            targets[rows],
+            lambda losses: self._objective(losses, batch_groups),
+        )
+
+
+@dataclass(slots=True)
+class RexLinearProbeMethod:
+    """Environment-balanced epochs and an annealed V-REx objective."""
+
+    environment_ids: torch.Tensor
+    environment_count: int
+    penalty_weight: float
+    penalty_anneal_updates: int
+    method_id: Literal["rex"] = field(init=False, default="rex")
+    projection: None = field(init=False, default=None)
+    projection_rank: None = field(init=False, default=None)
+    _update_count: int = field(init=False, default=0, repr=False)
+
+    def __post_init__(self) -> None:
+        self.environment_ids = self.environment_ids.detach().cpu().to(torch.int64)
+
+    def epoch_batches(
+        self,
+        *,
+        row_count: int,
+        batch_size: int,
+        generator: torch.Generator,
+    ) -> tuple[torch.Tensor, ...]:
+        _require_aligned_ids(self.environment_ids, row_count, "environment")
+        return environment_balanced_epoch_batches(
+            self.environment_ids,
+            environment_count=self.environment_count,
+            batch_size=batch_size,
+            generator=generator,
+        )
+
+    def update(
+        self,
+        algorithm: LinearProbeAlgorithm,
+        features: torch.Tensor,
+        targets: torch.Tensor,
+        rows: torch.Tensor,
+    ) -> float:
+        penalty_weight = annealed_penalty_weight(
+            self.penalty_weight,
+            anneal_updates=self.penalty_anneal_updates,
+            update_count=self._update_count,
+        )
+        batch_environments = self.environment_ids[rows]
+        loss = algorithm.update_with_objective(
+            features[rows],
+            targets[rows],
+            partial(
+                vrex_objective,
+                environment_ids=batch_environments,
+                environment_count=self.environment_count,
+                penalty_weight=penalty_weight,
+            ),
+        )
+        self._update_count += 1
+        return loss
+
+
+@dataclass(slots=True)
+class IrmLinearProbeMethod:
+    """Environment-balanced epochs and an annealed IRMv1 objective."""
+
+    environment_ids: torch.Tensor
+    environment_count: int
+    penalty_weight: float
+    penalty_anneal_updates: int
+    method_id: Literal["irm"] = field(init=False, default="irm")
+    projection: None = field(init=False, default=None)
+    projection_rank: None = field(init=False, default=None)
+    _update_count: int = field(init=False, default=0, repr=False)
+
+    def __post_init__(self) -> None:
+        self.environment_ids = self.environment_ids.detach().cpu().to(torch.int64)
+
+    def epoch_batches(
+        self,
+        *,
+        row_count: int,
+        batch_size: int,
+        generator: torch.Generator,
+    ) -> tuple[torch.Tensor, ...]:
+        _require_aligned_ids(self.environment_ids, row_count, "environment")
+        return environment_balanced_epoch_batches(
+            self.environment_ids,
+            environment_count=self.environment_count,
+            batch_size=batch_size,
+            generator=generator,
+        )
+
+    def update(
+        self,
+        algorithm: LinearProbeAlgorithm,
+        features: torch.Tensor,
+        targets: torch.Tensor,
+        rows: torch.Tensor,
+    ) -> float:
+        penalty_weight = annealed_penalty_weight(
+            self.penalty_weight,
+            anneal_updates=self.penalty_anneal_updates,
+            update_count=self._update_count,
+        )
+        batch_environments = self.environment_ids[rows]
+        loss = algorithm.update_with_logits_objective(
+            features[rows],
+            targets[rows],
+            partial(
+                irmv1_objective,
+                environment_ids=batch_environments,
+                environment_count=self.environment_count,
+                penalty_weight=penalty_weight,
+            ),
+        )
+        self._update_count += 1
+        return loss
+
+
+def _random_epoch_batches(
+    row_count: int,
+    batch_size: int,
+    generator: torch.Generator,
+) -> tuple[torch.Tensor, ...]:
+    return _batch_indices(torch.randperm(row_count, generator=generator), batch_size)
+
+
+def _batch_indices(
+    permutation: torch.Tensor, batch_size: int
+) -> tuple[torch.Tensor, ...]:
+    if batch_size <= 0:
+        raise ValueError("linear-probe batch size must be positive")
+    return tuple(
+        permutation[start : start + batch_size]
+        for start in range(0, len(permutation), batch_size)
+    )
+
+
+def _require_aligned_ids(ids: torch.Tensor, row_count: int, kind: str) -> None:
+    if ids.ndim != 1 or int(ids.shape[0]) != row_count:
+        raise ValueError(f"training-{kind} IDs must align with training rows")
+
+
 class InMemoryLinearCheckpointStore(CheckpointStore[LinearProbeState]):
     """Epoch-candidate store; only the selected state is persisted by the runner."""
 
@@ -197,6 +446,74 @@ class TrainedLinearProbeRun:
     epoch_losses: tuple[float, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class TrainedLinearProbeCore:
+    """Dataset-neutral output of the shared linear-probe epoch lifecycle."""
+
+    store: InMemoryLinearCheckpointStore
+    algorithm: LinearProbeAlgorithm
+    epoch_losses: tuple[float, ...]
+
+
+def train_linear_probe_epochs(
+    train_features: torch.Tensor,
+    train_targets: torch.Tensor,
+    config: LinearProbeTrainingConfig,
+    *,
+    run_id: str,
+    candidate_id: str,
+    scientific_config_digest: str,
+    seed: int,
+    method: LinearProbeTrainingMethod,
+    validate_epoch: Callable[[LinearProbeAlgorithm, CheckpointIdentity], None],
+) -> TrainedLinearProbeCore:
+    """Train one method and hand each saved epoch to dataset-specific validation."""
+
+    features = train_features.detach().cpu().to(torch.float32)
+    targets = train_targets.detach().cpu().to(torch.int64)
+    if features.ndim != 2 or int(features.shape[0]) == 0:
+        raise ValueError("linear probe training features must be a non-empty matrix")
+    if targets.ndim != 1 or int(targets.shape[0]) != int(features.shape[0]):
+        raise ValueError("linear probe training targets must align with features")
+    torch.use_deterministic_algorithms(True)
+    algorithm = LinearProbeAlgorithm(
+        config,
+        model_seed=seed,
+        projection=method.projection,
+    )
+    generator = torch.Generator(device="cpu").manual_seed(seed)
+    store = InMemoryLinearCheckpointStore(store_id=f"memory:{run_id}")
+    epoch_losses: list[float] = []
+    row_count = int(features.shape[0])
+    for epoch in range(1, config.max_epochs + 1):
+        row_batches = method.epoch_batches(
+            row_count=row_count,
+            batch_size=int(config.batch_size),
+            generator=generator,
+        )
+        if not row_batches:
+            raise ValueError("linear-probe method produced an empty epoch")
+        batch_losses = tuple(
+            method.update(algorithm, features, targets, rows)
+            for rows in row_batches
+        )
+        epoch_losses.append(sum(batch_losses) / len(batch_losses))
+        identity = CheckpointIdentity(
+            checkpoint_id=f"checkpoint:{run_id}:epoch:{epoch}",
+            candidate_id=candidate_id,
+            run_id=run_id,
+            scientific_config_digest=scientific_config_digest,
+            epoch=epoch,
+        )
+        store.save(identity, algorithm.capture_inference_state())
+        validate_epoch(algorithm, identity)
+    return TrainedLinearProbeCore(
+        store=store,
+        algorithm=algorithm,
+        epoch_losses=tuple(epoch_losses),
+    )
+
+
 def train_linear_probe(
     training_tables: tuple[FeatureTable, FeatureTable],
     validation_tables: tuple[FeatureTable, FeatureTable, FeatureTable],
@@ -204,194 +521,62 @@ def train_linear_probe(
     *,
     run_id: str,
     candidate_id: str,
-    method_id: MethodId,
     scientific_config_digest: str,
     seed_stage: SeedStage,
     seed: int,
-    projection: FittedLinearProjection | None,
-    projection_rank: int | None,
-    groupdro: GroupDroAlgorithmConfig | None = None,
-    rex: RexAlgorithmConfig | None = None,
-    irm: IrmAlgorithmConfig | None = None,
-    environment_ids: torch.Tensor | None = None,
+    method: LinearProbeTrainingMethod,
 ) -> TrainedLinearProbeRun:
     """Run trainer-owned epoch/batch iteration and emit validation every epoch."""
 
-    if method_id in ("erm", "groupdro", "rex", "irm") and projection is not None:
-        raise ValueError(
-            "ERM, GroupDRO, REx, and IRM must train on unprojected features"
-        )
-    if method_id == "grit" and projection is None:
-        raise ValueError("GRIT requires a fitted projection")
-    if (
-        method_id in ("erm", "groupdro", "rex", "irm")
-        and projection_rank is not None
-    ):
-        raise ValueError(
-            "ERM, GroupDRO, REx, and IRM cannot declare a projection rank"
-        )
-    if method_id == "grit" and projection_rank is None:
-        raise ValueError("GRIT must declare its projection rank")
-    if (method_id == "groupdro") != (groupdro is not None):
-        raise ValueError("GroupDRO runs require exactly one GroupDRO configuration")
-    if groupdro is not None and groupdro.group_definition != "target_color":
-        raise ValueError("CMNIST GroupDRO requires target-color groups")
-    if (method_id == "rex") != (rex is not None):
-        raise ValueError("REx runs require exactly one REx configuration")
-    if (method_id == "irm") != (irm is not None):
-        raise ValueError("IRM runs require exactly one IRM configuration")
-    if (rex is not None or irm is not None) != (environment_ids is not None):
-        raise ValueError("REx and IRM runs require explicit training-environment IDs")
-    torch.use_deterministic_algorithms(True)
-    algorithm = LinearProbeAlgorithm(config, model_seed=seed, projection=projection)
     train_features = torch.cat(
         [table.features for table in training_tables], dim=0
     ).to(torch.float32)
     train_targets = torch.cat(
         [table.targets for table in training_tables], dim=0
     ).to(torch.int64)
-    train_groups = (
-        cmnist_group_ids(
-            train_targets,
-            torch.cat([table.colors for table in training_tables], dim=0),
-        )
-        if groupdro is not None
-        else None
-    )
-    if int(train_features.shape[0]) == 0:
-        raise ValueError("linear probe training data must be non-empty")
-    train_environments = (
-        environment_ids.detach().cpu().to(torch.int64)
-        if environment_ids is not None
-        else None
-    )
-    if (
-        train_environments is not None
-        and train_environments.shape != train_targets.shape
-    ):
-        raise ValueError("training-environment IDs must align with training rows")
-
-    generator = torch.Generator(device="cpu").manual_seed(seed)
-    groupdro_objective = (
-        GroupDroObjective(
-            group_count=CMNIST_GROUP_COUNT,
-            step_size=float(groupdro.adversarial_step_size),
-        )
-        if groupdro is not None
-        else None
-    )
-    store = InMemoryLinearCheckpointStore(store_id=f"memory:{run_id}")
     metrics: list[ValidationMetricRecord] = []
-    epoch_losses: list[float] = []
-    update_count = 0
-    for epoch in range(1, config.max_epochs + 1):
-        if train_environments is not None:
-            row_batches = environment_balanced_epoch_batches(
-                train_environments,
-                batch_size=int(config.batch_size),
-                generator=generator,
-            )
-        else:
-            permutation = (
-                torch.randperm(int(train_features.shape[0]), generator=generator)
-                if train_groups is None
-                else group_balanced_epoch_indices(
-                    train_groups,
-                    group_count=CMNIST_GROUP_COUNT,
-                    generator=generator,
-                )
-            )
-            row_batches = tuple(
-                permutation[start : start + config.batch_size]
-                for start in range(0, len(permutation), config.batch_size)
-            )
-        batch_losses: list[float] = []
-        for rows in row_batches:
-            if rex is not None and train_environments is not None:
-                batch_environments = train_environments[rows]
-                penalty_weight = annealed_penalty_weight(
-                    float(rex.penalty_weight),
-                    anneal_updates=int(rex.penalty_anneal_updates),
-                    update_count=update_count,
-                )
 
-                batch_loss = algorithm.update_with_objective(
-                    train_features[rows],
-                    train_targets[rows],
-                    partial(
-                        vrex_objective,
-                        environment_ids=batch_environments,
-                        penalty_weight=penalty_weight,
-                    ),
-                )
-                update_count += 1
-            elif irm is not None and train_environments is not None:
-                batch_environments = train_environments[rows]
-                penalty_weight = annealed_penalty_weight(
-                    float(irm.penalty_weight),
-                    anneal_updates=int(irm.penalty_anneal_updates),
-                    update_count=update_count,
-                )
-                batch_loss = algorithm.update_with_logits_objective(
-                    train_features[rows],
-                    train_targets[rows],
-                    partial(
-                        irmv1_objective,
-                        environment_ids=batch_environments,
-                        penalty_weight=penalty_weight,
-                    ),
-                )
-                update_count += 1
-            elif train_groups is None or groupdro_objective is None:
-                batch_loss = algorithm.update(
-                    train_features[rows], train_targets[rows]
-                )
-            else:
-                batch_groups = train_groups[rows]
-                batch_loss = algorithm.update_with_objective(
-                    train_features[rows],
-                    train_targets[rows],
-                    lambda losses, groups=batch_groups: groupdro_objective(
-                        losses, groups
-                    ),
-                )
-            batch_losses.append(batch_loss)
-        epoch_losses.append(sum(batch_losses) / len(batch_losses))
-        checkpoint_id = f"checkpoint:{run_id}:epoch:{epoch}"
-        identity = CheckpointIdentity(
-            checkpoint_id=checkpoint_id,
-            candidate_id=candidate_id,
-            run_id=run_id,
-            scientific_config_digest=scientific_config_digest,
-            epoch=epoch,
-        )
-        store.save(identity, algorithm.capture_inference_state())
+    def validate_epoch(
+        algorithm: LinearProbeAlgorithm, identity: CheckpointIdentity
+    ) -> None:
         metrics.extend(
             _validation_metrics(
                 algorithm,
                 validation_tables,
                 run_id=run_id,
                 candidate_id=candidate_id,
-                method_id=method_id,
+                method_id=method.method_id,
                 scientific_config_digest=scientific_config_digest,
                 seed_stage=seed_stage,
                 seed=seed,
-                checkpoint_id=checkpoint_id,
-                epoch=epoch,
-                projection_rank=projection_rank,
+                checkpoint_id=identity.checkpoint_id,
+                epoch=identity.epoch,
+                projection_rank=method.projection_rank,
             )
         )
+
+    core = train_linear_probe_epochs(
+        train_features,
+        train_targets,
+        config,
+        run_id=run_id,
+        candidate_id=candidate_id,
+        scientific_config_digest=scientific_config_digest,
+        seed=seed,
+        method=method,
+        validate_epoch=validate_epoch,
+    )
     return TrainedLinearProbeRun(
         run_id=run_id,
         candidate_id=candidate_id,
-        method_id=method_id,
+        method_id=method.method_id,
         seed_stage=seed_stage,
         seed=seed,
-        projection_rank=projection_rank,
+        projection_rank=method.projection_rank,
         validation_metrics=tuple(metrics),
-        store=store,
-        algorithm=algorithm,
-        epoch_losses=tuple(epoch_losses),
+        store=core.store,
+        algorithm=core.algorithm,
+        epoch_losses=core.epoch_losses,
     )
 
 

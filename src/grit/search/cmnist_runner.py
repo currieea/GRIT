@@ -61,6 +61,7 @@ from grit.methods.checkpoints import restore_checkpoint
 from grit.methods.projection import FittedLinearProjection, fit_linear_projection
 from grit.methods.training import (
     MethodId,
+    OrdinaryLinearProbeMethod,
     PersistedLinearCheckpointStore,
     TrainedLinearProbeRun,
     evaluate_accuracy,
@@ -676,12 +677,14 @@ def _train_candidate(
         candidate.config.training,
         run_id=run_id,
         candidate_id=candidate.candidate_id,
-        method_id=method_id,
         scientific_config_digest=candidate.config.scientific_config_digest(),
         seed_stage=stage,
         seed=seed,
-        projection=candidate.projection,
-        projection_rank=rank,
+        method=OrdinaryLinearProbeMethod(
+            method_id=method_id,
+            projection=candidate.projection,
+            projection_rank=rank,
+        ),
     )
 
 
