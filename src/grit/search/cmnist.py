@@ -23,6 +23,7 @@ from grit.config import (
     FrozenFeatureConfig,
     GritAlgorithmConfig,
     GroupDroAlgorithmConfig,
+    IrmAlgorithmConfig,
     LinearProbeTrainingConfig,
     LinearProjectionConfig,
     OraclePairsConfig,
@@ -525,6 +526,23 @@ def materialize_cmnist_candidate_config(
             loss_rescaling="divide_by_penalty_weight_above_one",
         )
         pair_digest = None
+    elif candidate.method_id == "irm":
+        penalty_weight = candidate.penalty_weight
+        anneal_updates = config.search_space.irm_penalty_anneal_updates
+        if penalty_weight is None or anneal_updates is None:
+            raise AssertionError("planned IRM candidate lacks its settings")
+        pairs = DisabledPairsConfig(kind="disabled")
+        projection = DisabledProjectionConfig(kind="disabled")
+        algorithm = IrmAlgorithmConfig(
+            kind="irm",
+            environment_names=("train_e01", "train_e02"),
+            penalty_weight=penalty_weight,
+            penalty_anneal_updates=anneal_updates,
+            penalty="irmv1_dummy_classifier_scale",
+            sampling="environment_balanced_without_replacement",
+            loss_rescaling="divide_by_penalty_weight_above_one",
+        )
+        pair_digest = None
     else:
         raise AssertionError(
             f"CMNIST config materializer is missing {candidate.method_id}"
@@ -587,11 +605,19 @@ def _train_cmnist_task(
         if isinstance(runtime.config.algorithm, RexAlgorithmConfig)
         else None
     )
+    irm = (
+        runtime.config.algorithm
+        if isinstance(runtime.config.algorithm, IrmAlgorithmConfig)
+        else None
+    )
     environment_ids: torch.Tensor | None = None
-    if rex is not None:
+    invariant = rex if rex is not None else irm
+    if invariant is not None:
         names = tuple(table.name for table in training_tables)
-        if names != rex.environment_names:
-            raise ValueError("REx training tables do not match configured environments")
+        if names != invariant.environment_names:
+            raise ValueError(
+                "invariant training tables do not match configured environments"
+            )
         environment_ids = torch.cat(
             [
                 torch.full((len(table.source_ids),), index, dtype=torch.int64)
@@ -616,6 +642,7 @@ def _train_cmnist_task(
             else None
         ),
         rex=rex,
+        irm=irm,
         environment_ids=environment_ids,
     )
 

@@ -54,10 +54,12 @@ from grit.search.cmnist_runner import (
 )
 from grit.search.plan import (
     APPROVED_GROUPDRO_STEP_SIZES,
+    APPROVED_IRM_PENALTY_WEIGHTS,
     APPROVED_LEARNING_RATES,
     APPROVED_RANKS,
     APPROVED_REX_PENALTY_WEIGHTS,
     APPROVED_WEIGHT_DECAYS,
+    INVARIANCE_PENALTY_ANNEAL_UPDATES,
     CmnistProductionSearchConfig,
     ResolvedProductionSearchConfig,
     SearchArtifactPaths,
@@ -169,6 +171,9 @@ def test_checked_production_examples_match_preparation_layout_and_seeds(
     cmnist_rex = load_production_search_config(
         repository / "configs/cmnist/rex-search.yaml"
     )
+    cmnist_irm = load_production_search_config(
+        repository / "configs/cmnist/irm-search.yaml"
+    )
     waterbirds = load_production_search_config(
         repository / "configs/waterbirds/production-search.yaml"
     )
@@ -200,8 +205,21 @@ def test_checked_production_examples_match_preparation_layout_and_seeds(
     assert cmnist_rex.search_space.rex_penalty_weights == (
         APPROVED_REX_PENALTY_WEIGHTS
     )
-    assert cmnist_rex.search_space.rex_penalty_anneal_updates == 100
+    assert (
+        cmnist_rex.search_space.rex_penalty_anneal_updates
+        == INVARIANCE_PENALTY_ANNEAL_UPDATES
+    )
     assert cmnist_rex.output_root == "/scratch/outputs/cmnist-rex"
+    assert isinstance(cmnist_irm, CmnistProductionSearchConfig)
+    assert cmnist_irm.search_space.methods == ("irm",)
+    assert cmnist_irm.search_space.irm_penalty_weights == (
+        APPROVED_IRM_PENALTY_WEIGHTS
+    )
+    assert (
+        cmnist_irm.search_space.irm_penalty_anneal_updates
+        == INVARIANCE_PENALTY_ANNEAL_UPDATES
+    )
+    assert cmnist_irm.output_root == "/scratch/outputs/cmnist-irmv1"
 
     assert waterbirds.seeds.construction == DEFAULT_CONSTRUCTION_SEED
     waterbirds_root = "/scratch/artifacts/waterbirds-none/"
@@ -2508,6 +2526,142 @@ def test_cmnist_rex_only_grid_plans_materializes_and_selects_pilot(
         plan.candidates[0].scientific_config_digest
     )
     assert pilot_candidates(plan) == (plan.candidates[0],)
+
+
+def test_cmnist_irm_only_grid_plans_materializes_and_selects_pilot(
+    tmp_path: Path,
+) -> None:
+    config_path, _ = _write_cmnist_production_config(
+        tmp_path,
+        output_root=tmp_path / "irm-output",
+        overrides={
+            "experiment_name": "cmnist-irm",
+            "search_space": {
+                "methods": ["irm"],
+                "learning_rates": [0.0001, 0.0003, 0.001, 0.003],
+                "weight_decays": [0.0, 0.00001, 0.0001, 0.001],
+                "irm_penalty_weights": list(APPROVED_IRM_PENALTY_WEIGHTS),
+                "irm_penalty_anneal_updates": 100,
+            },
+        },
+    )
+    plan = plan_production_search(config_path)
+    assert plan.methods == ("irm",)
+    assert len(plan.candidates) == 64
+    assert plan.expected_run_counts.tuning == 192
+    assert plan.expected_run_counts.final == 20
+    assert {item.penalty_weight for item in plan.candidates} == set(
+        APPROVED_IRM_PENALTY_WEIGHTS
+    )
+    assert {item.requested_rank for item in plan.candidates} == {None}
+    resolved = materialize_cmnist_candidate_config(
+        plan, plan.candidates[0], CmnistSelector.PRIMARY_ROBUST
+    )
+    assert resolved.algorithm.kind == "irm"
+    assert resolved.artifact_lineage is not None
+    assert resolved.artifact_lineage.pair_manifest_digest is None
+    assert resolved.scientific_config_digest() == (
+        plan.candidates[0].scientific_config_digest
+    )
+    assert pilot_candidates(plan) == (plan.candidates[0],)
+
+
+@pytest.mark.parametrize(
+    ("method", "method_space"),
+    (
+        (
+            "rex",
+            {
+                "rex_penalty_weights": list(APPROVED_REX_PENALTY_WEIGHTS),
+                "rex_penalty_anneal_updates": 100,
+            },
+        ),
+        (
+            "irm",
+            {
+                "irm_penalty_weights": list(APPROVED_IRM_PENALTY_WEIGHTS),
+                "irm_penalty_anneal_updates": 100,
+            },
+        ),
+    ),
+)
+def test_cmnist_invariant_method_pilot_runs_one_real_training_task(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    method: Literal["rex", "irm"],
+    method_space: dict[str, object],
+) -> None:
+    config_path, _ = _write_cmnist_production_config(
+        tmp_path / method,
+        output_root=tmp_path / f"{method}-output",
+        overrides={
+            "experiment_name": f"cmnist-{method}-pilot",
+            "search_space": {
+                "methods": [method],
+                "learning_rates": [0.001],
+                "weight_decays": [0.0, 0.0001, 0.001],
+                **method_space,
+            },
+            "max_epochs": 1,
+        },
+    )
+    plan = plan_production_search(config_path)
+    candidate = pilot_candidates(plan)[0]
+
+    def table(
+        name: str,
+        role: Literal["training", "validation"],
+        seed: int,
+    ) -> FeatureTable:
+        features = torch.randn(
+            (8, 512), generator=torch.Generator(device="cpu").manual_seed(seed)
+        )
+        targets = (features[:, 0] > 0).to(torch.int64)
+        return FeatureTable(
+            name=name,
+            role=role,
+            source_ids=tuple(f"source:{name}:{index}" for index in range(8)),
+            features=features,
+            digits=targets * 5,
+            clean_labels=targets,
+            targets=targets,
+            colors=targets,
+        )
+
+    class _PilotCache:
+        def training_tables(self) -> tuple[FeatureTable, FeatureTable]:
+            return (
+                table("train_e01", "training", 1),
+                table("train_e02", "training", 2),
+            )
+
+        def validation_tables(
+            self,
+        ) -> tuple[FeatureTable, FeatureTable, FeatureTable]:
+            return (
+                table("val_e01", "validation", 3),
+                table("val_e02", "validation", 4),
+                table("val_e05", "validation", 5),
+            )
+
+    def fake_cache_loader(
+        _plan: SearchPlan, *, tuning_only: bool = False
+    ) -> _PilotCache:
+        return _PilotCache()
+
+    monkeypatch.setattr("grit.search.cmnist._load_cmnist_cache", fake_cache_loader)
+    result = run_production_search(
+        config_path,
+        ProductionExecutionLimits(
+            stop_after="tuning",
+            method=method,
+            candidate_ids=(candidate.candidate_id,),
+            tuning_seed=plan.seeds.stages.tuning[0],
+            max_new_runs=1,
+        ),
+    )
+    assert isinstance(result, ProductionSearchStatus)
+    assert result.tuning_complete == 1
 
 
 def test_pair_count_above_prepared_bank_is_rejected(

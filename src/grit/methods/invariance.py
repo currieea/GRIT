@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 
 import torch
+import torch.nn.functional as functional
 
 CMNIST_TRAINING_ENVIRONMENT_COUNT = 2
 
@@ -97,6 +98,44 @@ def vrex_objective(
     mean_risk = risks.mean()
     penalty = ((risks - mean_risk) ** 2).mean()
     objective = mean_risk + penalty_weight * penalty
+    if penalty_weight > 1.0:
+        objective = objective / penalty_weight
+    return objective
+
+
+def irmv1_objective(
+    logits: torch.Tensor,
+    targets: torch.Tensor,
+    environment_ids: torch.Tensor,
+    *,
+    penalty_weight: float,
+) -> torch.Tensor:
+    """Compute the original scalar dummy-classifier IRMv1 objective."""
+
+    if logits.ndim != 2 or int(logits.shape[0]) == 0:
+        raise ValueError("IRMv1 logits must have shape [N, classes]")
+    if targets.ndim != 1 or int(targets.shape[0]) != int(logits.shape[0]):
+        raise ValueError("IRMv1 targets must align with logits")
+    per_example = functional.cross_entropy(logits, targets, reduction="none")
+    risks = environment_mean_losses(per_example, environment_ids)
+    ids = environment_ids.to(device=logits.device, dtype=torch.int64)
+    penalties: list[torch.Tensor] = []
+    for environment in range(CMNIST_TRAINING_ENVIRONMENT_COUNT):
+        mask = ids == environment
+        scale = torch.ones(
+            (), device=logits.device, dtype=logits.dtype
+        ).requires_grad_()
+        scaled_risk = functional.cross_entropy(
+            logits[mask] * scale,
+            targets[mask],
+        )
+        gradient = torch.autograd.grad(
+            scaled_risk,
+            scale,
+            create_graph=True,
+        )[0]
+        penalties.append(gradient.square())
+    objective = risks.mean() + penalty_weight * torch.stack(penalties).mean()
     if penalty_weight > 1.0:
         objective = objective / penalty_weight
     return objective

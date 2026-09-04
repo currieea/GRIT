@@ -17,6 +17,7 @@ from pydantic import StrictInt, StrictStr
 
 from grit.config import (
     GroupDroAlgorithmConfig,
+    IrmAlgorithmConfig,
     LinearProbeTrainingConfig,
     RexAlgorithmConfig,
 )
@@ -31,6 +32,7 @@ from grit.methods.groupdro import (
 from grit.methods.invariance import (
     annealed_penalty_weight,
     environment_balanced_epoch_batches,
+    irmv1_objective,
     vrex_objective,
 )
 from grit.methods.projection import FittedLinearProjection
@@ -89,14 +91,34 @@ class LinearProbeAlgorithm:
     ) -> float:
         """Update from an algorithm-specific reduction of per-example losses."""
 
+        def logits_objective(
+            logits: torch.Tensor, prepared_targets: torch.Tensor
+        ) -> torch.Tensor:
+            per_example = torch.nn.functional.cross_entropy(
+                logits, prepared_targets, reduction="none"
+            )
+            return objective(per_example)
+
+        return self.update_with_logits_objective(
+            features,
+            targets,
+            logits_objective,
+        )
+
+    def update_with_logits_objective(
+        self,
+        features: torch.Tensor,
+        targets: torch.Tensor,
+        objective: Callable[[torch.Tensor, torch.Tensor], torch.Tensor],
+    ) -> float:
+        """Update from an objective that needs logits and aligned targets."""
+
         self._model.train()
         prepared = self._prepare(features)
+        prepared_targets = targets.detach().cpu().to(torch.int64)
         self._optimizer.zero_grad(set_to_none=True)
         logits = self._model(prepared)
-        per_example = torch.nn.functional.cross_entropy(
-            logits, targets.to(torch.int64), reduction="none"
-        )
-        loss = objective(per_example)
+        loss = objective(logits, prepared_targets)
         if loss.ndim != 0 or not torch.isfinite(loss):
             raise ValueError("linear-probe objective must return one finite scalar")
         backward = cast(CallableWithoutArguments, loss.backward)
@@ -190,16 +212,24 @@ def train_linear_probe(
     projection_rank: int | None,
     groupdro: GroupDroAlgorithmConfig | None = None,
     rex: RexAlgorithmConfig | None = None,
+    irm: IrmAlgorithmConfig | None = None,
     environment_ids: torch.Tensor | None = None,
 ) -> TrainedLinearProbeRun:
     """Run trainer-owned epoch/batch iteration and emit validation every epoch."""
 
-    if method_id in ("erm", "groupdro", "rex") and projection is not None:
-        raise ValueError("ERM, GroupDRO, and REx must train on unprojected features")
+    if method_id in ("erm", "groupdro", "rex", "irm") and projection is not None:
+        raise ValueError(
+            "ERM, GroupDRO, REx, and IRM must train on unprojected features"
+        )
     if method_id == "grit" and projection is None:
         raise ValueError("GRIT requires a fitted projection")
-    if method_id in ("erm", "groupdro", "rex") and projection_rank is not None:
-        raise ValueError("ERM, GroupDRO, and REx cannot declare a projection rank")
+    if (
+        method_id in ("erm", "groupdro", "rex", "irm")
+        and projection_rank is not None
+    ):
+        raise ValueError(
+            "ERM, GroupDRO, REx, and IRM cannot declare a projection rank"
+        )
     if method_id == "grit" and projection_rank is None:
         raise ValueError("GRIT must declare its projection rank")
     if (method_id == "groupdro") != (groupdro is not None):
@@ -208,8 +238,10 @@ def train_linear_probe(
         raise ValueError("CMNIST GroupDRO requires target-color groups")
     if (method_id == "rex") != (rex is not None):
         raise ValueError("REx runs require exactly one REx configuration")
-    if (rex is not None) != (environment_ids is not None):
-        raise ValueError("REx runs require explicit training-environment IDs")
+    if (method_id == "irm") != (irm is not None):
+        raise ValueError("IRM runs require exactly one IRM configuration")
+    if (rex is not None or irm is not None) != (environment_ids is not None):
+        raise ValueError("REx and IRM runs require explicit training-environment IDs")
     torch.use_deterministic_algorithms(True)
     algorithm = LinearProbeAlgorithm(config, model_seed=seed, projection=projection)
     train_features = torch.cat(
@@ -288,6 +320,23 @@ def train_linear_probe(
                     train_targets[rows],
                     partial(
                         vrex_objective,
+                        environment_ids=batch_environments,
+                        penalty_weight=penalty_weight,
+                    ),
+                )
+                update_count += 1
+            elif irm is not None and train_environments is not None:
+                batch_environments = train_environments[rows]
+                penalty_weight = annealed_penalty_weight(
+                    float(irm.penalty_weight),
+                    anneal_updates=int(irm.penalty_anneal_updates),
+                    update_count=update_count,
+                )
+                batch_loss = algorithm.update_with_logits_objective(
+                    train_features[rows],
+                    train_targets[rows],
+                    partial(
+                        irmv1_objective,
                         environment_ids=batch_environments,
                         penalty_weight=penalty_weight,
                     ),

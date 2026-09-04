@@ -1,8 +1,7 @@
 # ColoredMNIST experiment protocol
 
-Status: **Implemented for ERM, oracle GRIT, and GroupDRO. V-REx and IRMv1 are
-specified for implementation. Conditional and nearest-neighbor pair definitions are
-still open.**
+Status: **Implemented for ERM, oracle GRIT, GroupDRO, V-REx, and IRMv1.
+Conditional and nearest-neighbor pair definitions are still open.**
 
 ## Purpose
 
@@ -462,9 +461,12 @@ update 100 onward. As in the authors' official CMNIST implementation, when the a
 coefficient exceeds 1 the whole objective is divided by that coefficient to keep gradient
 magnitudes controlled; this leaves its minimizer unchanged. The anneal point is fixed at
 100 rather than searched. The approved first-pass penalty grid is `10`, `100`, `1000`, and
-`10000`, spanning the DomainBed reference default through the official CMNIST code's
-default. Only the penalty coefficient is method-specific; the optimizer grid, epochs,
-seeds, checkpoint selection, and validation-only selectors are unchanged.
+`10000`, spanning the
+[DomainBed reference default](https://github.com/facebookresearch/DomainBed/blob/main/domainbed/hparams_registry.py)
+through the
+[official REx CMNIST code's default](https://github.com/capybaralet/REx_code_release/tree/master/InvariantRiskMinimization/colored_mnist).
+Only the penalty coefficient is method-specific; the optimizer grid, epochs, seeds,
+checkpoint selection, and validation-only selectors are unchanged.
 
 ## IRMv1 baseline
 
@@ -489,11 +491,13 @@ It is computed separately inside the actual `train_e01` and `train_e02` minibatc
 does not split one already-mixed batch in half. The coefficient is 1 before update 100 and
 the selected value thereafter, with the same whole-objective rescaling above 1 used by the
 authors' implementation. The approved first-pass penalty grid is `100`, `1000`, `10000`,
-and `100000`: it starts at the DomainBed reference default and covers the neighborhood of
-the roughly 91,000 coefficient selected by the original CMNIST study. The original study
-searched anneal points from 50 through 249; fixing 100 keeps the rewrite's method search
-focused on penalty strength and matches the official REx CMNIST default and inherited
-launcher without inheriting the latter's batching or test-selection errors.
+and `100000`: it starts at the
+[DomainBed reference default](https://github.com/facebookresearch/DomainBed/blob/main/domainbed/hparams_registry.py)
+and covers the neighborhood of the roughly 91,000 coefficient selected by the original
+CMNIST study. The original study searched anneal points from 50 through 249; fixing 100
+keeps the rewrite's method search focused on penalty strength and matches the official
+REx CMNIST default and inherited launcher without inheriting the latter's batching or
+test-selection errors.
 
 ## Parameter search
 

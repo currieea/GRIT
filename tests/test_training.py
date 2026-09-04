@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,7 @@ import torch
 
 from grit.config import (
     GroupDroAlgorithmConfig,
+    IrmAlgorithmConfig,
     LinearProbeTrainingConfig,
     RexAlgorithmConfig,
 )
@@ -20,8 +22,10 @@ from grit.methods.groupdro import (
     group_balanced_epoch_indices,
 )
 from grit.methods.invariance import (
+    annealed_penalty_weight,
     environment_balanced_epoch_batches,
     environment_mean_losses,
+    irmv1_objective,
     vrex_objective,
 )
 from grit.methods.projection import fit_linear_projection
@@ -121,6 +125,18 @@ def _rex_config() -> RexAlgorithmConfig:
         penalty_weight=10.0,
         penalty_anneal_updates=1,
         risk_variance="population",
+        sampling="environment_balanced_without_replacement",
+        loss_rescaling="divide_by_penalty_weight_above_one",
+    )
+
+
+def _irm_config() -> IrmAlgorithmConfig:
+    return IrmAlgorithmConfig(
+        kind="irm",
+        environment_names=("train_e01", "train_e02"),
+        penalty_weight=100.0,
+        penalty_anneal_updates=1,
+        penalty="irmv1_dummy_classifier_scale",
         sampling="environment_balanced_without_replacement",
         loss_rescaling="divide_by_penalty_weight_above_one",
     )
@@ -305,6 +321,14 @@ def test_vrex_objective_uses_environment_risks() -> None:
     assert objective.item() == 8.5
 
 
+def test_invariant_penalty_switches_at_fixed_update_boundary() -> None:
+    assert annealed_penalty_weight(100.0, anneal_updates=100, update_count=99) == 1.0
+    assert (
+        annealed_penalty_weight(100.0, anneal_updates=100, update_count=100)
+        == 100.0
+    )
+
+
 def test_environment_balanced_batches_are_deterministic_and_exhaustive() -> None:
     environment_ids = torch.tensor([0, 0, 0, 0, 1, 1, 1, 1])
     batches = tuple(
@@ -360,3 +384,57 @@ def test_cmnist_rex_training_is_deterministic() -> None:
         second.algorithm.capture_inference_state().weight,
     )
     assert {metric.method_id for metric in first.validation_metrics} == {"rex"}
+
+
+def test_irmv1_objective_uses_one_dummy_scale_penalty_per_environment() -> None:
+    log_three = math.log(3.0)
+    logits = torch.tensor(((log_three, 0.0), (0.0, log_three)))
+    targets = torch.tensor((0, 0), dtype=torch.int64)
+    environment_ids = torch.tensor((0, 1), dtype=torch.int64)
+    objective = irmv1_objective(
+        logits,
+        targets,
+        environment_ids,
+        penalty_weight=2.0,
+    )
+    mean_risk = (math.log(4.0 / 3.0) + math.log(4.0)) / 2.0
+    mean_squared_gradient = 5.0 * log_three**2 / 16.0
+    expected = mean_risk / 2.0 + mean_squared_gradient
+    assert math.isclose(
+        float(objective.detach().item()), expected, rel_tol=0.0, abs_tol=1e-6
+    )
+
+
+def test_cmnist_irm_training_is_deterministic() -> None:
+    training, validation = _tables()
+    environment_ids = torch.cat(
+        (
+            torch.zeros(16, dtype=torch.int64),
+            torch.ones(16, dtype=torch.int64),
+        )
+    )
+    runs = tuple(
+        train_linear_probe(
+            training,
+            validation,
+            _training_config(),
+            run_id=f"run:irm:{index}",
+            candidate_id="candidate:irm",
+            method_id="irm",
+            scientific_config_digest="sha256:irm",
+            seed_stage=SeedStage.TUNING,
+            seed=101,
+            projection=None,
+            projection_rank=None,
+            irm=_irm_config(),
+            environment_ids=environment_ids,
+        )
+        for index in range(2)
+    )
+    first, second = runs
+    assert first.epoch_losses == second.epoch_losses
+    assert torch.equal(
+        first.algorithm.capture_inference_state().weight,
+        second.algorithm.capture_inference_state().weight,
+    )
+    assert {metric.method_id for metric in first.validation_metrics} == {"irm"}
