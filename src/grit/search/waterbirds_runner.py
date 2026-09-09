@@ -21,7 +21,12 @@ from pydantic import (
     model_validator,
 )
 
-from grit.config import LinearProbeTrainingConfig, SeedSets
+from grit.config import (
+    ErmAlgorithmConfig,
+    GritAlgorithmConfig,
+    LinearProbeTrainingConfig,
+    SeedSets,
+)
 from grit.data.waterbirds import (
     BASE_ARTIFACT_NAME,
     ProductionWaterbirdsProfile,
@@ -276,8 +281,7 @@ def run_waterbirds_smoke(
         paired_worst_group_summary=make_waterbirds_metric_summary(
             "grit_minus_erm_worst_group_accuracy",
             tuple(
-                float(item.grit_minus_erm_worst_group_accuracy)
-                for item in paired_worst
+                float(item.grit_minus_erm_worst_group_accuracy) for item in paired_worst
             ),
         ),
     )
@@ -417,10 +421,11 @@ def _candidates(
     values: list[_Candidate] = []
     for learning_rate in smoke.learning_rates:
         config = WaterbirdsCandidateConfig(
-            schema_version="grit.waterbirds-candidate/v2",
+            schema_version="grit.waterbirds-candidate/v3",
             protocol_id="waterbirds_cf/v1",
             non_reportable=True,
             method_id=method,
+            selector="waterbirds_validation_worst_group",
             dataset_profile="fixture",
             dataset_manifest_digest=construction.manifest.canonical_digest(),
             feature_cache_manifest_digest=cache.manifest.canonical_digest(),
@@ -439,6 +444,11 @@ def _candidates(
             projection_rank=smoke.projection_rank if method == "grit" else None,
             relative_singular_value_tolerance=(
                 smoke.relative_singular_value_tolerance if method == "grit" else None
+            ),
+            algorithm=(
+                GritAlgorithmConfig(kind="grit")
+                if method == "grit"
+                else ErmAlgorithmConfig(kind="erm")
             ),
             training=LinearProbeTrainingConfig(
                 optimizer="adam",
@@ -591,7 +601,7 @@ def _run_final_seed(
             )
         )
     result = WaterbirdsRunResult(
-        schema_version="grit.waterbirds-run-result/v2",
+        schema_version="grit.waterbirds-run-result/v3",
         result_kind="ordinary_waterbirds",
         status="succeeded",
         run_id=run_id,

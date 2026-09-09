@@ -2207,7 +2207,11 @@ def test_waterbirds_real_plan_pilot_uses_same_bounded_lifecycle(
     ) -> SimpleNamespace:
         train_calls.append(task.task_id)
         completed = _waterbirds_stage_run(task, weights)
-        return SimpleNamespace(validation_metrics=completed.validation_metrics)
+        return SimpleNamespace(
+            validation_metrics=completed.validation_metrics,
+            diagnostic_metrics=None,
+            selector_records=lambda _selector: completed.validation_metrics,  # pyright: ignore[reportUnknownLambdaType]
+        )
 
     def fake_dataset(_plan: SearchPlan) -> object:
         return object()

@@ -34,10 +34,12 @@ from grit.config import (
     CpuRuntimeConfig,
     DisabledPairsConfig,
     DisabledProjectionConfig,
+    EnvironmentNames,
     ErmAlgorithmConfig,
     FishAlgorithmConfig,
     FrozenFeatureConfig,
     GritAlgorithmConfig,
+    GroupDefinition,
     GroupDroAlgorithmConfig,
     IrmAlgorithmConfig,
     LinearProbeTrainingConfig,
@@ -55,6 +57,7 @@ from grit.config import (
     RotatedMnistSourceCounts,
     SeedSets,
     SwadAlgorithmConfig,
+    SwadLossSplitNames,
 )
 from grit.data.cmnist import (
     CmnistDatasetManifest,
@@ -325,21 +328,25 @@ class CmnistProductionSearchConfig(_CommonProductionSearchConfig):
 
 
 class WaterbirdsProductionSearchConfig(_CommonProductionSearchConfig):
+    """`selectors` is the ordinary worst-group selector or the lone test-oracle
+    track."""
+
     dataset: Literal["waterbirds_cf"]
     protocol_id: Literal["waterbirds_cf/v1"]
     pair_count: PositiveInt
-    selectors: tuple[Literal["waterbirds_validation_worst_group"]]
+    selectors: (
+        tuple[Literal["waterbirds_validation_worst_group"]]
+        | tuple[Literal["test_oracle"]]
+    )
     batch_size: PositiveInt
     max_epochs: PositiveInt
 
+    @property
+    def test_oracle(self) -> bool:
+        return self.selectors == ("test_oracle",)
+
     @model_validator(mode="after")
     def _validate_grid_fits(self) -> WaterbirdsProductionSearchConfig:
-        unsupported = set(self.search_space.methods) - {"erm", "grit"}
-        if unsupported:
-            raise ValueError(
-                "Waterbirds methods are specified but not implemented: "
-                f"{sorted(unsupported)}"
-            )
         _require_runnable_grid(self.search_space, self.pair_count)
         return self
 
@@ -591,9 +598,7 @@ class SearchCandidate(StrictBoundaryModel):
     )
 
     def settings(self) -> MethodSettings:
-        return MethodSettings(
-            **{name: getattr(self, name) for name in _SETTING_FIELDS}
-        )
+        return MethodSettings(**{name: getattr(self, name) for name in _SETTING_FIELDS})
 
     @model_validator(mode="after")
     def _validate_method_settings(self) -> SearchCandidate:
@@ -914,7 +919,7 @@ def _expected_output_schemas(
             ),
             OutputSchemaVersion(
                 artifact_kind="final_result",
-                schema_version="grit.waterbirds-run-result/v2",
+                schema_version="grit.waterbirds-run-result/v3",
             ),
             OutputSchemaVersion(
                 artifact_kind="tuning_finalists",
@@ -926,11 +931,18 @@ def _expected_output_schemas(
             ),
             OutputSchemaVersion(
                 artifact_kind="production_summary",
-                schema_version="grit.waterbirds-production-summary/v1",
+                schema_version="grit.waterbirds-production-summary/v2",
             ),
-            OutputSchemaVersion(
-                artifact_kind="paired_summary",
-                schema_version="grit.waterbirds-paired-summary/v1",
+            *(
+                (
+                    OutputSchemaVersion(
+                        artifact_kind="paired_summary",
+                        schema_version="grit.waterbirds-paired-summary/v1",
+                    ),
+                )
+                if "erm" in config.search_space.methods
+                and "grit" in config.search_space.methods
+                else ()
             ),
         )
     return (
@@ -1156,14 +1168,14 @@ def cmnist_candidate_components(
         pair_seed=config.seeds.pairs,
         orientation="red_minus_green",
     )
-    environments: tuple[Literal["train_e01"], Literal["train_e02"]] = (
-        "train_e01",
-        "train_e02",
+    algorithm = candidate_algorithm_config(
+        config,
+        method,
+        setting,
+        environment_names=("train_e01", "train_e02"),
+        group_definition="target_color",
+        loss_split_names=("val_e01", "val_e02"),
     )
-    if method == "erm":
-        return CmnistCandidateComponents(
-            disabled_pairs, disabled_projection, ErmAlgorithmConfig(kind="erm"), None
-        )
     if method == "grit":
         rank = setting.requested_rank
         if rank is None:
@@ -1178,25 +1190,51 @@ def cmnist_candidate_components(
                     config.relative_singular_value_tolerance
                 ),
             ),
-            GritAlgorithmConfig(kind="grit"),
+            algorithm,
             lineage.pair_manifest_digest,
         )
+    if method == "matchdg":
+        return CmnistCandidateComponents(
+            oracle_pairs, disabled_projection, algorithm, lineage.pair_manifest_digest
+        )
+    return CmnistCandidateComponents(
+        disabled_pairs, disabled_projection, algorithm, None
+    )
+
+
+def candidate_algorithm_config(
+    config: _CommonProductionSearchConfig,
+    method: MethodId,
+    setting: MethodSettings,
+    *,
+    environment_names: EnvironmentNames,
+    group_definition: GroupDefinition,
+    loss_split_names: SwadLossSplitNames,
+) -> AlgorithmConfig:
+    """The one place that turns a planned setting into a method's algorithm config.
+
+    The dataset supplies only what the method definitions bind to: environment names
+    for the invariance methods, the group definition for GroupDRO and LISA, and the
+    split SWAD scores its loss on.
+    """
+
+    if setting.present_fields() != REQUIRED_SETTINGS[method]:
+        raise AssertionError(f"planned {method} candidate has wrong settings")
+    if method == "erm":
+        return ErmAlgorithmConfig(kind="erm")
+    if method == "grit":
+        return GritAlgorithmConfig(kind="grit")
     if method == "groupdro":
         step = setting.groupdro_step_size
         if step is None:
-            raise AssertionError("planned CMNIST GroupDRO candidate lacks a step size")
-        return CmnistCandidateComponents(
-            disabled_pairs,
-            disabled_projection,
-            GroupDroAlgorithmConfig(
-                kind="groupdro",
-                group_definition="target_color",
-                adversarial_step_size=step,
-                sampling="inverse_group_frequency_with_replacement",
-                generalization_adjustment=0.0,
-                normalize_loss=False,
-            ),
-            None,
+            raise AssertionError("planned GroupDRO candidate lacks a step size")
+        return GroupDroAlgorithmConfig(
+            kind="groupdro",
+            group_definition=group_definition,
+            adversarial_step_size=step,
+            sampling="inverse_group_frequency_with_replacement",
+            generalization_adjustment=0.0,
+            normalize_loss=False,
         )
     if method in ("rex", "irm"):
         weight = setting.penalty_weight
@@ -1206,97 +1244,89 @@ def cmnist_candidate_components(
             else config.search_space.irm_penalty_anneal_updates
         )
         if weight is None or anneal is None:
-            raise AssertionError(f"planned CMNIST {method} candidate lacks settings")
-        algorithm: AlgorithmConfig = (
-            RexAlgorithmConfig(
+            raise AssertionError(f"planned {method} candidate lacks settings")
+        if method == "rex":
+            return RexAlgorithmConfig(
                 kind="rex",
-                environment_names=environments,
+                environment_names=environment_names,
                 penalty_weight=weight,
                 penalty_anneal_updates=anneal,
                 risk_variance="population",
                 sampling="environment_balanced_without_replacement",
                 loss_rescaling="divide_by_penalty_weight_above_one",
             )
-            if method == "rex"
-            else IrmAlgorithmConfig(
-                kind="irm",
-                environment_names=environments,
-                penalty_weight=weight,
-                penalty_anneal_updates=anneal,
-                penalty="irmv1_dummy_classifier_scale",
-                sampling="environment_balanced_without_replacement",
-                loss_rescaling="divide_by_penalty_weight_above_one",
-            )
-        )
-        return CmnistCandidateComponents(
-            disabled_pairs, disabled_projection, algorithm, None
+        return IrmAlgorithmConfig(
+            kind="irm",
+            environment_names=environment_names,
+            penalty_weight=weight,
+            penalty_anneal_updates=anneal,
+            penalty="irmv1_dummy_classifier_scale",
+            sampling="environment_balanced_without_replacement",
+            loss_rescaling="divide_by_penalty_weight_above_one",
         )
     if method == "fish":
         meta_step = setting.fish_meta_step_size
         if meta_step is None:
-            raise AssertionError("planned CMNIST Fish candidate lacks a meta step")
-        return CmnistCandidateComponents(
-            disabled_pairs,
-            disabled_projection,
-            FishAlgorithmConfig(
-                kind="fish",
-                environment_names=environments,
-                meta_step_size=meta_step,
-                inner_update="one_shared_adam_step_per_environment",
-                sampling="environment_balanced_without_replacement",
-            ),
-            None,
+            raise AssertionError("planned Fish candidate lacks a meta step")
+        return FishAlgorithmConfig(
+            kind="fish",
+            environment_names=environment_names,
+            meta_step_size=meta_step,
+            inner_update="one_shared_adam_step_per_environment",
+            sampling="environment_balanced_without_replacement",
         )
     if method == "lisa":
         prob = setting.lisa_selection_prob
         if prob is None:
-            raise AssertionError("planned CMNIST LISA candidate lacks a probability")
-        return CmnistCandidateComponents(
-            disabled_pairs,
-            disabled_projection,
-            LisaAlgorithmConfig(
-                kind="lisa",
-                group_definition="target_color",
-                selection_prob=prob,
-                mixing="beta_2_2",
-                sampling="uniform_single_group_batches",
-            ),
-            None,
+            raise AssertionError("planned LISA candidate lacks a probability")
+        return LisaAlgorithmConfig(
+            kind="lisa",
+            group_definition=group_definition,
+            selection_prob=prob,
+            mixing="beta_2_2",
+            sampling="uniform_single_group_batches",
         )
     if method == "swad":
         ratio = setting.swad_tolerance_ratio
         if ratio is None:
-            raise AssertionError("planned CMNIST SWAD candidate lacks a tolerance")
-        return CmnistCandidateComponents(
-            disabled_pairs,
-            disabled_projection,
-            SwadAlgorithmConfig(
-                kind="swad",
-                tolerance_ratio=ratio,
-                n_converge=3,
-                n_tolerance=6,
-                segment_updates=SWAD_SEGMENT_UPDATES,
-                loss_split_names=("val_e01", "val_e02"),
-            ),
-            None,
+            raise AssertionError("planned SWAD candidate lacks a tolerance")
+        return SwadAlgorithmConfig(
+            kind="swad",
+            tolerance_ratio=ratio,
+            n_converge=3,
+            n_tolerance=6,
+            segment_updates=SWAD_SEGMENT_UPDATES,
+            loss_split_names=loss_split_names,
         )
     if method == "matchdg":
         latent = setting.matchdg_latent_dim
         weight = setting.penalty_weight
         if latent is None or weight is None:
-            raise AssertionError("planned CMNIST MatchDG candidate lacks settings")
-        return CmnistCandidateComponents(
-            oracle_pairs,
-            disabled_projection,
-            MatchDgAlgorithmConfig(
-                kind="matchdg",
-                latent_dim=latent,
-                penalty_weight=weight,
-                pair_penalty="mean_squared_featurizer_difference",
-            ),
-            lineage.pair_manifest_digest,
+            raise AssertionError("planned MatchDG candidate lacks settings")
+        return MatchDgAlgorithmConfig(
+            kind="matchdg",
+            latent_dim=latent,
+            penalty_weight=weight,
+            pair_penalty="mean_squared_featurizer_difference",
         )
-    raise AssertionError(f"CMNIST config materializer is missing method {method}")
+    raise AssertionError(f"algorithm config materializer is missing method {method}")
+
+
+def waterbirds_candidate_algorithm(
+    config: WaterbirdsProductionSearchConfig,
+    method: MethodId,
+    setting: MethodSettings,
+) -> AlgorithmConfig:
+    """Waterbirds bindings: background environments, label/background groups."""
+
+    return candidate_algorithm_config(
+        config,
+        method,
+        setting,
+        environment_names=("background_land", "background_water"),
+        group_definition="target_background",
+        loss_split_names=("validation",),
+    )
 
 
 def _candidate_scientific_digest(
@@ -1454,17 +1484,15 @@ def _candidate_scientific_digest(
         if requested_rank is None:
             raise AssertionError("planned Waterbirds GRIT candidate lacks a rank")
         projection_digest = "pending:derived-after-plan"
-        pair_digest = lineage.pair_manifest_digest
         tolerance = config.relative_singular_value_tolerance
-    elif method != "erm":
-        raise AssertionError(
-            f"Waterbirds config materializer is missing method {method}"
-        )
+    if method in ("grit", "matchdg"):
+        pair_digest = lineage.pair_manifest_digest
     candidate = WaterbirdsCandidateConfig(
-        schema_version="grit.waterbirds-candidate/v2",
+        schema_version="grit.waterbirds-candidate/v3",
         protocol_id="waterbirds_cf/v1",
         non_reportable=False,
         method_id=method,
+        selector="waterbirds_validation_worst_group",
         dataset_profile="production",
         dataset_manifest_digest=lineage.dataset_manifest_digest,
         feature_cache_manifest_digest=lineage.feature_cache_manifest_digest,
@@ -1474,6 +1502,7 @@ def _candidate_scientific_digest(
         projection_diagnostics_digest=projection_digest,
         projection_rank=requested_rank,
         relative_singular_value_tolerance=tolerance,
+        algorithm=waterbirds_candidate_algorithm(config, method, setting),
         training=training,
         seed_sets=config.seeds.stages,
     )

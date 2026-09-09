@@ -27,7 +27,10 @@ from grit.schemas import (
     StrictBoundaryModel,
 )
 from grit.search.plan import SearchCandidate, SearchLineage, SearchPlan
-from grit.search.waterbirds_contracts import WaterbirdsRunResult
+from grit.search.waterbirds_contracts import (
+    WaterbirdsRunResult,
+    WaterbirdsTestOracleRunResult,
+)
 from grit.selection.cmnist import (
     CheckpointSelectionDecision,
     DiagnosticMetricRecord,
@@ -36,8 +39,12 @@ from grit.selection.cmnist import (
     select_checkpoint,
 )
 from grit.selection.waterbirds import (
+    ORDINARY_WATERBIRDS_SELECTOR,
     FrozenWaterbirdsCandidate,
     WaterbirdsCheckpointSelection,
+    WaterbirdsDiagnosticMetricRecord,
+    WaterbirdsSelector,
+    WaterbirdsSelectorRecord,
     WaterbirdsValidationMetricRecord,
     select_waterbirds_checkpoint,
 )
@@ -268,10 +275,40 @@ class WaterbirdsCompletedStageRun(StrictBoundaryModel):
     code: CodeProvenance | None = None
     environment: EnvironmentProvenance | None = None
     validation_metrics: tuple[WaterbirdsValidationMetricRecord, ...]
+    diagnostic_metrics: tuple[WaterbirdsDiagnosticMetricRecord, ...] | None = None
     checkpoint_decision: WaterbirdsCheckpointSelection
     final_result_relative_path: Literal["final-result.json"] | None = None
     final_result_digest: NonEmptyStr | None = None
-    final_result: WaterbirdsRunResult | None = None
+    final_result: (
+        Annotated[
+            WaterbirdsRunResult | WaterbirdsTestOracleRunResult,
+            Field(discriminator="result_kind"),
+        ]
+        | None
+    ) = None
+
+    @property
+    def test_oracle(self) -> bool:
+        """True for runs in the labeled test-oracle track."""
+
+        return self.diagnostic_metrics is not None
+
+    @property
+    def selector(self) -> WaterbirdsSelector:
+        return "test_oracle" if self.test_oracle else ORDINARY_WATERBIRDS_SELECTOR
+
+    def selector_records(
+        self, selector: WaterbirdsSelector
+    ) -> tuple[WaterbirdsSelectorRecord, ...]:
+        """The ordinary selector reads validation; `test_oracle` reads test records."""
+
+        if selector == "test_oracle":
+            if self.diagnostic_metrics is None:
+                raise ValueError(
+                    "test-oracle selection requires test records in every run"
+                )
+            return self.diagnostic_metrics
+        return self.validation_metrics
 
     @model_validator(mode="after")
     def _validate_run(self) -> WaterbirdsCompletedStageRun:
@@ -281,6 +318,8 @@ class WaterbirdsCompletedStageRun(StrictBoundaryModel):
             raise ValueError("Waterbirds stage result lineage does not match its task")
         if not self.validation_metrics:
             raise ValueError("Waterbirds completed stage requires validation evidence")
+        if self.diagnostic_metrics is not None and not self.diagnostic_metrics:
+            raise ValueError("Waterbirds test-oracle stages require test evidence")
         expected_identity = (
             self.task.candidate.candidate_id,
             self.task.candidate.method_id,
@@ -307,10 +346,19 @@ class WaterbirdsCompletedStageRun(StrictBoundaryModel):
                 metric.adjusted_weight_spec_digest,
             )
             != expected_identity
-            for metric in self.validation_metrics
+            for metric in (*self.validation_metrics, *(self.diagnostic_metrics or ()))
         ):
             raise ValueError("Waterbirds stage metric identity is inconsistent")
-        recomputed = select_waterbirds_checkpoint(self.validation_metrics)
+        selector = self.selector
+        if self.task.stage is SeedStage.FINAL and self.task.selector != selector:
+            raise ValueError(
+                "Waterbirds final stage evidence does not match its selector track"
+            )
+        if self.checkpoint_decision.selector != selector:
+            raise ValueError("Waterbirds stage checkpoint selector is inconsistent")
+        recomputed = select_waterbirds_checkpoint(
+            self.selector_records(selector), selector
+        )
         if self.checkpoint_decision != recomputed:
             raise ValueError("Waterbirds checkpoint decision trace is inconsistent")
         final_values = (
@@ -320,17 +368,21 @@ class WaterbirdsCompletedStageRun(StrictBoundaryModel):
         )
         if self.task.stage is SeedStage.FINAL:
             if any(value is None for value in final_values):
-                raise ValueError("Waterbirds final task requires its ordinary result")
+                raise ValueError("Waterbirds final task requires its result")
             result = self.final_result
             if result is None:
                 raise AssertionError("validated Waterbirds final result disappeared")
             frozen_winner = self.task.frozen_winner
             if frozen_winner is None:
                 raise AssertionError("validated Waterbirds frozen winner disappeared")
+            if isinstance(result, WaterbirdsRunResult) == self.test_oracle:
+                raise ValueError(
+                    "Waterbirds final result kind does not match its selector track"
+                )
             if (
                 self.final_result_digest != result.canonical_digest()
                 or result.run_id != self.checkpoint_decision.checkpoint.run_id
-                or result.candidate_selection.frozen_selection_id
+                or result.selected_candidate.frozen_selection_id
                 != frozen_winner.frozen_selection_id
                 or result.resolved_config.scientific_config_digest()
                 != self.task.candidate.scientific_config_digest
@@ -743,7 +795,7 @@ class LocalRunScheduler:
             waterbirds_result = result.final_result
             if waterbirds_result is None:
                 raise ValueError("Waterbirds final result lacks checkpoint selection")
-            checkpoint_identity = waterbirds_result.checkpoint_selection.checkpoint
+            checkpoint_identity = waterbirds_result.selected_checkpoint.checkpoint
             expected_manifest_digest = (
                 waterbirds_result.selected_checkpoint_manifest_digest
             )

@@ -377,22 +377,32 @@ def complete_outputs_valid(plan: SearchPlan) -> bool:
     else:
         summary_path = root / "summaries" / "waterbirds-summary.json"
         paired_path = root / "summaries" / "waterbirds-paired-differences.json"
-        if not all(path.is_file() for path in (summary_path, paired_path, index_path)):
+        pairable = "erm" in plan.methods and "grit" in plan.methods
+        required = (summary_path, index_path, *((paired_path,) if pairable else ()))
+        if not all(path.is_file() for path in required):
             return False
         summary = WaterbirdsProductionSummary.model_validate_json(
             summary_path.read_text(encoding="utf-8")
         )
-        paired = WaterbirdsPairedSummaryArtifact.model_validate_json(
-            paired_path.read_text(encoding="utf-8")
-        )
         if (
             summary.plan_digest != plan.canonical_digest()
             or summary.lineage != plan.resolved_config.lineage
-            or paired.configured_final_seeds != plan.seeds.stages.final
-            or paired.paired_worst_group_by_seed != summary.paired_worst_group_by_seed
-            or paired.paired_worst_group_summary != summary.paired_worst_group_summary
+            or (summary.selector,) != plan.selectors
+            or summary.paired != pairable
         ):
             raise ValueError("Waterbirds completion summary is inconsistent")
+        if pairable:
+            paired = WaterbirdsPairedSummaryArtifact.model_validate_json(
+                paired_path.read_text(encoding="utf-8")
+            )
+            if (
+                paired.configured_final_seeds != plan.seeds.stages.final
+                or paired.paired_worst_group_by_seed
+                != summary.paired_worst_group_by_seed
+                or paired.paired_worst_group_summary
+                != summary.paired_worst_group_summary
+            ):
+                raise ValueError("Waterbirds completion summary is inconsistent")
     index = ExperimentIndex.model_validate_json(index_path.read_text(encoding="utf-8"))
     verify_experiment_index(root, index)
     return True

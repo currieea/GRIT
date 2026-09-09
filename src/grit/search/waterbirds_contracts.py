@@ -16,8 +16,19 @@ from pydantic import (
     model_validator,
 )
 
-from grit.config import LinearProbeTrainingConfig, SeedSets
-from grit.methods.types import MethodId
+from grit.config import (
+    PAIR_CONSUMING_ALGORITHMS,
+    AlgorithmConfig,
+    FishAlgorithmConfig,
+    GroupDroAlgorithmConfig,
+    IrmAlgorithmConfig,
+    LinearProbeTrainingConfig,
+    LisaAlgorithmConfig,
+    RexAlgorithmConfig,
+    SeedSets,
+    SwadAlgorithmConfig,
+)
+from grit.methods.types import METHOD_LABELS, MethodId
 from grit.methods.waterbirds_training import WaterbirdsRestorationReceipt
 from grit.results import CodeProvenance, EnvironmentProvenance
 from grit.schemas import StrictBoundaryModel, canonical_digest_value
@@ -25,18 +36,23 @@ from grit.selection.cmnist import CheckpointIdentity
 from grit.selection.waterbirds import (
     FrozenWaterbirdsCandidate,
     FrozenWaterbirdsCheckpoint,
+    WaterbirdsDiagnosticMetricRecord,
     WaterbirdsFinalTestMetricRecord,
+    WaterbirdsSelector,
+    WaterbirdsSelectorRecord,
     WaterbirdsValidationMetricRecord,
+    select_waterbirds_checkpoint,
 )
 
 NonEmptyStr: TypeAlias = Annotated[StrictStr, Field(min_length=1)]
 
 
 class WaterbirdsCandidateConfig(StrictBoundaryModel):
-    schema_version: Literal["grit.waterbirds-candidate/v2"]
+    schema_version: Literal["grit.waterbirds-candidate/v3"]
     protocol_id: Literal["waterbirds_cf/v1"]
     non_reportable: StrictBool
     method_id: MethodId
+    selector: WaterbirdsSelector
     dataset_profile: Literal["fixture", "production"]
     dataset_manifest_digest: NonEmptyStr
     feature_cache_manifest_digest: NonEmptyStr
@@ -46,8 +62,13 @@ class WaterbirdsCandidateConfig(StrictBoundaryModel):
     projection_diagnostics_digest: NonEmptyStr | None
     projection_rank: Annotated[StrictInt, Field(ge=0, le=24)] | None
     relative_singular_value_tolerance: Annotated[StrictFloat, Field(gt=0.0)] | None
+    algorithm: AlgorithmConfig
     training: LinearProbeTrainingConfig
     seed_sets: SeedSets
+
+    @property
+    def test_oracle(self) -> bool:
+        return self.selector == "test_oracle"
 
     @model_validator(mode="after")
     def _validate_method(self) -> WaterbirdsCandidateConfig:
@@ -56,33 +77,48 @@ class WaterbirdsCandidateConfig(StrictBoundaryModel):
                 "Waterbirds fixture configs must be non-reportable and production "
                 "configs must be reportable"
             )
-        if self.method_id == "erm" and any(
-            value is not None
-            for value in (
-                self.pair_manifest_digest,
-                self.projection_diagnostics_digest,
-                self.projection_rank,
-                self.relative_singular_value_tolerance,
+        if self.algorithm.kind != self.method_id:
+            raise ValueError("Waterbirds candidate algorithm does not match method")
+        uses_pairs = isinstance(self.algorithm, PAIR_CONSUMING_ALGORITHMS)
+        if uses_pairs != (self.pair_manifest_digest is not None):
+            raise ValueError(
+                f"Waterbirds {self.method_id} must bind oracle pairs exactly when "
+                "its algorithm consumes them"
             )
-        ):
-            raise ValueError("Waterbirds ERM config cannot contain oracle projection")
-        if self.method_id == "grit" and any(
-            value is None
-            for value in (
-                self.pair_manifest_digest,
-                self.projection_diagnostics_digest,
-                self.projection_rank,
-                self.relative_singular_value_tolerance,
-            )
-        ):
+        projection_fields = (
+            self.projection_diagnostics_digest,
+            self.projection_rank,
+            self.relative_singular_value_tolerance,
+        )
+        if self.method_id == "grit" and any(v is None for v in projection_fields):
             raise ValueError("Waterbirds GRIT config requires oracle projection")
+        if self.method_id != "grit" and any(v is not None for v in projection_fields):
+            raise ValueError(
+                f"Waterbirds {self.method_id} config cannot contain a projection"
+            )
+        algorithm = self.algorithm
+        if (
+            isinstance(algorithm, GroupDroAlgorithmConfig | LisaAlgorithmConfig)
+            and algorithm.group_definition != "target_background"
+        ):
+            raise ValueError("Waterbirds group methods use label/background groups")
+        if isinstance(
+            algorithm, RexAlgorithmConfig | IrmAlgorithmConfig | FishAlgorithmConfig
+        ) and algorithm.environment_names != ("background_land", "background_water"):
+            raise ValueError("Waterbirds invariant methods use background environments")
+        if isinstance(
+            algorithm, SwadAlgorithmConfig
+        ) and algorithm.loss_split_names != ("validation",):
+            raise ValueError("Waterbirds SWAD scores its loss on the validation split")
         return self
 
     def scientific_config_digest(self) -> str:
+        """Identify the trainable candidate independently of selector and seeds."""
+
         return canonical_digest_value(
             self.model_dump(
                 mode="json",
-                exclude={"projection_diagnostics_digest", "seed_sets"},
+                exclude={"projection_diagnostics_digest", "seed_sets", "selector"},
             )
         )
 
@@ -131,9 +167,33 @@ WaterbirdsArtifactReference = Annotated[
 ]
 
 
-class WaterbirdsRunResult(StrictBoundaryModel):
-    schema_version: Literal["grit.waterbirds-run-result/v2"]
-    result_kind: Literal["ordinary_waterbirds"]
+WaterbirdsTestMetric: TypeAlias = (
+    WaterbirdsFinalTestMetricRecord | WaterbirdsDiagnosticMetricRecord
+)
+
+
+def _metric_identity(
+    metric: WaterbirdsSelectorRecord | WaterbirdsTestMetric,
+) -> tuple[object, ...]:
+    return (
+        metric.run_id,
+        metric.candidate_id,
+        metric.method_id,
+        metric.scientific_config_digest,
+        metric.seed_stage,
+        metric.seed,
+        metric.projection_rank,
+        metric.dataset_manifest_digest,
+        metric.feature_cache_manifest_digest,
+        metric.normalization,
+        metric.adjusted_weight_spec_digest,
+    )
+
+
+class _WaterbirdsRunResultBase(StrictBoundaryModel):
+    """Fields and lifecycle checks shared by the ordinary and test-oracle results."""
+
+    schema_version: Literal["grit.waterbirds-run-result/v3"]
     status: Literal["succeeded"]
     run_id: NonEmptyStr
     final_seed: StrictInt
@@ -142,20 +202,40 @@ class WaterbirdsRunResult(StrictBoundaryModel):
     code: CodeProvenance
     environment: EnvironmentProvenance
     validation_metrics: tuple[WaterbirdsValidationMetricRecord, ...]
-    candidate_selection: FrozenWaterbirdsCandidate
-    checkpoint_selection: FrozenWaterbirdsCheckpoint
     restoration: WaterbirdsRestorationReceipt
-    final_test_metric: WaterbirdsFinalTestMetricRecord
     selected_checkpoint_manifest_digest: NonEmptyStr
     artifacts: tuple[WaterbirdsArtifactReference, ...]
 
-    @model_validator(mode="after")
-    def _validate_result(self) -> WaterbirdsRunResult:
+    @property
+    def selected_candidate(self) -> FrozenWaterbirdsCandidate:
+        raise NotImplementedError
+
+    @property
+    def selected_checkpoint(self) -> FrozenWaterbirdsCheckpoint:
+        raise NotImplementedError
+
+    @property
+    def reported_test_metric(self) -> WaterbirdsTestMetric:
+        """The four-group test record this result reports for its final seed."""
+
+        raise NotImplementedError
+
+    def _validate_lifecycle(
+        self,
+        candidate: FrozenWaterbirdsCandidate,
+        checkpoint: FrozenWaterbirdsCheckpoint,
+        decision_records: tuple[WaterbirdsSelectorRecord, ...],
+        reported: WaterbirdsTestMetric,
+        selector: WaterbirdsSelector,
+    ) -> None:
         config = self.resolved_config
         digest = config.scientific_config_digest()
         if self.resolved_config_digest != config.canonical_digest():
             raise ValueError("Waterbirds result config digest is inconsistent")
-        candidate = self.candidate_selection
+        if config.selector != selector or candidate.selector != selector:
+            raise ValueError(
+                f"Waterbirds {self.__class__.__name__} requires the {selector} selector"
+            )
         if (
             candidate.method_id != config.method_id
             or candidate.scientific_config_digest != digest
@@ -169,10 +249,10 @@ class WaterbirdsRunResult(StrictBoundaryModel):
             != config.adjusted_weight_spec_digest
         ):
             raise ValueError("Waterbirds frozen candidate does not match result config")
-        checkpoint = self.checkpoint_selection
         if (
             checkpoint.candidate_selection_id != candidate.frozen_selection_id
             or checkpoint.method_id != candidate.method_id
+            or checkpoint.decision.selector != selector
             or checkpoint.checkpoint.run_id != self.run_id
             or checkpoint.checkpoint.candidate_id != candidate.candidate_id
             or checkpoint.checkpoint.scientific_config_digest != digest
@@ -194,41 +274,27 @@ class WaterbirdsRunResult(StrictBoundaryModel):
             raise ValueError("Waterbirds restoration does not match result checkpoint")
         if not self.validation_metrics:
             raise ValueError("Waterbirds result requires final-run validation history")
-        validation_by_id = {item.record_id: item for item in self.validation_metrics}
-        if len(validation_by_id) != len(self.validation_metrics):
-            raise ValueError("Waterbirds validation record IDs must be unique")
-        for metric in self.validation_metrics:
-            identity = (
-                metric.run_id,
-                metric.candidate_id,
-                metric.method_id,
-                metric.scientific_config_digest,
-                metric.seed_stage,
-                metric.seed,
-                metric.projection_rank,
-                metric.dataset_manifest_digest,
-                metric.feature_cache_manifest_digest,
-                metric.normalization,
-                metric.adjusted_weight_spec_digest,
-            )
-            expected = (
-                self.run_id,
-                candidate.candidate_id,
-                config.method_id,
-                digest,
-                checkpoint.decision.seed_stage,
-                checkpoint.decision.seed,
-                config.projection_rank,
-                config.dataset_manifest_digest,
-                config.feature_cache_manifest_digest,
-                config.normalization,
-                config.adjusted_weight_spec_digest,
-            )
-            if identity != expected:
-                raise ValueError(
-                    "Waterbirds validation history identity is inconsistent"
-                )
-        contributor = validation_by_id.get(checkpoint.decision.contributing_record_id)
+        expected = (
+            self.run_id,
+            candidate.candidate_id,
+            config.method_id,
+            digest,
+            checkpoint.decision.seed_stage,
+            checkpoint.decision.seed,
+            config.projection_rank,
+            config.dataset_manifest_digest,
+            config.feature_cache_manifest_digest,
+            config.normalization,
+            config.adjusted_weight_spec_digest,
+        )
+        for history in (self.validation_metrics, decision_records):
+            ids = {item.record_id for item in history}
+            if len(ids) != len(history):
+                raise ValueError("Waterbirds metric record IDs must be unique")
+            if any(_metric_identity(metric) != expected for metric in history):
+                raise ValueError("Waterbirds metric history identity is inconsistent")
+        by_id = {item.record_id: item for item in decision_records}
+        contributor = by_id.get(checkpoint.decision.contributing_record_id)
         if contributor is None:
             raise ValueError("Waterbirds checkpoint cites an unavailable metric")
         if (
@@ -240,41 +306,16 @@ class WaterbirdsRunResult(StrictBoundaryModel):
             != checkpoint.decision.adjusted_average_accuracy
         ):
             raise ValueError("Waterbirds checkpoint decision trace is inconsistent")
-        final = self.final_test_metric
-        final_identity = (
-            final.run_id,
-            final.candidate_id,
-            final.method_id,
-            final.scientific_config_digest,
-            final.checkpoint_id,
-            final.epoch,
-            final.seed,
-            final.projection_rank,
-            final.dataset_manifest_digest,
-            final.feature_cache_manifest_digest,
-            final.normalization,
-            final.adjusted_weight_spec_digest,
-        )
-        expected_final = (
-            self.run_id,
-            candidate.candidate_id,
-            config.method_id,
-            digest,
-            checkpoint.checkpoint.checkpoint_id,
-            checkpoint.checkpoint.epoch,
-            checkpoint.decision.seed,
-            config.projection_rank,
-            config.dataset_manifest_digest,
-            config.feature_cache_manifest_digest,
-            config.normalization,
-            config.adjusted_weight_spec_digest,
-        )
-        if final_identity != expected_final:
+        if _metric_identity(reported) != expected or (
+            reported.checkpoint_id,
+            reported.epoch,
+        ) != (checkpoint.checkpoint.checkpoint_id, checkpoint.checkpoint.epoch):
             raise ValueError("Waterbirds final metric identity is inconsistent")
-        self._validate_artifacts()
-        return self
+        self._validate_artifacts(checkpoint)
 
-    def _validate_artifacts(self) -> None:
+    def _validate_artifacts(
+        self, checkpoint_selection: FrozenWaterbirdsCheckpoint
+    ) -> None:
         config = self.resolved_config
         artifacts_by_kind = {artifact.kind: artifact for artifact in self.artifacts}
         if len(artifacts_by_kind) != len(self.artifacts):
@@ -290,8 +331,10 @@ class WaterbirdsRunResult(StrictBoundaryModel):
             "feature_manifest",
             "selected_linear_checkpoint",
         }
+        if config.pair_manifest_digest is not None:
+            required.add("pair_manifest")
         if config.method_id == "grit":
-            required |= {"pair_manifest", "projection_diagnostics"}
+            required.add("projection_diagnostics")
         if set(artifacts_by_kind) != required:
             raise ValueError(
                 "Waterbirds result required artifact references are missing"
@@ -307,17 +350,24 @@ class WaterbirdsRunResult(StrictBoundaryModel):
             or feature.normalization != config.normalization
             or not isinstance(checkpoint, WaterbirdsCheckpointArtifactReference)
             or checkpoint.digest != self.selected_checkpoint_manifest_digest
-            or checkpoint.checkpoint != self.checkpoint_selection.checkpoint
+            or checkpoint.checkpoint != checkpoint_selection.checkpoint
         ):
             raise ValueError("Waterbirds result artifact lineage is inconsistent")
-        if config.method_id == "grit":
+        if config.pair_manifest_digest is not None:
             pair = artifacts_by_kind["pair_manifest"]
-            projection = artifacts_by_kind["projection_diagnostics"]
             if (
                 not isinstance(pair, WaterbirdsPairArtifactReference)
                 or pair.digest != config.pair_manifest_digest
                 or pair.dataset_manifest_digest != config.dataset_manifest_digest
-                or not isinstance(projection, WaterbirdsProjectionArtifactReference)
+            ):
+                raise ValueError(
+                    f"Waterbirds {METHOD_LABELS[config.method_id]} artifact lineage "
+                    "is inconsistent"
+                )
+        if config.method_id == "grit":
+            projection = artifacts_by_kind["projection_diagnostics"]
+            if (
+                not isinstance(projection, WaterbirdsProjectionArtifactReference)
                 or projection.digest != config.projection_diagnostics_digest
                 or projection.pair_manifest_digest != config.pair_manifest_digest
                 or projection.feature_cache_manifest_digest
@@ -326,6 +376,92 @@ class WaterbirdsRunResult(StrictBoundaryModel):
                 or projection.requested_rank != config.projection_rank
             ):
                 raise ValueError("Waterbirds GRIT artifact lineage is inconsistent")
+
+
+class WaterbirdsRunResult(_WaterbirdsRunResultBase):
+    """One validation-selected final seed with its gate-authorized test metric."""
+
+    result_kind: Literal["ordinary_waterbirds"]
+    candidate_selection: FrozenWaterbirdsCandidate
+    checkpoint_selection: FrozenWaterbirdsCheckpoint
+    final_test_metric: WaterbirdsFinalTestMetricRecord
+
+    @property
+    def selected_candidate(self) -> FrozenWaterbirdsCandidate:
+        return self.candidate_selection
+
+    @property
+    def selected_checkpoint(self) -> FrozenWaterbirdsCheckpoint:
+        return self.checkpoint_selection
+
+    @property
+    def reported_test_metric(self) -> WaterbirdsFinalTestMetricRecord:
+        return self.final_test_metric
+
+    @model_validator(mode="after")
+    def _validate_result(self) -> WaterbirdsRunResult:
+        self._validate_lifecycle(
+            self.candidate_selection,
+            self.checkpoint_selection,
+            self.validation_metrics,
+            self.final_test_metric,
+            "waterbirds_validation_worst_group",
+        )
+        return self
+
+
+class WaterbirdsTestOracleRunResult(_WaterbirdsRunResultBase):
+    """One test-oracle final seed. Its selections are labeled `test_oracle` throughout.
+
+    The ordinary `candidate_selection`, `checkpoint_selection`, and
+    `final_test_metric` fields never appear here; the reported number is the
+    diagnostic test record at the test-selected epoch.
+    """
+
+    result_kind: Literal["waterbirds_test_oracle_diagnostic"]
+    diagnostic_metrics: tuple[WaterbirdsDiagnosticMetricRecord, ...]
+    test_oracle_candidate_selection: FrozenWaterbirdsCandidate
+    test_oracle_checkpoint_selection: FrozenWaterbirdsCheckpoint
+
+    @property
+    def selected_candidate(self) -> FrozenWaterbirdsCandidate:
+        return self.test_oracle_candidate_selection
+
+    @property
+    def selected_checkpoint(self) -> FrozenWaterbirdsCheckpoint:
+        return self.test_oracle_checkpoint_selection
+
+    @property
+    def reported_test_metric(self) -> WaterbirdsDiagnosticMetricRecord:
+        checkpoint_id = self.test_oracle_checkpoint_selection.checkpoint.checkpoint_id
+        return next(
+            item
+            for item in self.diagnostic_metrics
+            if item.checkpoint_id == checkpoint_id
+        )
+
+    @model_validator(mode="after")
+    def _validate_result(self) -> WaterbirdsTestOracleRunResult:
+        if not self.diagnostic_metrics:
+            raise ValueError("Waterbirds test-oracle result requires test records")
+        recomputed = select_waterbirds_checkpoint(
+            self.diagnostic_metrics, "test_oracle"
+        )
+        if recomputed != self.test_oracle_checkpoint_selection.decision:
+            raise ValueError(
+                "Waterbirds test-oracle checkpoint does not match its test records"
+            )
+        self._validate_lifecycle(
+            self.test_oracle_candidate_selection,
+            self.test_oracle_checkpoint_selection,
+            self.diagnostic_metrics,
+            self.reported_test_metric,
+            "test_oracle",
+        )
+        return self
+
+
+WaterbirdsFinalResult: TypeAlias = WaterbirdsRunResult | WaterbirdsTestOracleRunResult
 
 
 MetricName: TypeAlias = Literal[
@@ -409,9 +545,10 @@ class WaterbirdsMethodSmokeSummary(StrictBoundaryModel):
             )
         if any(item.method_id != self.method_id for item in self.final_observations):
             raise ValueError("Waterbirds final observation method is inconsistent")
-        if len({item.result_path for item in self.final_observations}) != 10 or len(
-            {item.metric_record_id for item in self.final_observations}
-        ) != 10:
+        if (
+            len({item.result_path for item in self.final_observations}) != 10
+            or len({item.metric_record_id for item in self.final_observations}) != 10
+        ):
             raise ValueError(
                 "Waterbirds final observations must be uniquely attributable"
             )
@@ -515,9 +652,7 @@ class WaterbirdsSmokeSummary(StrictBoundaryModel):
             raise ValueError("Waterbirds paired differences are inconsistent")
         if self.paired_worst_group_summary != make_waterbirds_metric_summary(
             "grit_minus_erm_worst_group_accuracy",
-            tuple(
-                float(item.grit_minus_erm_worst_group_accuracy) for item in expected
-            ),
+            tuple(float(item.grit_minus_erm_worst_group_accuracy) for item in expected),
         ):
             raise ValueError("Waterbirds paired summary is inconsistent")
         return self

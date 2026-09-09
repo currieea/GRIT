@@ -14,6 +14,7 @@ from grit.methods.types import IMPLEMENTED_METHODS, MethodId
 from grit.schemas import ORDINARY_CMNIST_SELECTORS, CmnistSelector, StrictBoundaryModel
 from grit.search.plan import SearchLineage
 from grit.search.waterbirds_contracts import MetricName, WaterbirdsMetricSummary
+from grit.selection.waterbirds import WaterbirdsSelector
 
 NonEmptyStr: TypeAlias = Annotated[StrictStr, Field(min_length=1)]
 
@@ -403,6 +404,7 @@ class RotatedMnistProductionSummary(StrictBoundaryModel):
 
 class WaterbirdsProductionMethodSummary(StrictBoundaryModel):
     method_id: MethodId
+    selector: WaterbirdsSelector
     lineage: SearchLineage
     selected_candidate_id: NonEmptyStr
     finalist_candidate_ids: tuple[NonEmptyStr, NonEmptyStr, NonEmptyStr]
@@ -468,31 +470,61 @@ class WaterbirdsProductionMethodSummary(StrictBoundaryModel):
 
 
 class WaterbirdsProductionSummary(StrictBoundaryModel):
-    schema_version: Literal["grit.waterbirds-production-summary/v1"]
+    """Ten-seed summaries for one Waterbirds tree; one selector per tree.
+
+    `selector: test_oracle` summaries are the paper's oracle-validation envelope and
+    are reported only under that heading.
+    """
+
+    schema_version: Literal["grit.waterbirds-production-summary/v2"]
     reportable: Literal[True]
     plan_digest: NonEmptyStr
     lineage: SearchLineage
-    methods: tuple[
-        WaterbirdsProductionMethodSummary,
-        WaterbirdsProductionMethodSummary,
+    selector: WaterbirdsSelector
+    methods: Annotated[
+        tuple[WaterbirdsProductionMethodSummary, ...], Field(min_length=1)
     ]
-    paired_worst_group_by_seed: tuple[tuple[StrictInt, FiniteFloat], ...]
-    paired_worst_group_summary: WaterbirdsMetricSummary
+    paired_worst_group_by_seed: tuple[tuple[StrictInt, FiniteFloat], ...] | None
+    paired_worst_group_summary: WaterbirdsMetricSummary | None
+
+    @property
+    def test_oracle(self) -> bool:
+        return self.selector == "test_oracle"
+
+    @property
+    def paired(self) -> bool:
+        return self.paired_worst_group_by_seed is not None
 
     @model_validator(mode="after")
     def _validate_paired(self) -> WaterbirdsProductionSummary:
-        if tuple(item.method_id for item in self.methods) != ("erm", "grit"):
-            raise ValueError("Waterbirds production methods must be ERM then GRIT")
+        method_ids = tuple(item.method_id for item in self.methods)
+        if len(set(method_ids)) != len(method_ids) or method_ids != tuple(
+            sorted(method_ids, key=IMPLEMENTED_METHODS.index)
+        ):
+            raise ValueError("Waterbirds production methods must be unique and ordered")
         if any(item.lineage != self.lineage for item in self.methods):
             raise ValueError("Waterbirds production summary lineage is inconsistent")
-        erm, grit = self.methods
-        if erm.configured_final_seeds != grit.configured_final_seeds:
+        if any(item.selector != self.selector for item in self.methods):
+            raise ValueError("Waterbirds production summary mixes selectors")
+        seeds = {item.configured_final_seeds for item in self.methods}
+        if len(seeds) != 1:
             raise ValueError("Waterbirds paired methods require identical final seeds")
-        erm_values = dict(erm.worst_group_by_seed)
-        grit_values = dict(grit.worst_group_by_seed)
+        by_method = {item.method_id: item for item in self.methods}
+        pairable = "erm" in by_method and "grit" in by_method
+        if pairable != (self.paired_worst_group_by_seed is not None) or pairable != (
+            self.paired_worst_group_summary is not None
+        ):
+            raise ValueError(
+                "Waterbirds paired differences exist exactly when ERM and GRIT are "
+                "both summarized"
+            )
+        if not pairable:
+            return self
+        erm_values = dict(by_method["erm"].worst_group_by_seed)
+        grit_values = dict(by_method["grit"].worst_group_by_seed)
         expected = tuple(
             (seed, float(grit_values[seed]) - float(erm_values[seed]))
-            for seed in erm.configured_final_seeds
+            for seed in by_method["erm"].configured_final_seeds
         )
         if self.paired_worst_group_by_seed != expected:
             raise ValueError("Waterbirds paired differences are inconsistent")

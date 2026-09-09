@@ -184,9 +184,21 @@ class GritAlgorithmConfig(StrictBoundaryModel):
     kind: Literal["grit"]
 
 
+# CMNIST binds the two rendered training sources; Waterbirds binds the training
+# background. The bindings are named so a config states what its environments are.
+EnvironmentNames: TypeAlias = (
+    tuple[Literal["train_e01"], Literal["train_e02"]]
+    | tuple[Literal["background_land"], Literal["background_water"]]
+)
+GroupDefinition: TypeAlias = Literal["target_color", "target_background"]
+SwadLossSplitNames: TypeAlias = (
+    tuple[Literal["val_e01"], Literal["val_e02"]] | tuple[Literal["validation"]]
+)
+
+
 class GroupDroAlgorithmConfig(StrictBoundaryModel):
     kind: Literal["groupdro"]
-    group_definition: Literal["target_color", "target_background"]
+    group_definition: GroupDefinition
     adversarial_step_size: Annotated[StrictFloat, Field(gt=0.0)]
     sampling: Literal["inverse_group_frequency_with_replacement"]
     generalization_adjustment: Annotated[StrictFloat, Field(ge=0.0, le=0.0)]
@@ -195,7 +207,7 @@ class GroupDroAlgorithmConfig(StrictBoundaryModel):
 
 class RexAlgorithmConfig(StrictBoundaryModel):
     kind: Literal["rex"]
-    environment_names: tuple[Literal["train_e01"], Literal["train_e02"]]
+    environment_names: EnvironmentNames
     penalty_weight: Annotated[StrictFloat, Field(gt=0.0)]
     penalty_anneal_updates: NonNegativeInt
     risk_variance: Literal["population"]
@@ -205,7 +217,7 @@ class RexAlgorithmConfig(StrictBoundaryModel):
 
 class IrmAlgorithmConfig(StrictBoundaryModel):
     kind: Literal["irm"]
-    environment_names: tuple[Literal["train_e01"], Literal["train_e02"]]
+    environment_names: EnvironmentNames
     penalty_weight: Annotated[StrictFloat, Field(gt=0.0)]
     penalty_anneal_updates: NonNegativeInt
     penalty: Literal["irmv1_dummy_classifier_scale"]
@@ -215,7 +227,7 @@ class IrmAlgorithmConfig(StrictBoundaryModel):
 
 class FishAlgorithmConfig(StrictBoundaryModel):
     kind: Literal["fish"]
-    environment_names: tuple[Literal["train_e01"], Literal["train_e02"]]
+    environment_names: EnvironmentNames
     meta_step_size: Annotated[StrictFloat, Field(gt=0.0)]
     inner_update: Literal["one_shared_adam_step_per_environment"]
     sampling: Literal["environment_balanced_without_replacement"]
@@ -223,7 +235,7 @@ class FishAlgorithmConfig(StrictBoundaryModel):
 
 class LisaAlgorithmConfig(StrictBoundaryModel):
     kind: Literal["lisa"]
-    group_definition: Literal["target_color"]
+    group_definition: GroupDefinition
     selection_prob: Probability
     mixing: Literal["beta_2_2"]
     sampling: Literal["uniform_single_group_batches"]
@@ -235,7 +247,7 @@ class SwadAlgorithmConfig(StrictBoundaryModel):
     n_converge: Literal[3]
     n_tolerance: Literal[6]
     segment_updates: PositiveInt
-    loss_split_names: tuple[Literal["val_e01"], Literal["val_e02"]]
+    loss_split_names: SwadLossSplitNames
 
 
 class MatchDgAlgorithmConfig(StrictBoundaryModel):
@@ -381,10 +393,21 @@ class _CommonCmnistExperimentConfig(StrictBoundaryModel):
                     f"{self.algorithm.kind} requires pairs.kind='disabled'"
                 )
             if (
-                isinstance(self.algorithm, GroupDroAlgorithmConfig)
+                isinstance(
+                    self.algorithm, GroupDroAlgorithmConfig | LisaAlgorithmConfig
+                )
                 and self.algorithm.group_definition != "target_color"
             ):
-                raise ValueError("CMNIST GroupDRO requires target-color groups")
+                raise ValueError("CMNIST group methods require target-color groups")
+            if isinstance(
+                self.algorithm,
+                RexAlgorithmConfig | IrmAlgorithmConfig | FishAlgorithmConfig,
+            ) and self.algorithm.environment_names != ("train_e01", "train_e02"):
+                raise ValueError("CMNIST invariant methods use the training sources")
+            if isinstance(
+                self.algorithm, SwadAlgorithmConfig
+            ) and self.algorithm.loss_split_names != ("val_e01", "val_e02"):
+                raise ValueError("CMNIST SWAD scores its loss on val_e01 and val_e02")
         elif not isinstance(self.pairs, OraclePairsConfig):
             raise ValueError(f"{self.algorithm.kind} requires pairs.kind='oracle'")
         if isinstance(self.algorithm, GritAlgorithmConfig):

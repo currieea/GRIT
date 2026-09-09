@@ -27,6 +27,7 @@ from grit.features.waterbirds import (
     Normalization,
     WaterbirdsEvaluationFeatureTable,
     WaterbirdsFinalTestView,
+    WaterbirdsTestOracleView,
 )
 from grit.methods.types import MethodId
 from grit.schemas import SeedStage, StrictBoundaryModel
@@ -37,6 +38,13 @@ NonNegativeInt: TypeAlias = Annotated[StrictInt, Field(ge=0)]
 Accuracy: TypeAlias = Annotated[FiniteFloat, Field(ge=0.0, le=1.0)]
 
 GROUP_ORDER = WATERBIRDS_GROUP_ORDER
+
+# The ordinary selector scores validation records; `test_oracle` scores the per-epoch
+# test records of the separately labeled test-oracle track with the same rule.
+WaterbirdsSelector: TypeAlias = Literal[
+    "waterbirds_validation_worst_group", "test_oracle"
+]
+ORDINARY_WATERBIRDS_SELECTOR: WaterbirdsSelector = "waterbirds_validation_worst_group"
 
 
 class _WaterbirdsArtifactLineage(StrictBoundaryModel):
@@ -111,8 +119,8 @@ class _WaterbirdsMetricIdentity(_WaterbirdsArtifactLineage):
             raise ValueError("Waterbirds adjusted-average accuracy is inconsistent")
         if float(self.raw_average_accuracy) != expected_raw:
             raise ValueError("Waterbirds raw-average accuracy is inconsistent")
-        if self.method_id == "erm" and self.projection_rank is not None:
-            raise ValueError("Waterbirds ERM metrics cannot have a projection rank")
+        if self.method_id != "grit" and self.projection_rank is not None:
+            raise ValueError("only Waterbirds GRIT metrics carry a projection rank")
         if self.method_id == "grit" and self.projection_rank is None:
             raise ValueError("Waterbirds GRIT metrics require a projection rank")
         return self
@@ -130,9 +138,22 @@ class WaterbirdsFinalTestMetricRecord(_WaterbirdsMetricIdentity):
     seed_stage: Literal[SeedStage.FINAL]
 
 
+class WaterbirdsDiagnosticMetricRecord(_WaterbirdsMetricIdentity):
+    """Per-epoch test metrics of the test-oracle track; never a final-gate result."""
+
+    metric_kind: Literal["diagnostic_test_oracle"]
+    split_name: Literal["test"]
+    seed_stage: SeedStage
+
+
+WaterbirdsSelectorRecord: TypeAlias = (
+    WaterbirdsValidationMetricRecord | WaterbirdsDiagnosticMetricRecord
+)
+
+
 class WaterbirdsCheckpointSelection(_WaterbirdsArtifactLineage):
     decision_id: NonEmptyStr
-    selector: Literal["waterbirds_validation_worst_group"]
+    selector: WaterbirdsSelector
     method_id: MethodId
     seed_stage: SeedStage
     seed: StrictInt
@@ -145,7 +166,7 @@ class WaterbirdsCheckpointSelection(_WaterbirdsArtifactLineage):
 
 class WaterbirdsCandidateSelection(_WaterbirdsArtifactLineage):
     decision_id: NonEmptyStr
-    selector: Literal["waterbirds_validation_worst_group"]
+    selector: WaterbirdsSelector
     method_id: MethodId
     candidate_id: NonEmptyStr
     scientific_config_digest: NonEmptyStr
@@ -167,6 +188,8 @@ class WaterbirdsCandidateSelection(_WaterbirdsArtifactLineage):
         for decision in self.checkpoint_decisions:
             if decision.method_id != self.method_id:
                 raise ValueError("Waterbirds candidate method identity is inconsistent")
+            if decision.selector != self.selector:
+                raise ValueError("Waterbirds candidate mixes checkpoint selectors")
             if decision.checkpoint.candidate_id != self.candidate_id:
                 raise ValueError("Waterbirds candidate ID is inconsistent")
             if (
@@ -200,7 +223,7 @@ class WaterbirdsTuningFinalists(_WaterbirdsArtifactLineage):
         "grit.waterbirds-tuning-finalists/v1"
     )
     artifact_id: NonEmptyStr
-    selector: Literal["waterbirds_validation_worst_group"]
+    selector: WaterbirdsSelector
     method_id: MethodId
     tuning_seeds: Annotated[tuple[StrictInt, ...], Field(min_length=3, max_length=3)]
     ordered_candidates: Annotated[
@@ -218,6 +241,8 @@ class WaterbirdsTuningFinalists(_WaterbirdsArtifactLineage):
         for decision in self.ordered_candidates:
             if decision.method_id != self.method_id:
                 raise ValueError("Waterbirds finalist method is inconsistent")
+            if decision.selector != self.selector:
+                raise ValueError("Waterbirds finalist selector is inconsistent")
             if _lineage(decision) != _lineage(self):
                 raise ValueError("Waterbirds finalist artifact lineage is inconsistent")
             observed = {
@@ -237,7 +262,7 @@ class FrozenWaterbirdsCandidate(_WaterbirdsArtifactLineage):
         "grit.waterbirds-frozen-candidate/v1"
     )
     frozen_selection_id: NonEmptyStr
-    selector: Literal["waterbirds_validation_worst_group"]
+    selector: WaterbirdsSelector
     method_id: MethodId
     candidate_id: NonEmptyStr
     scientific_config_digest: NonEmptyStr
@@ -272,9 +297,12 @@ class FrozenWaterbirdsCandidate(_WaterbirdsArtifactLineage):
             tuning.projection_rank,
         ):
             raise ValueError("frozen Waterbirds candidate identity is inconsistent")
-        if (
-            _lineage(self) != _lineage(self.finalists)
-            or _lineage(self) != _lineage(self.decision)
+        if self.selector != self.finalists.selector or (
+            self.selector != self.decision.selector
+        ):
+            raise ValueError("frozen Waterbirds candidate selector is inconsistent")
+        if _lineage(self) != _lineage(self.finalists) or _lineage(self) != _lineage(
+            self.decision
         ):
             raise ValueError("frozen Waterbirds artifact lineage is inconsistent")
         if self.finalists.tuning_seeds != self.seed_sets.tuning:
@@ -405,10 +433,65 @@ def compute_waterbirds_final_metric(
     )
 
 
+def compute_waterbirds_diagnostic_metric(
+    view: WaterbirdsTestOracleView,
+    predictions: torch.Tensor,
+    *,
+    adjusted_weights: WaterbirdsAdjustedWeightSpec,
+    record_id: str,
+    candidate_id: str,
+    method_id: MethodId,
+    scientific_config_digest: str,
+    checkpoint_id: str,
+    epoch: int,
+    seed_stage: SeedStage,
+    seed: int,
+    projection_rank: int | None,
+) -> WaterbirdsDiagnosticMetricRecord:
+    """Score one epoch on the test split for the labeled test-oracle track only."""
+
+    if (
+        type(view) is not WaterbirdsTestOracleView
+        or view.table.split_role != "final_test"
+    ):
+        raise TypeError("diagnostic metrics require a Waterbirds test-oracle view")
+    weights = WaterbirdsAdjustedWeightSpec.model_validate_json(
+        adjusted_weights.canonical_json()
+    )
+    if weights.dataset_manifest_digest != view.table.dataset_manifest_digest:
+        raise ValueError("Waterbirds adjusted weights belong to another dataset")
+    values = _group_values(view.table, predictions)
+    aggregate = _aggregate_fields(values, weights)
+    return WaterbirdsDiagnosticMetricRecord(
+        record_id=record_id,
+        run_id=view.run_id,
+        candidate_id=candidate_id,
+        method_id=method_id,
+        scientific_config_digest=scientific_config_digest,
+        dataset_manifest_digest=view.table.dataset_manifest_digest,
+        feature_cache_manifest_digest=view.feature_cache_manifest_digest,
+        normalization=view.table.normalization,
+        adjusted_weight_spec_digest=weights.canonical_digest(),
+        checkpoint_id=checkpoint_id,
+        epoch=epoch,
+        seed=seed,
+        projection_rank=projection_rank,
+        groups=values,
+        adjusted_weight_spec=weights,
+        worst_group_accuracy=aggregate[0],
+        adjusted_average_accuracy=aggregate[1],
+        raw_average_accuracy=aggregate[2],
+        metric_kind="diagnostic_test_oracle",
+        split_name="test",
+        seed_stage=seed_stage,
+    )
+
+
 def select_waterbirds_checkpoint(
-    records: Sequence[WaterbirdsValidationMetricRecord],
+    records: Sequence[WaterbirdsSelectorRecord],
+    selector: WaterbirdsSelector = ORDINARY_WATERBIRDS_SELECTOR,
 ) -> WaterbirdsCheckpointSelection:
-    validated = _validation_records(records)
+    validated = _selector_records(records, selector)
     run_keys = {
         (
             item.run_id,
@@ -448,7 +531,7 @@ def select_waterbirds_checkpoint(
     )
     return WaterbirdsCheckpointSelection(
         decision_id=f"waterbirds-checkpoint:{selected.checkpoint_id}",
-        selector="waterbirds_validation_worst_group",
+        selector=selector,
         method_id=selected.method_id,
         seed_stage=selected.seed_stage,
         seed=selected.seed,
@@ -465,29 +548,31 @@ def select_waterbirds_checkpoint(
 
 
 def rank_waterbirds_tuning_candidates(
-    records: Sequence[WaterbirdsValidationMetricRecord],
+    records: Sequence[WaterbirdsSelectorRecord],
     seed_sets: SeedSets,
+    selector: WaterbirdsSelector = ORDINARY_WATERBIRDS_SELECTOR,
 ) -> tuple[WaterbirdsCandidateSelection, ...]:
     validated_seeds = _seed_sets(seed_sets)
-    validated = _validation_records(records)
+    validated = _selector_records(records, selector)
     if any(item.seed_stage is not SeedStage.TUNING for item in validated):
         raise ValueError("Waterbirds tuning ranking accepts tuning records only")
     expected = {(SeedStage.TUNING, seed) for seed in validated_seeds.tuning}
-    return _rank_candidates(validated, expected)
+    return _rank_candidates(validated, expected, selector)
 
 
 def make_waterbirds_tuning_finalists(
-    records: Sequence[WaterbirdsValidationMetricRecord],
+    records: Sequence[WaterbirdsSelectorRecord],
     seed_sets: SeedSets,
+    selector: WaterbirdsSelector = ORDINARY_WATERBIRDS_SELECTOR,
 ) -> WaterbirdsTuningFinalists:
     validated_seeds = _seed_sets(seed_sets)
-    ranked = rank_waterbirds_tuning_candidates(records, validated_seeds)
+    ranked = rank_waterbirds_tuning_candidates(records, validated_seeds, selector)
     if len(ranked) < 3:
         raise ValueError("Waterbirds tuning requires at least three candidates")
     top = ranked[:3]
     return WaterbirdsTuningFinalists(
-        artifact_id=f"waterbirds-finalists:{top[0].method_id}",
-        selector="waterbirds_validation_worst_group",
+        artifact_id=f"waterbirds-finalists:{selector}:{top[0].method_id}",
+        selector=selector,
         method_id=top[0].method_id,
         dataset_manifest_digest=top[0].dataset_manifest_digest,
         feature_cache_manifest_digest=top[0].feature_cache_manifest_digest,
@@ -499,7 +584,7 @@ def make_waterbirds_tuning_finalists(
 
 
 def select_confirmed_waterbirds_candidate(
-    confirmation_records: Sequence[WaterbirdsValidationMetricRecord],
+    confirmation_records: Sequence[WaterbirdsSelectorRecord],
     finalists: WaterbirdsTuningFinalists,
     seed_sets: SeedSets,
 ) -> WaterbirdsCandidateSelection:
@@ -507,9 +592,10 @@ def select_confirmed_waterbirds_candidate(
     validated_finalists = WaterbirdsTuningFinalists.model_validate_json(
         finalists.canonical_json()
     )
+    selector = validated_finalists.selector
     if validated_finalists.tuning_seeds != validated_seeds.tuning:
         raise ValueError("Waterbirds finalist tuning seeds do not match configuration")
-    records = _validation_records(confirmation_records)
+    records = _selector_records(confirmation_records, selector)
     if any(item.seed_stage is not SeedStage.CONFIRMATION for item in records):
         raise ValueError("Waterbirds confirmation accepts confirmation records only")
     finalist_by_id = {
@@ -520,7 +606,7 @@ def select_confirmed_waterbirds_candidate(
     if any(item.method_id != validated_finalists.method_id for item in records):
         raise ValueError("Waterbirds confirmation method does not match finalists")
     expected = {(SeedStage.CONFIRMATION, seed) for seed in validated_seeds.confirmation}
-    confirmations = _rank_candidates(records, expected)
+    confirmations = _rank_candidates(records, expected, selector)
     combined: list[WaterbirdsCandidateSelection] = []
     for confirmation in confirmations:
         tuning = finalist_by_id[confirmation.candidate_id]
@@ -534,7 +620,7 @@ def select_confirmed_waterbirds_candidate(
         combined.append(
             WaterbirdsCandidateSelection(
                 decision_id=f"waterbirds-candidate:{confirmation.candidate_id}:confirmed",
-                selector="waterbirds_validation_worst_group",
+                selector=selector,
                 method_id=confirmation.method_id,
                 candidate_id=confirmation.candidate_id,
                 scientific_config_digest=confirmation.scientific_config_digest,
@@ -550,9 +636,7 @@ def select_confirmed_waterbirds_candidate(
                     confirmation.feature_cache_manifest_digest
                 ),
                 normalization=confirmation.normalization,
-                adjusted_weight_spec_digest=(
-                    confirmation.adjusted_weight_spec_digest
-                ),
+                adjusted_weight_spec_digest=(confirmation.adjusted_weight_spec_digest),
                 checkpoint_decisions=decisions,
             )
         )
@@ -568,9 +652,11 @@ def freeze_waterbirds_candidate(
         decision.canonical_json()
     )
     artifact = WaterbirdsTuningFinalists.model_validate_json(finalists.canonical_json())
+    if artifact.selector != validated.selector:
+        raise ValueError("Waterbirds freeze mixes finalist and decision selectors")
     frozen = FrozenWaterbirdsCandidate(
         frozen_selection_id=f"frozen:{validated.decision_id}",
-        selector="waterbirds_validation_worst_group",
+        selector=validated.selector,
         method_id=validated.method_id,
         candidate_id=validated.candidate_id,
         scientific_config_digest=validated.scientific_config_digest,
@@ -602,6 +688,8 @@ def freeze_waterbirds_final_checkpoint(
         raise ValueError("Waterbirds final checkpoint seed is not configured")
     if selected.method_id != frozen_candidate.method_id:
         raise ValueError("Waterbirds final checkpoint method changed")
+    if selected.selector != frozen_candidate.selector:
+        raise ValueError("Waterbirds final checkpoint selector changed")
     if selected.checkpoint.candidate_id != frozen_candidate.candidate_id:
         raise ValueError("Waterbirds final checkpoint candidate changed")
     if (
@@ -625,8 +713,9 @@ def freeze_waterbirds_final_checkpoint(
 
 
 def _rank_candidates(
-    records: tuple[WaterbirdsValidationMetricRecord, ...],
+    records: tuple[WaterbirdsSelectorRecord, ...],
     expected_seed_keys: set[tuple[SeedStage, int]],
+    selector: WaterbirdsSelector,
 ) -> tuple[WaterbirdsCandidateSelection, ...]:
     methods = {item.method_id for item in records}
     if len(methods) != 1:
@@ -634,14 +723,14 @@ def _rank_candidates(
     lineages = {_lineage(item) for item in records}
     if len(lineages) != 1:
         raise ValueError("Waterbirds selection cannot mix artifact lineage")
-    by_run: dict[tuple[str, str], list[WaterbirdsValidationMetricRecord]] = defaultdict(
-        list
-    )
+    by_run: dict[tuple[str, str], list[WaterbirdsSelectorRecord]] = defaultdict(list)
     for record in records:
         by_run[(record.candidate_id, record.run_id)].append(record)
     by_candidate: dict[str, list[WaterbirdsCheckpointSelection]] = defaultdict(list)
     for (candidate_id, _), run_records in by_run.items():
-        by_candidate[candidate_id].append(select_waterbirds_checkpoint(run_records))
+        by_candidate[candidate_id].append(
+            select_waterbirds_checkpoint(run_records, selector)
+        )
     ranked: list[WaterbirdsCandidateSelection] = []
     for candidate_id, decisions in by_candidate.items():
         seed_keys = [(item.seed_stage, item.seed) for item in decisions]
@@ -660,7 +749,7 @@ def _rank_candidates(
         ranked.append(
             WaterbirdsCandidateSelection(
                 decision_id=f"waterbirds-candidate:{candidate_id}",
-                selector="waterbirds_validation_worst_group",
+                selector=selector,
                 method_id=decisions[0].method_id,
                 candidate_id=candidate_id,
                 scientific_config_digest=configs.pop(),
@@ -676,9 +765,7 @@ def _rank_candidates(
                     decisions[0].feature_cache_manifest_digest
                 ),
                 normalization=decisions[0].normalization,
-                adjusted_weight_spec_digest=(
-                    decisions[0].adjusted_weight_spec_digest
-                ),
+                adjusted_weight_spec_digest=(decisions[0].adjusted_weight_spec_digest),
                 checkpoint_decisions=tuple(decisions),
             )
         )
@@ -697,12 +784,30 @@ def _candidate_key(
     )
 
 
-def _validation_records(
-    records: Sequence[WaterbirdsValidationMetricRecord],
-) -> tuple[WaterbirdsValidationMetricRecord, ...]:
+def _selector_records(
+    records: Sequence[WaterbirdsSelectorRecord],
+    selector: WaterbirdsSelector,
+) -> tuple[WaterbirdsSelectorRecord, ...]:
+    """Revalidate records and refuse the wrong split for the selector.
+
+    The ordinary selector accepts validation records only, so a test record can never
+    steer it; `test_oracle` accepts the labeled diagnostic records only.
+    """
+
     materialized = tuple(records)
     if not materialized:
-        raise ValueError("Waterbirds selection requires validation metrics")
+        raise ValueError("Waterbirds selection requires metrics")
+    if selector == "test_oracle":
+        if any(
+            type(item) is not WaterbirdsDiagnosticMetricRecord for item in materialized
+        ):
+            raise TypeError(
+                "Waterbirds test_oracle selection accepts diagnostic test metrics only"
+            )
+        return tuple(
+            WaterbirdsDiagnosticMetricRecord.model_validate_json(item.canonical_json())
+            for item in materialized
+        )
     if any(type(item) is not WaterbirdsValidationMetricRecord for item in materialized):
         raise TypeError("Waterbirds ordinary selection accepts validation metrics only")
     return tuple(

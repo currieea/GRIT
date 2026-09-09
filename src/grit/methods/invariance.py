@@ -15,7 +15,14 @@ def environment_balanced_epoch_batches(
     batch_size: int,
     generator: torch.Generator,
 ) -> tuple[torch.Tensor, ...]:
-    """Shuffle each equally sized environment and exhaust it without replacement."""
+    """Balanced minibatches that exhaust the largest environment once per epoch.
+
+    Every environment is shuffled independently and drawn without replacement within a
+    pass. The largest environment is sliced exactly once (its final batch is the
+    remainder); every other environment contributes the same count per batch and
+    starts a fresh shuffled pass whenever it runs out. Equal-sized environments
+    therefore reduce to the original equal-slice rule with one remainder batch.
+    """
 
     ids = environment_ids.detach().cpu().to(torch.int64)
     if ids.ndim != 1 or ids.numel() == 0:
@@ -28,31 +35,36 @@ def environment_balanced_epoch_batches(
             "the environment count"
         )
     if bool(((ids < 0) | (ids >= environment_count)).any()) or any(
-        not bool((ids == environment).any())
-        for environment in range(environment_count)
+        not bool((ids == environment).any()) for environment in range(environment_count)
     ):
-        raise ValueError(
-            "invariant training requires every contiguous environment ID"
-        )
+        raise ValueError("invariant training requires every contiguous environment ID")
     rows_by_environment = tuple(
         torch.nonzero(ids == environment, as_tuple=False).flatten()
         for environment in range(environment_count)
     )
-    counts = {int(rows.numel()) for rows in rows_by_environment}
-    if len(counts) != 1:
-        raise ValueError("environment-balanced epochs require equal environment sizes")
-    shuffled = tuple(
-        rows[torch.randperm(int(rows.numel()), generator=generator)]
-        for rows in rows_by_environment
-    )
     per_environment = batch_size // environment_count
-    environment_size = int(shuffled[0].numel())
-    return tuple(
-        torch.cat(
-            [rows[start : start + per_environment] for rows in shuffled], dim=0
-        )
-        for start in range(0, environment_size, per_environment)
+    largest = max(int(rows.numel()) for rows in rows_by_environment)
+    batch_counts = tuple(
+        min(per_environment, largest - start)
+        for start in range(0, largest, per_environment)
     )
+    streams: list[torch.Tensor] = []
+    needed = sum(batch_counts)
+    for rows in rows_by_environment:
+        passes: list[torch.Tensor] = []
+        drawn = 0
+        while drawn < needed:
+            passes.append(rows[torch.randperm(int(rows.numel()), generator=generator)])
+            drawn += int(rows.numel())
+        streams.append(torch.cat(passes, dim=0)[:needed])
+    batches: list[torch.Tensor] = []
+    offset = 0
+    for count in batch_counts:
+        batches.append(
+            torch.cat([stream[offset : offset + count] for stream in streams], dim=0)
+        )
+        offset += count
+    return tuple(batches)
 
 
 def environment_mean_losses(

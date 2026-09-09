@@ -201,6 +201,31 @@ class WaterbirdsEvaluationFeatureTable:
 
 
 @dataclass(frozen=True, slots=True)
+class WaterbirdsTestOracleView:
+    """Test features opened per epoch by an explicitly labeled test-oracle run.
+
+    This is the diagnostic path, not the final gate: it exists only so the
+    `test_oracle` selector can score checkpoints, and everything derived from it is
+    labeled `test_oracle`.
+    """
+
+    authorization_id: str
+    run_id: str
+    resolved_config_digest: str
+    feature_cache_manifest_digest: str
+    table: WaterbirdsEvaluationFeatureTable
+
+
+class WaterbirdsTestOracleConfig(Protocol):
+    """A resolved candidate config that has opted into test selection."""
+
+    @property
+    def selector(self) -> str: ...
+
+    def canonical_digest(self) -> str: ...
+
+
+@dataclass(frozen=True, slots=True)
 class WaterbirdsFinalTestView:
     """Final features materialized only by the post-restoration gate."""
 
@@ -260,6 +285,14 @@ class WaterbirdsFinalTestHandle:
     ) -> WaterbirdsFinalTestView:
         """Open only after candidate/checkpoint selection and matching restoration."""
 
+        if (
+            candidate.selector != "waterbirds_validation_worst_group"
+            or checkpoint.decision.selector != "waterbirds_validation_worst_group"
+        ):
+            raise ValueError(
+                "the final-test gate accepts validation-selected candidates only; "
+                "test-oracle runs use the diagnostic view"
+            )
         if checkpoint.candidate_selection_id != candidate.frozen_selection_id:
             raise ValueError("final checkpoint does not belong to Waterbirds candidate")
         if checkpoint.method_id != candidate.method_id:
@@ -311,6 +344,56 @@ class WaterbirdsFinalTestHandle:
         )
 
 
+def _training_rows(
+    manifest: WaterbirdsFeatureCacheManifest,
+) -> tuple[WaterbirdsFeatureRecord, ...]:
+    return tuple(
+        record for record in manifest.records if record.split_role == "training"
+    )
+
+
+def _training_table(
+    manifest: WaterbirdsFeatureCacheManifest, features: torch.Tensor
+) -> WaterbirdsTrainingFeatureTable:
+    rows = _training_rows(manifest)
+    indices = torch.tensor([record.row_index for record in rows], dtype=torch.int64)
+    return WaterbirdsTrainingFeatureTable(
+        dataset_manifest_digest=manifest.dataset_manifest_digest,
+        feature_cache_manifest_digest=manifest.canonical_digest(),
+        normalization=manifest.normalization,
+        record_ids=tuple(record.record_id for record in rows),
+        features=features[indices].clone(),
+        labels=torch.tensor([record.bird_label for record in rows], dtype=torch.int64),
+    )
+
+
+def _training_environment_ids(manifest: WaterbirdsFeatureCacheManifest) -> torch.Tensor:
+    """Training backgrounds (0 land, 1 water) aligned with `training_table()` rows.
+
+    Method-definition access for V-REx, IRMv1, and Fish only; ERM's table stays
+    redacted.
+    """
+
+    return torch.tensor(
+        [record.background for record in _training_rows(manifest)], dtype=torch.int64
+    )
+
+
+def _training_group_ids(manifest: WaterbirdsFeatureCacheManifest) -> torch.Tensor:
+    """Canonical `2 * label + background` groups aligned with `training_table()` rows.
+
+    Method-definition access for GroupDRO and LISA only.
+    """
+
+    return torch.tensor(
+        [
+            2 * record.bird_label + record.background
+            for record in _training_rows(manifest)
+        ],
+        dtype=torch.int64,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class WaterbirdsFeatureCache:
     manifest: WaterbirdsFeatureCacheManifest
@@ -318,25 +401,34 @@ class WaterbirdsFeatureCache:
     root: Path
 
     def training_table(self) -> WaterbirdsTrainingFeatureTable:
-        rows = tuple(
-            record
-            for record in self.manifest.records
-            if record.split_role == "training"
-        )
-        indices = torch.tensor([record.row_index for record in rows], dtype=torch.int64)
-        return WaterbirdsTrainingFeatureTable(
-            dataset_manifest_digest=self.manifest.dataset_manifest_digest,
-            feature_cache_manifest_digest=self.manifest.canonical_digest(),
-            normalization=self.manifest.normalization,
-            record_ids=tuple(record.record_id for record in rows),
-            features=self.features[indices].clone(),
-            labels=torch.tensor(
-                [record.bird_label for record in rows], dtype=torch.int64
-            ),
-        )
+        return _training_table(self.manifest, self.features)
+
+    def training_environment_ids(self) -> torch.Tensor:
+        return _training_environment_ids(self.manifest)
+
+    def training_group_ids(self) -> torch.Tensor:
+        return _training_group_ids(self.manifest)
 
     def validation_table(self) -> WaterbirdsEvaluationFeatureTable:
         return self._evaluation_table("validation")
+
+    def open_test_oracle_table(
+        self, config: WaterbirdsTestOracleConfig, *, run_id: str
+    ) -> WaterbirdsTestOracleView:
+        """Open the test split for an explicitly labeled test-oracle candidate."""
+
+        if config.selector != "test_oracle":
+            raise ValueError(
+                "the test split is opened per epoch only for test_oracle candidates"
+            )
+        digest = config.canonical_digest()
+        return WaterbirdsTestOracleView(
+            authorization_id=f"test-oracle:{run_id}:{digest}",
+            run_id=run_id,
+            resolved_config_digest=digest,
+            feature_cache_manifest_digest=self.manifest.canonical_digest(),
+            table=self._evaluation_table("final_test"),
+        )
 
     def issue_final_handle(
         self,
@@ -412,22 +504,13 @@ class WaterbirdsTuningFeatureCache:
     root: Path
 
     def training_table(self) -> WaterbirdsTrainingFeatureTable:
-        rows = tuple(
-            record
-            for record in self.manifest.records
-            if record.split_role == "training"
-        )
-        indices = torch.tensor([record.row_index for record in rows], dtype=torch.int64)
-        return WaterbirdsTrainingFeatureTable(
-            dataset_manifest_digest=self.manifest.dataset_manifest_digest,
-            feature_cache_manifest_digest=self.manifest.canonical_digest(),
-            normalization=self.manifest.normalization,
-            record_ids=tuple(record.record_id for record in rows),
-            features=self.features[indices].clone(),
-            labels=torch.tensor(
-                [record.bird_label for record in rows], dtype=torch.int64
-            ),
-        )
+        return _training_table(self.manifest, self.features)
+
+    def training_environment_ids(self) -> torch.Tensor:
+        return _training_environment_ids(self.manifest)
+
+    def training_group_ids(self) -> torch.Tensor:
+        return _training_group_ids(self.manifest)
 
     def validation_table(self) -> WaterbirdsEvaluationFeatureTable:
         rows = tuple(
@@ -565,9 +648,7 @@ def load_waterbirds_tuning_feature_cache(
         expected_dataset_manifest_digest=expected_dataset_manifest_digest,
         expected_normalization=expected_normalization,
     )
-    array = _load_waterbirds_feature_array(
-        feature_path, manifest, memory_mapped=True
-    )
+    array = _load_waterbirds_feature_array(feature_path, manifest, memory_mapped=True)
     selected_rows = tuple(
         record.row_index
         for record in manifest.records
@@ -580,9 +661,7 @@ def load_waterbirds_tuning_feature_cache(
         (len(manifest.records), FEATURE_DIMENSION), dtype=torch.float32
     )
     features[torch.tensor(selected_rows, dtype=torch.int64)] = selected_tensor
-    return WaterbirdsTuningFeatureCache(
-        manifest=manifest, features=features, root=root
-    )
+    return WaterbirdsTuningFeatureCache(manifest=manifest, features=features, root=root)
 
 
 def _load_waterbirds_feature_manifest(

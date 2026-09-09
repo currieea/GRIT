@@ -1,13 +1,16 @@
 # Waterbirds experiment protocol
 
-Status: **Implemented for ERM and oracle GRIT. GroupDRO is specified but not yet
-implemented. Source assets (Waterbirds, CUB, masks, Places) still need to be acquired;
-estimated-pair definitions are still open.**
+Status: **Implemented for ERM, oracle GRIT, GroupDRO, V-REx, IRMv1, Fish, LISA, SWAD,
+and the MatchDG-style pair penalty under both the validation track and the separately
+labeled test-oracle track. No real Waterbirds run exists yet: source assets (Waterbirds,
+CUB, masks, Places) still need to be acquired on a server; estimated-pair definitions
+are still open.**
 
 ## Purpose
 
 Define a rigorous Waterbirds-CF experiment for comparing ERM, GRIT/ECMP pairing
-strategies, and GroupDRO without test-driven model selection.
+strategies, and the paper's baseline methods under validation-only model selection, with
+the paper's test-selected numbers reproduced only as a separately labeled envelope.
 
 The protocol distinguishes the information in the supervised Waterbirds-CF training set
 from the oracle pairing relation among those training examples. All primary methods see
@@ -24,16 +27,20 @@ The first complete Waterbirds study includes:
 
 - ERM on original Waterbirds as a dataset-construction control;
 - ERM on Waterbirds-CF as the primary ERM baseline;
-- GroupDRO on Waterbirds-CF;
+- GroupDRO, V-REx, IRMv1, Fish, LISA, SWAD, and the MatchDG-style pair penalty on
+  Waterbirds-CF, each defined exactly as in the [ColoredMNIST protocol](cmnist.md) with
+  the Waterbirds bindings stated below;
 - GRIT with oracle, conditional, and nearest-neighbor pairs on Waterbirds-CF; and
 - a separately reported rank-zero GRIT identity-projection sanity control.
 
-The initial end-to-end implementation may begin with ERM and oracle GRIT before adding
-the other approved methods. IRM, REx, Fish, LISA, MatchDG, and SWAD are deferred until
-the Waterbirds vertical slice and selection workflow pass.
+Every method runs under two selection tracks: the ordinary validation worst-group
+selector, and the test-oracle track that reproduces the paper's test-selected protocol as
+a separately labeled envelope (see "Test-oracle validation track"). Estimated pairs
+(conditional and nearest) remain open; the implemented table uses the 240 clean oracle
+pairs for GRIT and the MatchDG-style row.
 
-The initial study does not include raw-image training, group-blind selection,
-test-selected model selection, or snow/desert backgrounds.
+The initial study does not include raw-image training, group-blind selection, or
+snow/desert backgrounds.
 
 ## Base Waterbirds construction
 
@@ -239,12 +246,20 @@ needed for the canonical experiment.
 - Conditional and nearest GRIT receive training labels and background metadata only as
   required by their approved pair-builder definitions; they do not receive oracle pair
   identities.
-- GroupDRO may use `(y, background)` group labels during training because this is part
-  of the method definition.
+- GroupDRO and LISA may use `(y, background)` group labels during training because
+  group annotation is part of those method definitions.
+- V-REx, IRMv1, and Fish receive the training background as their environment label
+  (environment 0 is land, environment 1 is water) because environment annotation is part
+  of those method definitions. They do not receive pair identities.
+- The MatchDG-style pair penalty receives the same 240 oracle pair identities as oracle
+  GRIT and nothing else beyond the common supervised records.
+- SWAD receives the validation split's mean cross-entropy as its loss-valley signal, the
+  same validation information the ordinary selector already uses.
 - Every method may use validation group metadata through the prespecified primary
   selector.
 - Test samples, labels, group metadata, and metrics are unavailable to training,
-  projection, checkpoint selection, and hyperparameter selection.
+  projection, checkpoint selection, and hyperparameter selection in the ordinary track.
+  Only the explicitly labeled test-oracle track selects on test metrics.
 
 ## Invariant pairs
 
@@ -408,6 +423,37 @@ centered on the reference implementation's `0.01` default. They are crossed with
 same learning-rate and weight-decay grid as ERM and selected using validation worst-group
 accuracy. See the [reference GroupDRO implementation](https://github.com/kohpangwei/group_DRO).
 
+## Other baselines
+
+V-REx, IRMv1, Fish, LISA, SWAD, and the MatchDG-style pair penalty are the objectives,
+samplers, update rules, and approved method-specific grids defined in the
+[ColoredMNIST protocol](cmnist.md). Waterbirds changes only what those definitions bind
+to:
+
+- **Environments (V-REx, IRMv1, Fish).** Environment 0 is every training record on a
+  land background and environment 1 every record on a water background (3,554 and 1,241
+  records). The environment-balanced minibatch rule is generalized to unequal
+  environments: every minibatch of size 256 holds 128 rows from each environment; each
+  environment is shuffled independently from the run seed and drawn without replacement
+  within a pass; the larger environment is exhausted exactly once per epoch (its last
+  batch is the remainder, matched by an equal count from the other environment), and the
+  smaller environment starts a fresh pass whenever it runs out. Under this rule an epoch
+  has 28 updates and 100 epochs have 2,800, so the fixed V-REx and IRMv1 anneal points at
+  updates 100 and 190 fall near epochs 4 and 7.
+- **Groups (GroupDRO, LISA).** The four canonical `(y, background)` groups in the order
+  above, indexed `2y + background`. LISA's intra-label partner flips the background and
+  its intra-domain partner flips the bird label. The 56-record waterbird-on-land group
+  is smaller than a 256-row minibatch, so LISA samples it with replacement, as the WILDS
+  sampler does.
+- **SWAD loss.** The mean cross-entropy of the live model on the whole released
+  validation split, evaluated every 100 optimizer updates. With 19 ERM updates per epoch
+  this yields 19 segments over 100 epochs.
+- **Pairs (MatchDG-style).** The penalty averages over the same 240 clean `land - water`
+  oracle differences that fit the GRIT projection.
+
+Nothing else changes: the optimizer grid, batch size, epochs, seeds, checkpoint rule,
+and selectors are those of this document.
+
 ## Model and checkpoint selection
 
 The only ordinary Waterbirds selector maximizes official validation worst-group
@@ -432,9 +478,34 @@ Checkpoints and configurations obey these rules:
   frozen hyperparameters.
 - Test evaluation starts only after the selection artifact is finalized.
 
-No group-blind selector is included in the initial study. No test metric may select a
-rank, optimizer setting, method parameter, seed, or checkpoint. The initial study does
-not publish a test-oracle envelope.
+No group-blind selector is included in the initial study. In the ordinary track no test
+metric may select a rank, optimizer setting, method parameter, seed, or checkpoint.
+
+### Test-oracle validation track
+
+The original study selected hyperparameters and checkpoints on the Waterbirds test
+split. The rewrite reproduces that protocol as its own search tree, mirroring the
+ColoredMNIST test-oracle track:
+
+- A production search config opts in with `selectors: [test_oracle]`. It cannot be
+  combined with the ordinary selector and must use its own `output_root`; an ordinary
+  tree is never reused, because per-epoch checkpoints are not persisted and the ordinary
+  tree must never see the test split before its selection is frozen.
+- Every candidate is retrained with the same tuning, confirmation, and final seeds as
+  the ordinary tree, so the two tracks stay paired per seed.
+- Every epoch records the validation four-group metrics (for reporting) and one
+  `diagnostic_test_oracle` record holding the same four-group metrics on the test split.
+  The `test_oracle` selector scores a checkpoint by test worst-group accuracy with the
+  ordinary tie-breakers (test adjusted-average accuracy, lower rank, earlier epoch);
+  candidate ranking, top-three confirmation, and the frozen winner follow the ordinary
+  lifecycle over those scores.
+- Final seeds select their epoch on the test split and report that epoch's test
+  metrics. Each final run is written as a `waterbirds_test_oracle_diagnostic` result
+  whose candidate and checkpoint selections carry the `test_oracle` selector; the
+  ordinary `candidate_selection`, `checkpoint_selection`, and `final_test_metric` fields
+  never appear in it, and the final-test gate refuses test-oracle selections.
+- Summaries record `selector: test_oracle` on every method entry and are reported beside
+  the ordinary results only under an explicit "oracle validation" heading.
 
 ## Search, confirmation, and final seeds
 
@@ -454,9 +525,16 @@ does not define selection.
 
 For ERM and GRIT, the approved shared optimizer grid is the Cartesian product of the
 learning-rate and weight-decay candidates above. GRIT additionally searches the approved
-rank candidates. GroupDRO searches that optimizer grid jointly with adversarial step
-sizes `0.001`, `0.01`, and `0.1`. Later methods add only their prespecified
-method-specific parameters.
+rank candidates. Every other method crosses that optimizer grid with its method-specific
+grid from the ColoredMNIST protocol: GroupDRO step sizes `0.001`, `0.01`, `0.1`; V-REx
+penalties `10` through `10000` with the anneal point fixed at update 100; IRMv1 penalties
+`100` through `100000` with the anneal point fixed at update 190; Fish meta steps `0.001`,
+`0.01`, `0.1`, `0.5`; LISA selection probabilities `0` through `1`; SWAD tolerance ratios
+`0.1` through `0.5`; MatchDG latent dimensions `8`, `16`, `32` crossed with penalties
+`0.1` through `100`. Each method runs in its own output tree under each track
+(`configs/waterbirds/<method>-search.yaml` and `<method>-search-test-oracle.yaml`), so
+adding a method never reruns another, while the shared final seeds keep paired
+comparisons valid across trees.
 
 Milestone 6A implements this ERM/oracle-GRIT grid over explicit prepared manifests. Strict
 planning accepts only the production 4,795/1,199/5,794 Waterbirds-CF inventory, exact

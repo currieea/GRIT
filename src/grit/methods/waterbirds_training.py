@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TypeAlias
 
@@ -26,6 +27,9 @@ from grit.schemas import SeedStage, StrictBoundaryModel
 from grit.selection.cmnist import CheckpointIdentity
 from grit.selection.waterbirds import (
     FrozenWaterbirdsCheckpoint,
+    WaterbirdsDiagnosticMetricRecord,
+    WaterbirdsSelector,
+    WaterbirdsSelectorRecord,
     WaterbirdsValidationMetricRecord,
     compute_waterbirds_validation_metric,
 )
@@ -49,9 +53,24 @@ class TrainedWaterbirdsRun:
     seed: int
     projection_rank: int | None
     validation_metrics: tuple[WaterbirdsValidationMetricRecord, ...]
+    diagnostic_metrics: tuple[WaterbirdsDiagnosticMetricRecord, ...] | None
     store: InMemoryLinearCheckpointStore
     algorithm: LinearProbeAlgorithm
     epoch_losses: tuple[float, ...]
+
+    def selector_records(
+        self, selector: WaterbirdsSelector
+    ) -> tuple[WaterbirdsSelectorRecord, ...]:
+        if selector == "test_oracle":
+            if self.diagnostic_metrics is None:
+                raise AssertionError("test-oracle selection lacks test records")
+            return self.diagnostic_metrics
+        return self.validation_metrics
+
+
+DiagnosticEpochHook: TypeAlias = Callable[
+    [LinearProbeAlgorithm, CheckpointIdentity], WaterbirdsDiagnosticMetricRecord
+]
 
 
 def train_waterbirds_linear_probe(
@@ -66,8 +85,13 @@ def train_waterbirds_linear_probe(
     seed_stage: SeedStage,
     seed: int,
     method: LinearProbeTrainingMethod,
+    diagnostic_hook: DiagnosticEpochHook | None = None,
 ) -> TrainedWaterbirdsRun:
-    """Run trainer-owned epochs and emit one four-group validation record each."""
+    """Run trainer-owned epochs and emit one four-group validation record each.
+
+    `diagnostic_hook` is the test-oracle track's per-epoch test scoring; ordinary runs
+    never pass one.
+    """
 
     if training.dataset_manifest_digest != validation.dataset_manifest_digest:
         raise ValueError("Waterbirds train and validation datasets do not match")
@@ -81,10 +105,15 @@ def train_waterbirds_linear_probe(
     if int(training.features.shape[0]) == 0:
         raise ValueError("Waterbirds training data must not be empty")
     metrics: list[WaterbirdsValidationMetricRecord] = []
+    diagnostics: list[WaterbirdsDiagnosticMetricRecord] | None = (
+        None if diagnostic_hook is None else []
+    )
 
     def validate_epoch(
         algorithm: LinearProbeAlgorithm, identity: CheckpointIdentity
     ) -> None:
+        if diagnostics is not None and diagnostic_hook is not None:
+            diagnostics.append(diagnostic_hook(algorithm, identity))
         predictions = algorithm.predict(validation.features)
         metrics.append(
             compute_waterbirds_validation_metric(
@@ -123,6 +152,7 @@ def train_waterbirds_linear_probe(
         seed=seed,
         projection_rank=method.projection_rank,
         validation_metrics=tuple(metrics),
+        diagnostic_metrics=None if diagnostics is None else tuple(diagnostics),
         store=core.store,
         algorithm=core.algorithm,
         epoch_losses=core.epoch_losses,
