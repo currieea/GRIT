@@ -253,12 +253,18 @@ def test_swad_loss_valley_starts_after_the_minimum_and_ends_on_tolerance() -> No
     assert not valley.dead
     current = valley.current_state(live)
     assert float(current.bias[0]) != 0.0, "converged: checkpoints are averages"
+    accepted_before_death = valley.current_state(live)
     for index in range(5, 12):
         valley.observe(_segment(index, 5.0, float(index)))
     assert valley.dead
     final = valley.current_state(live)
     assert valley.final is not None and valley.final.count > 0
     assert torch.equal(final.weight, valley.final.state.weight)
+    # Rejected (over-threshold, value 5.0) segments never enter the final average.
+    # Following the reference queue semantics the accepted values are 1, 2, 3 at
+    # convergence and then 2, 3, 4 as those segments leave the smoothing window.
+    assert abs(float(final.bias[0]) - (1 + 2 + 3 + 2 + 3 + 4) / 6) < 1e-6
+    assert float(accepted_before_death.bias[0]) < 5.0
 
     fresh = LossValley(n_converge=3, n_tolerance=6, tolerance_ratio=0.3)
     fresh.observe(_segment(0, 1.0, 1.0))

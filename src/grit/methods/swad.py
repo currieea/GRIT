@@ -114,9 +114,9 @@ class LossValley:
         if self._smooth_queue[0].end_update < converge_update:
             return
         if self._smooth_loss(0) > self.threshold:
+            # The reference stops here: segments above the threshold never enter
+            # the final average, and training halts.
             self.dead = True
-            for item in list(self._smooth_queue)[1:]:
-                self.final.add(item.state)
             return
         self.final.add(self._smooth_queue[0].state)
 

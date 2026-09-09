@@ -256,6 +256,11 @@ class FinalTestHandle:
         """Materialize final data only for mutually matching lifecycle receipts."""
 
         payload = self.__payload
+        if not candidate.selector.is_ordinary or not checkpoint.selector.is_ordinary:
+            raise ValueError(
+                "the final-test gate accepts validation-selected candidates only; "
+                "test-oracle runs use the diagnostic view"
+            )
         if checkpoint.candidate_selection_id != candidate.frozen_selection_id:
             raise ValueError(
                 "checkpoint selection does not belong to the frozen candidate"

@@ -491,6 +491,24 @@ def test_final_gate_rejects_candidate_run_config_and_checkpoint_mismatches() -> 
             wrong_receipt,
         )
 
+    # A test-selected candidate or checkpoint never passes the ordinary gate, even
+    # when every other identity matches; the test-oracle track uses its own view.
+    oracle_candidate = lifecycle.candidate.model_copy(
+        update={"selector": CmnistSelector.TEST_ORACLE}
+    )
+    oracle_checkpoint = lifecycle.checkpoint.model_copy(
+        update={"selector": CmnistSelector.TEST_ORACLE}
+    )
+    for candidate, checkpoint in (
+        (oracle_candidate, oracle_checkpoint),
+        (oracle_candidate, lifecycle.checkpoint),
+        (lifecycle.candidate, oracle_checkpoint),
+    ):
+        with pytest.raises(ValueError, match="validation-selected"):
+            open_final_test(
+                lifecycle.handle, candidate, checkpoint, lifecycle.restoration
+            )
+
 
 def test_ordinary_and_diagnostic_results_are_separate_discriminated_roots() -> None:
     ordinary = _ordinary_result(_run_completed_lifecycle())
