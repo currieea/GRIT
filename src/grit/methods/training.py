@@ -28,15 +28,12 @@ from grit.methods.invariance import (
     vrex_objective,
 )
 from grit.methods.projection import FittedLinearProjection
+from grit.methods.training_state import LinearProbeState
 from grit.methods.types import MethodId
 from grit.schemas import SeedStage, StrictBoundaryModel
 from grit.selection.cmnist import CheckpointIdentity, ValidationMetricRecord
 
-
-@dataclass(frozen=True, slots=True)
-class LinearProbeState:
-    weight: torch.Tensor
-    bias: torch.Tensor
+__all__ = ["LinearProbeState"]
 
 
 class LinearProbeAlgorithm:
@@ -137,6 +134,21 @@ class LinearProbeAlgorithm:
         finally:
             self._model.train(was_training)
 
+    def mean_loss(self, features: torch.Tensor, targets: torch.Tensor) -> float:
+        """Side-effect-free mean cross-entropy of the current inference state."""
+
+        was_training = self._model.training
+        self._model.eval()
+        try:
+            with torch.inference_mode():
+                logits = self._model(self._prepare(features))
+                loss = torch.nn.functional.cross_entropy(
+                    logits, targets.detach().cpu().to(torch.int64)
+                )
+                return float(loss.item())
+        finally:
+            self._model.train(was_training)
+
     def capture_inference_state(self) -> LinearProbeState:
         return LinearProbeState(
             weight=self._model.weight.detach().cpu().clone(),
@@ -190,6 +202,44 @@ class LinearProbeTrainingMethod(Protocol):
         rows: torch.Tensor,
     ) -> float: ...
 
+    def build_algorithm(
+        self,
+        config: LinearProbeTrainingConfig,
+        *,
+        model_seed: int,
+        num_classes: int,
+    ) -> LinearProbeAlgorithm: ...
+
+    def checkpoint_state(self, algorithm: LinearProbeAlgorithm) -> LinearProbeState:
+        """The state saved and validated at an epoch boundary."""
+        ...
+
+
+class _HasProjection(Protocol):
+    @property
+    def projection(self) -> FittedLinearProjection | None: ...
+
+
+class LinearProbeMethodDefaults:
+    """Plain linear probe over the method's projection; live weights are checkpoints."""
+
+    def build_algorithm(
+        self: _HasProjection,
+        config: LinearProbeTrainingConfig,
+        *,
+        model_seed: int,
+        num_classes: int,
+    ) -> LinearProbeAlgorithm:
+        return LinearProbeAlgorithm(
+            config,
+            model_seed=model_seed,
+            projection=self.projection,
+            num_classes=num_classes,
+        )
+
+    def checkpoint_state(self, algorithm: LinearProbeAlgorithm) -> LinearProbeState:
+        return algorithm.capture_inference_state()
+
 
 class FeatureTableLike(Protocol):
     """Minimal frozen-feature table consumed by shared training/evaluation."""
@@ -208,7 +258,7 @@ class FeatureTableLike(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
-class OrdinaryLinearProbeMethod:
+class OrdinaryLinearProbeMethod(LinearProbeMethodDefaults):
     """ERM-style minibatches, optionally preceded by a frozen GRIT projection."""
 
     method_id: MethodId
@@ -233,7 +283,7 @@ class OrdinaryLinearProbeMethod:
         batch_size: int,
         generator: torch.Generator,
     ) -> tuple[torch.Tensor, ...]:
-        return _random_epoch_batches(row_count, batch_size, generator)
+        return random_epoch_batches(row_count, batch_size, generator)
 
     def update(
         self,
@@ -246,7 +296,7 @@ class OrdinaryLinearProbeMethod:
 
 
 @dataclass(slots=True)
-class GroupDroLinearProbeMethod:
+class GroupDroLinearProbeMethod(LinearProbeMethodDefaults):
     """Group-balanced epochs and the stateful GroupDRO robust objective."""
 
     group_ids: torch.Tensor
@@ -271,13 +321,13 @@ class GroupDroLinearProbeMethod:
         batch_size: int,
         generator: torch.Generator,
     ) -> tuple[torch.Tensor, ...]:
-        _require_aligned_ids(self.group_ids, row_count, "group")
+        require_aligned_ids(self.group_ids, row_count, "group")
         permutation = group_balanced_epoch_indices(
             self.group_ids,
             group_count=self.group_count,
             generator=generator,
         )
-        return _batch_indices(permutation, batch_size)
+        return batch_indices(permutation, batch_size)
 
     def update(
         self,
@@ -295,7 +345,7 @@ class GroupDroLinearProbeMethod:
 
 
 @dataclass(slots=True)
-class RexLinearProbeMethod:
+class RexLinearProbeMethod(LinearProbeMethodDefaults):
     """Environment-balanced epochs and an annealed V-REx objective."""
 
     environment_ids: torch.Tensor
@@ -317,7 +367,7 @@ class RexLinearProbeMethod:
         batch_size: int,
         generator: torch.Generator,
     ) -> tuple[torch.Tensor, ...]:
-        _require_aligned_ids(self.environment_ids, row_count, "environment")
+        require_aligned_ids(self.environment_ids, row_count, "environment")
         return environment_balanced_epoch_batches(
             self.environment_ids,
             environment_count=self.environment_count,
@@ -353,7 +403,7 @@ class RexLinearProbeMethod:
 
 
 @dataclass(slots=True)
-class IrmLinearProbeMethod:
+class IrmLinearProbeMethod(LinearProbeMethodDefaults):
     """Environment-balanced epochs and an annealed IRMv1 objective."""
 
     environment_ids: torch.Tensor
@@ -375,7 +425,7 @@ class IrmLinearProbeMethod:
         batch_size: int,
         generator: torch.Generator,
     ) -> tuple[torch.Tensor, ...]:
-        _require_aligned_ids(self.environment_ids, row_count, "environment")
+        require_aligned_ids(self.environment_ids, row_count, "environment")
         return environment_balanced_epoch_batches(
             self.environment_ids,
             environment_count=self.environment_count,
@@ -410,15 +460,15 @@ class IrmLinearProbeMethod:
         return loss
 
 
-def _random_epoch_batches(
+def random_epoch_batches(
     row_count: int,
     batch_size: int,
     generator: torch.Generator,
 ) -> tuple[torch.Tensor, ...]:
-    return _batch_indices(torch.randperm(row_count, generator=generator), batch_size)
+    return batch_indices(torch.randperm(row_count, generator=generator), batch_size)
 
 
-def _batch_indices(
+def batch_indices(
     permutation: torch.Tensor, batch_size: int
 ) -> tuple[torch.Tensor, ...]:
     if batch_size <= 0:
@@ -429,7 +479,7 @@ def _batch_indices(
     )
 
 
-def _require_aligned_ids(ids: torch.Tensor, row_count: int, kind: str) -> None:
+def require_aligned_ids(ids: torch.Tensor, row_count: int, kind: str) -> None:
     if ids.ndim != 1 or int(ids.shape[0]) != row_count:
         raise ValueError(f"training-{kind} IDs must align with training rows")
 
@@ -502,11 +552,8 @@ def train_linear_probe_epochs(
     if targets.ndim != 1 or int(targets.shape[0]) != int(features.shape[0]):
         raise ValueError("linear probe training targets must align with features")
     torch.use_deterministic_algorithms(True)
-    algorithm = LinearProbeAlgorithm(
-        config,
-        model_seed=seed,
-        projection=method.projection,
-        num_classes=num_classes,
+    algorithm = method.build_algorithm(
+        config, model_seed=seed, num_classes=num_classes
     )
     generator = torch.Generator(device="cpu").manual_seed(seed)
     store = InMemoryLinearCheckpointStore(store_id=f"memory:{run_id}")
@@ -531,8 +578,14 @@ def train_linear_probe_epochs(
             scientific_config_digest=scientific_config_digest,
             epoch=epoch,
         )
-        store.save(identity, algorithm.capture_inference_state())
+        # Methods such as SWAD checkpoint a state other than the live parameters;
+        # validate exactly what was stored, then hand the live state back.
+        state = method.checkpoint_state(algorithm)
+        store.save(identity, state)
+        live = algorithm.capture_inference_state()
+        algorithm.restore_inference_state(state)
         validate_epoch(algorithm, identity)
+        algorithm.restore_inference_state(live)
     return TrainedLinearProbeCore(
         store=store,
         algorithm=algorithm,

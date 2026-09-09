@@ -291,8 +291,10 @@ class OrdinaryRunResult(StrictBoundaryModel):
             "feature_manifest",
             "selected_linear_checkpoint",
         }
+        if self.resolved_config.algorithm.kind in ("grit", "matchdg"):
+            required.add("pair_manifest")
         if self.resolved_config.algorithm.kind == "grit":
-            required |= {"pair_manifest", "projection_diagnostics"}
+            required.add("projection_diagnostics")
         if set(by_kind) != required:
             raise ValueError("CMNIST result required artifact references are missing")
         if (
@@ -301,7 +303,7 @@ class OrdinaryRunResult(StrictBoundaryModel):
             != lineage.feature_cache_manifest_digest
         ):
             raise ValueError("CMNIST result artifact lineage is inconsistent")
-        if self.resolved_config.algorithm.kind == "grit":
+        if "pair_manifest" in required:
             if by_kind["pair_manifest"].digest != lineage.pair_manifest_digest:
                 raise ValueError("CMNIST result pair lineage is inconsistent")
 

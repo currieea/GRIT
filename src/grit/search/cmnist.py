@@ -13,25 +13,25 @@ from grit.config import (
     OPENAI_CLIP_PREPROCESSING_ID,
     OPENAI_CLIP_REVISION,
     OPENAI_CLIP_WEIGHTS_IDENTITY,
+    PAIR_CONSUMING_ALGORITHMS,
     CmnistArtifactLineageConfig,
     CmnistDatasetConfig,
     CmnistSourceCounts,
     CmnistTestOracleExperimentConfig,
     CmnistTestOracleSelectionConfig,
     CpuRuntimeConfig,
-    DisabledPairsConfig,
-    DisabledProjectionConfig,
-    ErmAlgorithmConfig,
+    FishAlgorithmConfig,
     FrozenFeatureConfig,
-    GritAlgorithmConfig,
     GroupDroAlgorithmConfig,
     IrmAlgorithmConfig,
     LinearProbeTrainingConfig,
-    LinearProjectionConfig,
+    LisaAlgorithmConfig,
+    MatchDgAlgorithmConfig,
     OraclePairsConfig,
     OrdinaryExperimentConfig,
     OrdinarySelectionConfig,
     RexAlgorithmConfig,
+    SwadAlgorithmConfig,
 )
 from grit.data.cmnist import CmnistOraclePairManifest
 from grit.features.cmnist import (
@@ -41,6 +41,12 @@ from grit.features.cmnist import (
     load_cmnist_tuning_feature_cache,
 )
 from grit.lifecycle import open_final_test, record_final_accuracy
+from grit.methods.baselines import (
+    FishLinearProbeMethod,
+    LisaLinearProbeMethod,
+    MatchDgLinearProbeMethod,
+    SwadLinearProbeMethod,
+)
 from grit.methods.checkpoints import restore_checkpoint
 from grit.methods.groupdro import CMNIST_GROUP_COUNT, cmnist_group_ids
 from grit.methods.projection import FittedLinearProjection, fit_linear_projection
@@ -48,6 +54,7 @@ from grit.methods.training import (
     GroupDroLinearProbeMethod,
     IrmLinearProbeMethod,
     LinearProbeAlgorithm,
+    LinearProbeTrainingMethod,
     MethodId,
     OrdinaryLinearProbeMethod,
     PersistedLinearCheckpointStore,
@@ -82,6 +89,7 @@ from grit.search.plan import (
     CmnistProductionSearchConfig,
     SearchCandidate,
     SearchPlan,
+    cmnist_candidate_components,
     current_code_provenance,
     current_environment_provenance,
 )
@@ -188,7 +196,11 @@ def run_cmnist_search(
             and limits.stop_after == "tuning"
         ),
     )
-    pair_manifest = _cmnist_pair_manifest(plan) if "grit" in plan.methods else None
+    pair_manifest = (
+        _cmnist_pair_manifest(plan)
+        if {"grit", "matchdg"} & set(plan.methods)
+        else None
+    )
     projections: dict[int, FittedLinearProjection] = {}
 
     def runtime_candidate(candidate: SearchCandidate) -> _CmnistRuntimeCandidate:
@@ -550,86 +562,9 @@ def materialize_cmnist_candidate_config(
         weight_decay=float(candidate.weight_decay),
         max_epochs=config.max_epochs,
     )
-    if candidate.method_id == "erm":
-        pairs = DisabledPairsConfig(kind="disabled")
-        projection = DisabledProjectionConfig(kind="disabled")
-        algorithm = ErmAlgorithmConfig(kind="erm")
-        pair_digest = None
-    elif candidate.method_id == "grit":
-        rank = candidate.requested_rank
-        if rank is None:
-            raise AssertionError("planned GRIT candidate lacks a rank")
-        pairs = OraclePairsConfig(
-            kind="oracle",
-            construction_id="cmnist-clean-oracle-pairs-v1",
-            source_partition_ids=("train_e01_sources", "train_e02_sources"),
-            pair_count=config.pair_count,
-            pair_seed=config.seeds.pairs,
-            orientation="red_minus_green",
-        )
-        projection = LinearProjectionConfig(
-            kind="linear_pair_difference",
-            requested_rank=rank,
-            center_differences=False,
-            relative_singular_value_tolerance=(
-                config.relative_singular_value_tolerance
-            ),
-        )
-        algorithm = GritAlgorithmConfig(kind="grit")
-        pair_digest = lineage.pair_manifest_digest
-    elif candidate.method_id == "groupdro":
-        step_size = candidate.groupdro_step_size
-        if step_size is None:
-            raise AssertionError("planned GroupDRO candidate lacks a step size")
-        pairs = DisabledPairsConfig(kind="disabled")
-        projection = DisabledProjectionConfig(kind="disabled")
-        algorithm = GroupDroAlgorithmConfig(
-            kind="groupdro",
-            group_definition="target_color",
-            adversarial_step_size=step_size,
-            sampling="inverse_group_frequency_with_replacement",
-            generalization_adjustment=0.0,
-            normalize_loss=False,
-        )
-        pair_digest = None
-    elif candidate.method_id == "rex":
-        penalty_weight = candidate.penalty_weight
-        anneal_updates = config.search_space.rex_penalty_anneal_updates
-        if penalty_weight is None or anneal_updates is None:
-            raise AssertionError("planned REx candidate lacks its settings")
-        pairs = DisabledPairsConfig(kind="disabled")
-        projection = DisabledProjectionConfig(kind="disabled")
-        algorithm = RexAlgorithmConfig(
-            kind="rex",
-            environment_names=("train_e01", "train_e02"),
-            penalty_weight=penalty_weight,
-            penalty_anneal_updates=anneal_updates,
-            risk_variance="population",
-            sampling="environment_balanced_without_replacement",
-            loss_rescaling="divide_by_penalty_weight_above_one",
-        )
-        pair_digest = None
-    elif candidate.method_id == "irm":
-        penalty_weight = candidate.penalty_weight
-        anneal_updates = config.search_space.irm_penalty_anneal_updates
-        if penalty_weight is None or anneal_updates is None:
-            raise AssertionError("planned IRM candidate lacks its settings")
-        pairs = DisabledPairsConfig(kind="disabled")
-        projection = DisabledProjectionConfig(kind="disabled")
-        algorithm = IrmAlgorithmConfig(
-            kind="irm",
-            environment_names=("train_e01", "train_e02"),
-            penalty_weight=penalty_weight,
-            penalty_anneal_updates=anneal_updates,
-            penalty="irmv1_dummy_classifier_scale",
-            sampling="environment_balanced_without_replacement",
-            loss_rescaling="divide_by_penalty_weight_above_one",
-        )
-        pair_digest = None
-    else:
-        raise AssertionError(
-            f"CMNIST config materializer is missing {candidate.method_id}"
-        )
+    components = cmnist_candidate_components(
+        config, lineage, candidate.method_id, candidate.settings()
+    )
     common: dict[str, object] = dict(
         schema_version="grit.experiment/v1",
         experiment_name=config.experiment_name,
@@ -659,16 +594,16 @@ def materialize_cmnist_candidate_config(
             feature_dimension=512,
             normalization=config.normalization,
         ),
-        pairs=pairs,
-        projection=projection,
-        algorithm=algorithm,
+        pairs=components.pairs,
+        projection=components.projection,
+        algorithm=components.algorithm,
         training=training,
         runtime=CpuRuntimeConfig(device="cpu", deterministic_algorithms=True),
         seed_sets=config.seeds.stages,
         artifact_lineage=CmnistArtifactLineageConfig(
             dataset_manifest_digest=lineage.dataset_manifest_digest,
             feature_cache_manifest_digest=lineage.feature_cache_manifest_digest,
-            pair_manifest_digest=pair_digest,
+            pair_manifest_digest=components.pair_manifest_digest,
         ),
     )
     resolved: CmnistCandidateConfig
@@ -696,54 +631,7 @@ def _train_cmnist_task(
     task: SearchRunTask,
 ) -> CmnistTrainedTask:
     training_tables = cache.training_tables()
-    algorithm = runtime.config.algorithm
-    if isinstance(algorithm, (RexAlgorithmConfig, IrmAlgorithmConfig)):
-        names = tuple(table.name for table in training_tables)
-        if names != algorithm.environment_names:
-            raise ValueError(
-                "invariant training tables do not match configured environments"
-            )
-        environment_ids = torch.cat(
-            [
-                torch.full((len(table.source_ids),), index, dtype=torch.int64)
-                for index, table in enumerate(training_tables)
-            ]
-        )
-        method = (
-            RexLinearProbeMethod(
-                environment_ids=environment_ids,
-                environment_count=len(training_tables),
-                penalty_weight=float(algorithm.penalty_weight),
-                penalty_anneal_updates=int(algorithm.penalty_anneal_updates),
-            )
-            if isinstance(algorithm, RexAlgorithmConfig)
-            else IrmLinearProbeMethod(
-                environment_ids=environment_ids,
-                environment_count=len(training_tables),
-                penalty_weight=float(algorithm.penalty_weight),
-                penalty_anneal_updates=int(algorithm.penalty_anneal_updates),
-            )
-        )
-    elif isinstance(algorithm, GroupDroAlgorithmConfig):
-        if algorithm.group_definition != "target_color":
-            raise ValueError("CMNIST GroupDRO requires target-color groups")
-        train_targets = torch.cat(
-            [table.targets for table in training_tables], dim=0
-        )
-        train_colors = torch.cat(
-            [table.colors for table in training_tables], dim=0
-        )
-        method = GroupDroLinearProbeMethod(
-            group_ids=cmnist_group_ids(train_targets, train_colors),
-            group_count=CMNIST_GROUP_COUNT,
-            step_size=float(algorithm.adversarial_step_size),
-        )
-    else:
-        method = OrdinaryLinearProbeMethod(
-            method_id=task.candidate.method_id,
-            projection=runtime.projection,
-            projection_rank=task.candidate.requested_rank,
-        )
+    method = _cmnist_method(cache, runtime, task)
     run_id = f"run:{task.task_id}"
     diagnostics: list[DiagnosticMetricRecord] | None = None
     epoch_hook = None
@@ -794,6 +682,100 @@ def _train_cmnist_task(
         run, None if diagnostics is None else tuple(diagnostics)
     )
 
+def _cmnist_method(
+    cache: CmnistFeatureCache | CmnistTuningFeatureCache,
+    runtime: _CmnistRuntimeCandidate,
+    task: SearchRunTask,
+) -> LinearProbeTrainingMethod:
+    """Bind one planned candidate's algorithm config to the shared trainer."""
+
+    training_tables = cache.training_tables()
+    algorithm = runtime.config.algorithm
+    if isinstance(
+        algorithm, RexAlgorithmConfig | IrmAlgorithmConfig | FishAlgorithmConfig
+    ):
+        names = tuple(table.name for table in training_tables)
+        if names != algorithm.environment_names:
+            raise ValueError(
+                "invariant training tables do not match configured environments"
+            )
+        environment_ids = torch.cat(
+            [
+                torch.full((len(table.source_ids),), index, dtype=torch.int64)
+                for index, table in enumerate(training_tables)
+            ]
+        )
+        if isinstance(algorithm, RexAlgorithmConfig):
+            return RexLinearProbeMethod(
+                environment_ids=environment_ids,
+                environment_count=len(training_tables),
+                penalty_weight=float(algorithm.penalty_weight),
+                penalty_anneal_updates=int(algorithm.penalty_anneal_updates),
+            )
+        if isinstance(algorithm, IrmAlgorithmConfig):
+            return IrmLinearProbeMethod(
+                environment_ids=environment_ids,
+                environment_count=len(training_tables),
+                penalty_weight=float(algorithm.penalty_weight),
+                penalty_anneal_updates=int(algorithm.penalty_anneal_updates),
+            )
+        return FishLinearProbeMethod(
+            environment_ids=environment_ids,
+            environment_count=len(training_tables),
+            meta_step_size=float(algorithm.meta_step_size),
+        )
+    if isinstance(algorithm, GroupDroAlgorithmConfig | LisaAlgorithmConfig):
+        if algorithm.group_definition != "target_color":
+            raise ValueError("CMNIST group methods require target-color groups")
+        group_ids = cmnist_group_ids(
+            torch.cat([table.targets for table in training_tables], dim=0),
+            torch.cat([table.colors for table in training_tables], dim=0),
+        )
+        if isinstance(algorithm, GroupDroAlgorithmConfig):
+            return GroupDroLinearProbeMethod(
+                group_ids=group_ids,
+                group_count=CMNIST_GROUP_COUNT,
+                step_size=float(algorithm.adversarial_step_size),
+            )
+        return LisaLinearProbeMethod(
+            group_ids=group_ids,
+            group_count=CMNIST_GROUP_COUNT,
+            selection_prob=float(algorithm.selection_prob),
+        )
+    if isinstance(algorithm, SwadAlgorithmConfig):
+        loss_tables = {
+            table.name: table for table in cache.validation_tables()
+        }
+        selected = tuple(loss_tables[name] for name in algorithm.loss_split_names)
+        return SwadLinearProbeMethod(
+            loss_features=torch.cat([table.features for table in selected], dim=0),
+            loss_targets=torch.cat([table.targets for table in selected], dim=0),
+            tolerance_ratio=float(algorithm.tolerance_ratio),
+            segment_updates=int(algorithm.segment_updates),
+            n_converge=int(algorithm.n_converge),
+            n_tolerance=int(algorithm.n_tolerance),
+        )
+    if isinstance(algorithm, MatchDgAlgorithmConfig):
+        pairs = runtime.config.pairs
+        if not isinstance(pairs, OraclePairsConfig):
+            raise AssertionError("MatchDG candidate lacks its oracle pair config")
+        red, green = cache.pair_tables()
+        # Pairs are stored in seeded hash order; the first N form the N-pair bank.
+        pair_count = pairs.pair_count
+        return MatchDgLinearProbeMethod(
+            pair_differences=(
+                red.features[:pair_count] - green.features[:pair_count]
+            ),
+            latent_dim=int(algorithm.latent_dim),
+            penalty_weight=float(algorithm.penalty_weight),
+        )
+    return OrdinaryLinearProbeMethod(
+        method_id=task.candidate.method_id,
+        projection=runtime.projection,
+        projection_rank=task.candidate.requested_rank,
+    )
+
+
 def _cmnist_result_artifacts(
     plan: SearchPlan,
     task: SearchRunTask,
@@ -824,27 +806,26 @@ def _cmnist_result_artifacts(
             digest=checkpoint_manifest_digest,
         ),
     ]
+    if isinstance(runtime.config.algorithm, PAIR_CONSUMING_ALGORITHMS):
+        values.append(
+            ArtifactReference(
+                artifact_id="cmnist-oracle-pair-manifest",
+                kind="pair_manifest",
+                relative_uri=os.path.relpath(inputs["pair_manifest"].path, root),
+                digest=inputs["pair_manifest"].digest,
+            )
+        )
     if task.candidate.method_id == "grit":
         projection = runtime.projection
         if projection is None:
             raise AssertionError("GRIT result lacks projection")
         rank = task.candidate.requested_rank
-        values.extend(
-            (
-                ArtifactReference(
-                    artifact_id="cmnist-oracle-pair-manifest",
-                    kind="pair_manifest",
-                    relative_uri=os.path.relpath(
-                        inputs["pair_manifest"].path, root
-                    ),
-                    digest=inputs["pair_manifest"].digest,
-                ),
-                ArtifactReference(
-                    artifact_id=f"projection:grit:{rank}",
-                    kind="projection_diagnostics",
-                    relative_uri=f"projections/grit-rank-{rank}.json",
-                    digest=projection.diagnostics.canonical_digest(),
-                ),
+        values.append(
+            ArtifactReference(
+                artifact_id=f"projection:grit:{rank}",
+                kind="projection_diagnostics",
+                relative_uri=f"projections/grit-rank-{rank}.json",
+                digest=projection.diagnostics.canonical_digest(),
             )
         )
     return tuple(values)

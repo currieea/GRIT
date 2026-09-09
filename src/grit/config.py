@@ -194,14 +194,55 @@ class IrmAlgorithmConfig(StrictBoundaryModel):
     loss_rescaling: Literal["divide_by_penalty_weight_above_one"]
 
 
+class FishAlgorithmConfig(StrictBoundaryModel):
+    kind: Literal["fish"]
+    environment_names: tuple[Literal["train_e01"], Literal["train_e02"]]
+    meta_step_size: Annotated[StrictFloat, Field(gt=0.0)]
+    inner_update: Literal["one_shared_adam_step_per_environment"]
+    sampling: Literal["environment_balanced_without_replacement"]
+
+
+class LisaAlgorithmConfig(StrictBoundaryModel):
+    kind: Literal["lisa"]
+    group_definition: Literal["target_color"]
+    selection_prob: Probability
+    mixing: Literal["beta_2_2"]
+    sampling: Literal["uniform_single_group_batches"]
+
+
+class SwadAlgorithmConfig(StrictBoundaryModel):
+    kind: Literal["swad"]
+    tolerance_ratio: Annotated[StrictFloat, Field(gt=0.0)]
+    n_converge: Literal[3]
+    n_tolerance: Literal[6]
+    segment_updates: PositiveInt
+    loss_split_names: tuple[Literal["val_e01"], Literal["val_e02"]]
+
+
+class MatchDgAlgorithmConfig(StrictBoundaryModel):
+    """Inherited pair-difference penalty on a linear featurizer (not contrastive)."""
+
+    kind: Literal["matchdg"]
+    latent_dim: PositiveInt
+    penalty_weight: Annotated[StrictFloat, Field(gt=0.0)]
+    pair_penalty: Literal["mean_squared_featurizer_difference"]
+
+
 AlgorithmConfig: TypeAlias = Annotated[
     ErmAlgorithmConfig
     | GritAlgorithmConfig
     | GroupDroAlgorithmConfig
     | RexAlgorithmConfig
-    | IrmAlgorithmConfig,
+    | IrmAlgorithmConfig
+    | FishAlgorithmConfig
+    | LisaAlgorithmConfig
+    | SwadAlgorithmConfig
+    | MatchDgAlgorithmConfig,
     Field(discriminator="kind"),
 ]
+
+# Methods that consume the clean oracle pair bank; every other method must not bind it.
+PAIR_CONSUMING_ALGORITHMS = (GritAlgorithmConfig, MatchDgAlgorithmConfig)
 
 
 class LinearProbeTrainingConfig(StrictBoundaryModel):
@@ -314,50 +355,42 @@ class _CommonCmnistExperimentConfig(StrictBoundaryModel):
 
     @model_validator(mode="after")
     def _validate_algorithm_components(self) -> _CommonCmnistExperimentConfig:
-        if isinstance(
-            self.algorithm,
-            ErmAlgorithmConfig
-            | GroupDroAlgorithmConfig
-            | RexAlgorithmConfig
-            | IrmAlgorithmConfig,
-        ):
+        uses_pairs = isinstance(self.algorithm, PAIR_CONSUMING_ALGORITHMS)
+        if not uses_pairs:
             if not isinstance(self.pairs, DisabledPairsConfig):
                 raise ValueError(
-                    "ERM, GroupDRO, REx, and IRM require pairs.kind='disabled'"
-                )
-            if not isinstance(self.projection, DisabledProjectionConfig):
-                raise ValueError(
-                    "ERM, GroupDRO, REx, and IRM require projection.kind='disabled'"
+                    f"{self.algorithm.kind} requires pairs.kind='disabled'"
                 )
             if (
                 isinstance(self.algorithm, GroupDroAlgorithmConfig)
                 and self.algorithm.group_definition != "target_color"
             ):
                 raise ValueError("CMNIST GroupDRO requires target-color groups")
-        else:
-            if not isinstance(self.pairs, OraclePairsConfig):
-                raise ValueError("initial GRIT requires pairs.kind='oracle'")
+        elif not isinstance(self.pairs, OraclePairsConfig):
+            raise ValueError(f"{self.algorithm.kind} requires pairs.kind='oracle'")
+        if isinstance(self.algorithm, GritAlgorithmConfig):
             if not isinstance(self.projection, LinearProjectionConfig):
                 raise ValueError(
                     "initial GRIT requires projection.kind='linear_pair_difference'"
                 )
+        elif not isinstance(self.projection, DisabledProjectionConfig):
+            raise ValueError(
+                f"{self.algorithm.kind} requires projection.kind='disabled'"
+            )
         if self.reportable:
             if self.artifact_lineage is None:
                 raise ValueError("reportable CMNIST requires prepared-artifact lineage")
-            if isinstance(
-                self.algorithm,
-                ErmAlgorithmConfig
-                | GroupDroAlgorithmConfig
-                | RexAlgorithmConfig
-                | IrmAlgorithmConfig,
-            ):
+            if not uses_pairs:
                 if self.artifact_lineage.pair_manifest_digest is not None:
                     raise ValueError(
-                        "reportable CMNIST ERM, GroupDRO, REx, and IRM cannot bind "
+                        f"reportable CMNIST {self.algorithm.kind} cannot bind "
                         "oracle pairs"
                     )
             elif self.artifact_lineage.pair_manifest_digest is None:
-                raise ValueError("reportable CMNIST GRIT requires oracle-pair lineage")
+                raise ValueError(
+                    f"reportable CMNIST {self.algorithm.kind} requires oracle-pair "
+                    "lineage"
+                )
             counts = self.dataset.source_counts
             if (counts.train_e01, counts.train_e02, counts.validation, counts.test) != (
                 25_000,

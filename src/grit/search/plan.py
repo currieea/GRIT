@@ -9,6 +9,7 @@ import platform
 import re
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Literal, Protocol, TypeAlias, cast
 
@@ -26,6 +27,7 @@ from grit.config import (
     OPENAI_CLIP_PREPROCESSING_ID,
     OPENAI_CLIP_REVISION,
     OPENAI_CLIP_WEIGHTS_IDENTITY,
+    AlgorithmConfig,
     CmnistArtifactLineageConfig,
     CmnistDatasetConfig,
     CmnistSourceCounts,
@@ -33,12 +35,15 @@ from grit.config import (
     DisabledPairsConfig,
     DisabledProjectionConfig,
     ErmAlgorithmConfig,
+    FishAlgorithmConfig,
     FrozenFeatureConfig,
     GritAlgorithmConfig,
     GroupDroAlgorithmConfig,
     IrmAlgorithmConfig,
     LinearProbeTrainingConfig,
     LinearProjectionConfig,
+    LisaAlgorithmConfig,
+    MatchDgAlgorithmConfig,
     OraclePairsConfig,
     OrdinaryExperimentConfig,
     OrdinarySelectionConfig,
@@ -49,6 +54,7 @@ from grit.config import (
     RotatedMnistOraclePairsConfig,
     RotatedMnistSourceCounts,
     SeedSets,
+    SwadAlgorithmConfig,
 )
 from grit.data.cmnist import (
     CMNIST_ENVIRONMENT_SPECS,
@@ -68,7 +74,7 @@ from grit.data.waterbirds_pairs import WaterbirdsOraclePairManifest
 from grit.features.cmnist import CmnistFeatureCacheManifest, EncoderIdentity
 from grit.features.rotated_mnist import RotatedMnistFeatureCacheManifest
 from grit.features.waterbirds import WaterbirdsFeatureCacheManifest
-from grit.methods.types import IMPLEMENTED_METHODS, MethodId
+from grit.methods.types import IMPLEMENTED_METHODS, METHOD_LABELS, MethodId
 from grit.paths import REPO_ROOT, expand_config_path
 from grit.results import CodeProvenance, EnvironmentProvenance
 from grit.schemas import CmnistSelector, StrictBoundaryModel, canonical_digest_value
@@ -106,6 +112,12 @@ APPROVED_IRM_PENALTY_WEIGHTS: tuple[float, float, float, float] = (
 )
 REX_PENALTY_ANNEAL_UPDATES = 100
 IRM_PENALTY_ANNEAL_UPDATES = 190
+APPROVED_FISH_META_STEP_SIZES: tuple[float, ...] = (0.001, 0.01, 0.1, 0.5)
+APPROVED_LISA_SELECTION_PROBS: tuple[float, ...] = (0.0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0)
+APPROVED_SWAD_TOLERANCE_RATIOS: tuple[float, ...] = (0.1, 0.2, 0.3, 0.4, 0.5)
+APPROVED_MATCHDG_LATENT_DIMS: tuple[int, ...] = (8, 16, 32)
+APPROVED_MATCHDG_PENALTY_WEIGHTS: tuple[float, ...] = (0.1, 1.0, 10.0, 100.0)
+SWAD_SEGMENT_UPDATES = 100
 
 
 class _YamlModule(Protocol):
@@ -151,6 +163,21 @@ class SearchSpaceConfig(StrictBoundaryModel):
     irm_penalty_anneal_updates: Annotated[StrictInt, Field(ge=0)] | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    fish_meta_step_sizes: tuple[StrictFloat, ...] = Field(
+        default=(), exclude_if=lambda values: not values
+    )
+    lisa_selection_probs: tuple[StrictFloat, ...] = Field(
+        default=(), exclude_if=lambda values: not values
+    )
+    swad_tolerance_ratios: tuple[StrictFloat, ...] = Field(
+        default=(), exclude_if=lambda values: not values
+    )
+    matchdg_latent_dims: tuple[StrictInt, ...] = Field(
+        default=(), exclude_if=lambda values: not values
+    )
+    matchdg_penalty_weights: tuple[StrictFloat, ...] = Field(
+        default=(), exclude_if=lambda values: not values
+    )
 
     @model_validator(mode="after")
     def _validate_space(self) -> SearchSpaceConfig:
@@ -165,9 +192,39 @@ class SearchSpaceConfig(StrictBoundaryModel):
             ("groupdro_step_sizes", self.groupdro_step_sizes),
             ("rex_penalty_weights", self.rex_penalty_weights),
             ("irm_penalty_weights", self.irm_penalty_weights),
+            ("fish_meta_step_sizes", self.fish_meta_step_sizes),
+            ("lisa_selection_probs", self.lisa_selection_probs),
+            ("swad_tolerance_ratios", self.swad_tolerance_ratios),
+            ("matchdg_latent_dims", self.matchdg_latent_dims),
+            ("matchdg_penalty_weights", self.matchdg_penalty_weights),
         ):
             if len(set(values)) != len(values):
                 raise ValueError(f"{name} contains duplicate values")
+        if any(value <= 0 for value in self.fish_meta_step_sizes):
+            raise ValueError("fish_meta_step_sizes must be positive")
+        if any(not 0.0 <= value <= 1.0 for value in self.lisa_selection_probs):
+            raise ValueError("lisa_selection_probs must lie in [0, 1]")
+        if any(value <= 0 for value in self.swad_tolerance_ratios):
+            raise ValueError("swad_tolerance_ratios must be positive")
+        if any(value <= 0 for value in self.matchdg_latent_dims):
+            raise ValueError("matchdg_latent_dims must be positive")
+        if any(value <= 0 for value in self.matchdg_penalty_weights):
+            raise ValueError("matchdg_penalty_weights must be positive")
+        selected_grids: tuple[
+            tuple[MethodId, str, tuple[float, ...] | tuple[int, ...]], ...
+        ] = (
+            ("fish", "fish_meta_step_sizes", self.fish_meta_step_sizes),
+            ("lisa", "lisa_selection_probs", self.lisa_selection_probs),
+            ("swad", "swad_tolerance_ratios", self.swad_tolerance_ratios),
+            ("matchdg", "matchdg_latent_dims", self.matchdg_latent_dims),
+            ("matchdg", "matchdg_penalty_weights", self.matchdg_penalty_weights),
+        )
+        for method, name, values in selected_grids:
+            if (method in self.methods) != bool(values):
+                raise ValueError(
+                    f"{name} must be non-empty exactly when {METHOD_LABELS[method]} "
+                    "is selected"
+                )
         if any(value <= 0 for value in self.learning_rates):
             raise ValueError("learning_rates must be positive")
         if any(value < 0 for value in self.weight_decays):
@@ -319,20 +376,13 @@ def _require_runnable_grid(space: SearchSpaceConfig, pair_count: int) -> None:
             f"{max_rank}"
         )
     per_optimizer = len(space.learning_rates) * len(space.weight_decays)
-    counts = {
+    counts: dict[MethodId, int] = {
         method: per_optimizer * _method_setting_count(space, method)
         for method in space.methods
     }
     if min(counts.values()) < FINALIST_COUNT:
-        labels = {
-            "erm": "ERM",
-            "grit": "GRIT",
-            "groupdro": "GroupDRO",
-            "rex": "REx",
-            "irm": "IRM",
-        }
         formatted = " and ".join(
-            f"{count} {labels[method]}" for method, count in counts.items()
+            f"{count} {METHOD_LABELS[method]}" for method, count in counts.items()
         )
         raise ValueError(
             f"selection keeps the top {FINALIST_COUNT} candidates per method, but the "
@@ -351,6 +401,14 @@ def _method_setting_count(space: SearchSpaceConfig, method: MethodId) -> int:
         return len(space.rex_penalty_weights)
     if method == "irm":
         return len(space.irm_penalty_weights)
+    if method == "fish":
+        return len(space.fish_meta_step_sizes)
+    if method == "lisa":
+        return len(space.lisa_selection_probs)
+    if method == "swad":
+        return len(space.swad_tolerance_ratios)
+    if method == "matchdg":
+        return len(space.matchdg_latent_dims) * len(space.matchdg_penalty_weights)
     raise AssertionError(f"candidate grid is missing method {method}")
 
 
@@ -454,6 +512,46 @@ class ResolvedProductionSearchConfig(StrictBoundaryModel):
         return self
 
 
+@dataclass(frozen=True, slots=True)
+class MethodSettings:
+    """Method-specific candidate settings; exactly the fields a method needs are set."""
+
+    requested_rank: int | None = None
+    groupdro_step_size: float | None = None
+    penalty_weight: float | None = None
+    fish_meta_step_size: float | None = None
+    lisa_selection_prob: float | None = None
+    swad_tolerance_ratio: float | None = None
+    matchdg_latent_dim: int | None = None
+
+    def present_fields(self) -> frozenset[str]:
+        return frozenset(
+            name for name in _SETTING_FIELDS if getattr(self, name) is not None
+        )
+
+
+_SETTING_FIELDS: tuple[str, ...] = (
+    "requested_rank",
+    "groupdro_step_size",
+    "penalty_weight",
+    "fish_meta_step_size",
+    "lisa_selection_prob",
+    "swad_tolerance_ratio",
+    "matchdg_latent_dim",
+)
+REQUIRED_SETTINGS: dict[MethodId, frozenset[str]] = {
+    "erm": frozenset(),
+    "grit": frozenset({"requested_rank"}),
+    "groupdro": frozenset({"groupdro_step_size"}),
+    "rex": frozenset({"penalty_weight"}),
+    "irm": frozenset({"penalty_weight"}),
+    "fish": frozenset({"fish_meta_step_size"}),
+    "lisa": frozenset({"lisa_selection_prob"}),
+    "swad": frozenset({"swad_tolerance_ratio"}),
+    "matchdg": frozenset({"matchdg_latent_dim", "penalty_weight"}),
+}
+
+
 class SearchCandidate(StrictBoundaryModel):
     candidate_id: NonEmptyStr
     scientific_config_digest: NonEmptyStr
@@ -467,36 +565,32 @@ class SearchCandidate(StrictBoundaryModel):
     penalty_weight: Annotated[StrictFloat, Field(gt=0.0)] | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    fish_meta_step_size: Annotated[StrictFloat, Field(gt=0.0)] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    lisa_selection_prob: Annotated[StrictFloat, Field(ge=0.0, le=1.0)] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    swad_tolerance_ratio: Annotated[StrictFloat, Field(gt=0.0)] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    matchdg_latent_dim: Annotated[StrictInt, Field(gt=0)] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+    def settings(self) -> MethodSettings:
+        return MethodSettings(
+            **{name: getattr(self, name) for name in _SETTING_FIELDS}
+        )
 
     @model_validator(mode="after")
     def _validate_method_settings(self) -> SearchCandidate:
-        if self.method_id == "grit":
-            if (
-                self.requested_rank is None
-                or self.groupdro_step_size is not None
-                or self.penalty_weight is not None
-            ):
-                raise ValueError("GRIT candidates require only a projection rank")
-        elif self.method_id == "groupdro":
-            if (
-                self.requested_rank is not None
-                or self.groupdro_step_size is None
-                or self.penalty_weight is not None
-            ):
-                raise ValueError("GroupDRO candidates require only an adversarial step")
-        elif self.method_id in ("rex", "irm"):
-            if (
-                self.requested_rank is not None
-                or self.groupdro_step_size is not None
-                or self.penalty_weight is None
-            ):
-                raise ValueError("REx and IRM candidates require only a penalty weight")
-        elif (
-            self.requested_rank is not None
-            or self.groupdro_step_size is not None
-            or self.penalty_weight is not None
-        ):
-            raise ValueError("ERM candidates cannot carry method-specific settings")
+        expected = REQUIRED_SETTINGS[self.method_id]
+        if self.settings().present_fields() != expected:
+            raise ValueError(
+                f"{METHOD_LABELS[self.method_id]} candidates require exactly "
+                f"{sorted(expected)} as method-specific settings"
+            )
         return self
 
 
@@ -575,6 +669,10 @@ _FLOAT_FIELDS = frozenset(
         "groupdro_step_sizes",
         "rex_penalty_weights",
         "irm_penalty_weights",
+        "fish_meta_step_sizes",
+        "lisa_selection_probs",
+        "swad_tolerance_ratios",
+        "matchdg_penalty_weights",
         "relative_singular_value_tolerance",
     }
 )
@@ -927,48 +1025,21 @@ def _candidate_grid(
     lineage = resolved.lineage
     candidates: list[SearchCandidate] = []
     for method in config.search_space.methods:
-        if method == "erm":
-            settings: tuple[tuple[int | None, float | None, float | None], ...] = (
-                (None, None, None),
-            )
-        elif method == "grit":
-            settings = tuple(
-                (int(rank), None, None)
-                for rank in sorted(config.search_space.projection_ranks)
-            )
-        elif method == "groupdro":
-            settings = tuple(
-                (None, float(step_size), None)
-                for step_size in sorted(config.search_space.groupdro_step_sizes)
-            )
-        elif method == "rex":
-            settings = tuple(
-                (None, None, float(penalty_weight))
-                for penalty_weight in sorted(config.search_space.rex_penalty_weights)
-            )
-        elif method == "irm":
-            settings = tuple(
-                (None, None, float(penalty_weight))
-                for penalty_weight in sorted(config.search_space.irm_penalty_weights)
-            )
-        else:
-            raise AssertionError(f"candidate grid is missing method {method}")
+        settings = _method_settings_grid(config.search_space, method)
         for learning_rate in sorted(
             float(value) for value in config.search_space.learning_rates
         ):
             for weight_decay in sorted(
                 float(value) for value in config.search_space.weight_decays
             ):
-                for requested_rank, groupdro_step_size, penalty_weight in settings:
+                for setting in settings:
                     scientific = _candidate_scientific_digest(
                         config,
                         lineage,
                         method,
                         learning_rate,
                         weight_decay,
-                        requested_rank,
-                        groupdro_step_size,
-                        penalty_weight,
+                        setting,
                     )
                     candidate_id = _candidate_id(config.dataset, method, scientific)
                     candidates.append(
@@ -978,9 +1049,13 @@ def _candidate_grid(
                             method_id=method,
                             learning_rate=learning_rate,
                             weight_decay=weight_decay,
-                            requested_rank=requested_rank,
-                            groupdro_step_size=groupdro_step_size,
-                            penalty_weight=penalty_weight,
+                            requested_rank=setting.requested_rank,
+                            groupdro_step_size=setting.groupdro_step_size,
+                            penalty_weight=setting.penalty_weight,
+                            fish_meta_step_size=setting.fish_meta_step_size,
+                            lisa_selection_prob=setting.lisa_selection_prob,
+                            swad_tolerance_ratio=setting.swad_tolerance_ratio,
+                            matchdg_latent_dim=setting.matchdg_latent_dim,
                         )
                     )
     candidate_ids = [candidate.candidate_id for candidate in candidates]
@@ -992,15 +1067,233 @@ def _candidate_grid(
     return tuple(sorted(candidates, key=_candidate_order_key))
 
 
+def _method_settings_grid(
+    space: SearchSpaceConfig, method: MethodId
+) -> tuple[MethodSettings, ...]:
+    if method == "erm":
+        return (MethodSettings(),)
+    if method == "grit":
+        return tuple(
+            MethodSettings(requested_rank=int(rank))
+            for rank in sorted(space.projection_ranks)
+        )
+    if method == "groupdro":
+        return tuple(
+            MethodSettings(groupdro_step_size=float(step))
+            for step in sorted(space.groupdro_step_sizes)
+        )
+    if method == "rex":
+        return tuple(
+            MethodSettings(penalty_weight=float(weight))
+            for weight in sorted(space.rex_penalty_weights)
+        )
+    if method == "irm":
+        return tuple(
+            MethodSettings(penalty_weight=float(weight))
+            for weight in sorted(space.irm_penalty_weights)
+        )
+    if method == "fish":
+        return tuple(
+            MethodSettings(fish_meta_step_size=float(step))
+            for step in sorted(space.fish_meta_step_sizes)
+        )
+    if method == "lisa":
+        return tuple(
+            MethodSettings(lisa_selection_prob=float(prob))
+            for prob in sorted(space.lisa_selection_probs)
+        )
+    if method == "swad":
+        return tuple(
+            MethodSettings(swad_tolerance_ratio=float(ratio))
+            for ratio in sorted(space.swad_tolerance_ratios)
+        )
+    if method == "matchdg":
+        return tuple(
+            MethodSettings(matchdg_latent_dim=int(dim), penalty_weight=float(weight))
+            for dim in sorted(space.matchdg_latent_dims)
+            for weight in sorted(space.matchdg_penalty_weights)
+        )
+    raise AssertionError(f"candidate grid is missing method {method}")
+
+
+@dataclass(frozen=True, slots=True)
+class CmnistCandidateComponents:
+    pairs: DisabledPairsConfig | OraclePairsConfig
+    projection: DisabledProjectionConfig | LinearProjectionConfig
+    algorithm: AlgorithmConfig
+    pair_manifest_digest: str | None
+
+
+def cmnist_candidate_components(
+    config: CmnistProductionSearchConfig,
+    lineage: SearchLineage,
+    method: MethodId,
+    setting: MethodSettings,
+) -> CmnistCandidateComponents:
+    """The one place that turns a planned CMNIST candidate into algorithm configs."""
+
+    if setting.present_fields() != REQUIRED_SETTINGS[method]:
+        raise AssertionError(f"planned CMNIST {method} candidate has wrong settings")
+    disabled_pairs = DisabledPairsConfig(kind="disabled")
+    disabled_projection = DisabledProjectionConfig(kind="disabled")
+    oracle_pairs = OraclePairsConfig(
+        kind="oracle",
+        construction_id="cmnist-clean-oracle-pairs-v1",
+        source_partition_ids=("train_e01_sources", "train_e02_sources"),
+        pair_count=config.pair_count,
+        pair_seed=config.seeds.pairs,
+        orientation="red_minus_green",
+    )
+    environments: tuple[Literal["train_e01"], Literal["train_e02"]] = (
+        "train_e01",
+        "train_e02",
+    )
+    if method == "erm":
+        return CmnistCandidateComponents(
+            disabled_pairs, disabled_projection, ErmAlgorithmConfig(kind="erm"), None
+        )
+    if method == "grit":
+        rank = setting.requested_rank
+        if rank is None:
+            raise AssertionError("planned CMNIST GRIT candidate lacks a rank")
+        return CmnistCandidateComponents(
+            oracle_pairs,
+            LinearProjectionConfig(
+                kind="linear_pair_difference",
+                requested_rank=rank,
+                center_differences=False,
+                relative_singular_value_tolerance=(
+                    config.relative_singular_value_tolerance
+                ),
+            ),
+            GritAlgorithmConfig(kind="grit"),
+            lineage.pair_manifest_digest,
+        )
+    if method == "groupdro":
+        step = setting.groupdro_step_size
+        if step is None:
+            raise AssertionError("planned CMNIST GroupDRO candidate lacks a step size")
+        return CmnistCandidateComponents(
+            disabled_pairs,
+            disabled_projection,
+            GroupDroAlgorithmConfig(
+                kind="groupdro",
+                group_definition="target_color",
+                adversarial_step_size=step,
+                sampling="inverse_group_frequency_with_replacement",
+                generalization_adjustment=0.0,
+                normalize_loss=False,
+            ),
+            None,
+        )
+    if method in ("rex", "irm"):
+        weight = setting.penalty_weight
+        anneal = (
+            config.search_space.rex_penalty_anneal_updates
+            if method == "rex"
+            else config.search_space.irm_penalty_anneal_updates
+        )
+        if weight is None or anneal is None:
+            raise AssertionError(f"planned CMNIST {method} candidate lacks settings")
+        algorithm: AlgorithmConfig = (
+            RexAlgorithmConfig(
+                kind="rex",
+                environment_names=environments,
+                penalty_weight=weight,
+                penalty_anneal_updates=anneal,
+                risk_variance="population",
+                sampling="environment_balanced_without_replacement",
+                loss_rescaling="divide_by_penalty_weight_above_one",
+            )
+            if method == "rex"
+            else IrmAlgorithmConfig(
+                kind="irm",
+                environment_names=environments,
+                penalty_weight=weight,
+                penalty_anneal_updates=anneal,
+                penalty="irmv1_dummy_classifier_scale",
+                sampling="environment_balanced_without_replacement",
+                loss_rescaling="divide_by_penalty_weight_above_one",
+            )
+        )
+        return CmnistCandidateComponents(
+            disabled_pairs, disabled_projection, algorithm, None
+        )
+    if method == "fish":
+        meta_step = setting.fish_meta_step_size
+        if meta_step is None:
+            raise AssertionError("planned CMNIST Fish candidate lacks a meta step")
+        return CmnistCandidateComponents(
+            disabled_pairs,
+            disabled_projection,
+            FishAlgorithmConfig(
+                kind="fish",
+                environment_names=environments,
+                meta_step_size=meta_step,
+                inner_update="one_shared_adam_step_per_environment",
+                sampling="environment_balanced_without_replacement",
+            ),
+            None,
+        )
+    if method == "lisa":
+        prob = setting.lisa_selection_prob
+        if prob is None:
+            raise AssertionError("planned CMNIST LISA candidate lacks a probability")
+        return CmnistCandidateComponents(
+            disabled_pairs,
+            disabled_projection,
+            LisaAlgorithmConfig(
+                kind="lisa",
+                group_definition="target_color",
+                selection_prob=prob,
+                mixing="beta_2_2",
+                sampling="uniform_single_group_batches",
+            ),
+            None,
+        )
+    if method == "swad":
+        ratio = setting.swad_tolerance_ratio
+        if ratio is None:
+            raise AssertionError("planned CMNIST SWAD candidate lacks a tolerance")
+        return CmnistCandidateComponents(
+            disabled_pairs,
+            disabled_projection,
+            SwadAlgorithmConfig(
+                kind="swad",
+                tolerance_ratio=ratio,
+                n_converge=3,
+                n_tolerance=6,
+                segment_updates=SWAD_SEGMENT_UPDATES,
+                loss_split_names=("val_e01", "val_e02"),
+            ),
+            None,
+        )
+    if method == "matchdg":
+        latent = setting.matchdg_latent_dim
+        weight = setting.penalty_weight
+        if latent is None or weight is None:
+            raise AssertionError("planned CMNIST MatchDG candidate lacks settings")
+        return CmnistCandidateComponents(
+            oracle_pairs,
+            disabled_projection,
+            MatchDgAlgorithmConfig(
+                kind="matchdg",
+                latent_dim=latent,
+                penalty_weight=weight,
+                pair_penalty="mean_squared_featurizer_difference",
+            ),
+            lineage.pair_manifest_digest,
+        )
+    raise AssertionError(f"CMNIST config materializer is missing method {method}")
+
+
 def _candidate_scientific_digest(
     config: ProductionSearchConfig,
     lineage: SearchLineage,
     method: MethodId,
     learning_rate: float,
     weight_decay: float,
-    requested_rank: int | None,
-    groupdro_step_size: float | None,
-    penalty_weight: float | None,
+    setting: MethodSettings,
 ) -> str:
     training = LinearProbeTrainingConfig(
         optimizer="adam",
@@ -1009,88 +1302,13 @@ def _candidate_scientific_digest(
         weight_decay=weight_decay,
         max_epochs=config.max_epochs,
     )
+    requested_rank = setting.requested_rank
     if isinstance(config, CmnistProductionSearchConfig):
-        if method == "erm":
-            pairs = DisabledPairsConfig(kind="disabled")
-            projection = DisabledProjectionConfig(kind="disabled")
-            algorithm = ErmAlgorithmConfig(kind="erm")
-            pair_digest = None
-        elif method == "grit":
-            if requested_rank is None:
-                raise AssertionError("planned CMNIST GRIT candidate lacks a rank")
-            pairs = OraclePairsConfig(
-                kind="oracle",
-                construction_id="cmnist-clean-oracle-pairs-v1",
-                source_partition_ids=(
-                    "train_e01_sources",
-                    "train_e02_sources",
-                ),
-                pair_count=config.pair_count,
-                pair_seed=config.seeds.pairs,
-                orientation="red_minus_green",
-            )
-            projection = LinearProjectionConfig(
-                kind="linear_pair_difference",
-                requested_rank=requested_rank,
-                center_differences=False,
-                relative_singular_value_tolerance=(
-                    config.relative_singular_value_tolerance
-                ),
-            )
-            algorithm = GritAlgorithmConfig(kind="grit")
-            pair_digest = lineage.pair_manifest_digest
-        elif method == "groupdro":
-            if groupdro_step_size is None:
-                raise AssertionError(
-                    "planned CMNIST GroupDRO candidate lacks a step size"
-                )
-            pairs = DisabledPairsConfig(kind="disabled")
-            projection = DisabledProjectionConfig(kind="disabled")
-            algorithm = GroupDroAlgorithmConfig(
-                kind="groupdro",
-                group_definition="target_color",
-                adversarial_step_size=groupdro_step_size,
-                sampling="inverse_group_frequency_with_replacement",
-                generalization_adjustment=0.0,
-                normalize_loss=False,
-            )
-            pair_digest = None
-        elif method == "rex":
-            anneal_updates = config.search_space.rex_penalty_anneal_updates
-            if penalty_weight is None or anneal_updates is None:
-                raise AssertionError("planned CMNIST REx candidate lacks its settings")
-            pairs = DisabledPairsConfig(kind="disabled")
-            projection = DisabledProjectionConfig(kind="disabled")
-            algorithm = RexAlgorithmConfig(
-                kind="rex",
-                environment_names=("train_e01", "train_e02"),
-                penalty_weight=penalty_weight,
-                penalty_anneal_updates=anneal_updates,
-                risk_variance="population",
-                sampling="environment_balanced_without_replacement",
-                loss_rescaling="divide_by_penalty_weight_above_one",
-            )
-            pair_digest = None
-        elif method == "irm":
-            anneal_updates = config.search_space.irm_penalty_anneal_updates
-            if penalty_weight is None or anneal_updates is None:
-                raise AssertionError("planned CMNIST IRM candidate lacks its settings")
-            pairs = DisabledPairsConfig(kind="disabled")
-            projection = DisabledProjectionConfig(kind="disabled")
-            algorithm = IrmAlgorithmConfig(
-                kind="irm",
-                environment_names=("train_e01", "train_e02"),
-                penalty_weight=penalty_weight,
-                penalty_anneal_updates=anneal_updates,
-                penalty="irmv1_dummy_classifier_scale",
-                sampling="environment_balanced_without_replacement",
-                loss_rescaling="divide_by_penalty_weight_above_one",
-            )
-            pair_digest = None
-        else:
-            raise AssertionError(
-                f"CMNIST config materializer is missing method {method}"
-            )
+        components = cmnist_candidate_components(config, lineage, method, setting)
+        pairs = components.pairs
+        projection = components.projection
+        algorithm = components.algorithm
+        pair_digest = components.pair_manifest_digest
         candidate = OrdinaryExperimentConfig(
             schema_version="grit.experiment/v1",
             run_kind="ordinary",
@@ -1258,17 +1476,21 @@ def _candidate_id(dataset: str, method: MethodId, digest: str) -> str:
 
 def _candidate_order_key(
     candidate: SearchCandidate,
-) -> tuple[int, float, float, int, float, float]:
-    rank = -1 if candidate.requested_rank is None else candidate.requested_rank
+) -> tuple[int, float, float, int, float, float, float, float, float, int]:
+    def number(value: float | int | None) -> float:
+        return -1.0 if value is None else float(value)
+
     return (
         IMPLEMENTED_METHODS.index(candidate.method_id),
         float(candidate.learning_rate),
         float(candidate.weight_decay),
-        rank,
-        -1.0
-        if candidate.groupdro_step_size is None
-        else float(candidate.groupdro_step_size),
-        -1.0 if candidate.penalty_weight is None else float(candidate.penalty_weight),
+        -1 if candidate.requested_rank is None else candidate.requested_rank,
+        number(candidate.groupdro_step_size),
+        number(candidate.penalty_weight),
+        number(candidate.fish_meta_step_size),
+        number(candidate.lisa_selection_prob),
+        number(candidate.swad_tolerance_ratio),
+        -1 if candidate.matchdg_latent_dim is None else candidate.matchdg_latent_dim,
     )
 
 

@@ -1,8 +1,9 @@
 # ColoredMNIST experiment protocol
 
-Status: **Implemented for ERM, oracle GRIT, GroupDRO, V-REx, and IRMv1 under
-validation-only selection and under the separately labeled test-oracle track.
-Conditional and nearest-neighbor pair definitions are still open.**
+Status: **Implemented for ERM, oracle GRIT, GroupDRO, V-REx, IRMv1, Fish, LISA,
+SWAD, and oracle-pair MatchDG under validation-only selection and under the separately
+labeled test-oracle track. Conditional and nearest-neighbor pair definitions are still
+open.**
 
 ## Purpose
 
@@ -27,9 +28,15 @@ The initial vertical slice compares:
 - GroupDRO with noisy-target/color training groups
 - V-REx with the two training sources as environments
 - IRMv1 with the two training sources as environments
+- Fish with the two training sources as environments
+- LISA with noisy-target/color training groups
+- SWAD with a source-like validation loss valley
+- MatchDG-style pair-difference penalty with the same clean oracle pairs as GRIT
 
-Conditional/random and nearest-neighbor pair construction are subsequent GRIT variants.
-Additional domain-generalization baselines remain deferred.
+These are the frozen-feature probing rows of the paper's ColoredMNIST table.
+Conditional/random and nearest-neighbor pair construction are subsequent GRIT and
+MatchDG variants; the paper's raw-pixel and fine-tuned MatchDG rows are outside the
+frozen-feature protocol.
 
 ## Construction semantics
 
@@ -538,6 +545,65 @@ CMNIST study. That study searched anneal points from 50 through 249 and selected
 fixing that threshold keeps the rewrite's method search focused on penalty strength
 without inheriting the legacy launcher's batching or test-selection errors.
 
+## Fish baseline
+
+Fish trains the same unprojected linear probe as ERM with the environment-balanced
+minibatches of V-REx: environment 0 is `train_e01` and environment 1 is `train_e02`.
+Each minibatch performs the inherited Reptile-style step. Starting from parameters
+$\theta$, one Adam step is taken on the mean cross-entropy of each environment half in
+turn, using the shared optimizer state, reaching $\tilde\theta$; the parameters are then
+set to $\theta + \epsilon(\tilde\theta - \theta)$. This matches the
+[inherited Fish solver](../../legacy/solver/fish.py), which interpolates the inner-loop
+result with a scalar meta step rather than the reference gradient-matching objective.
+The meta step grid is `0.001`, `0.01`, `0.1`, and `0.5`: the inherited launcher's three
+values plus the [DomainBed reference default](https://github.com/facebookresearch/DomainBed/blob/main/domainbed/hparams_registry.py).
+
+## LISA baseline
+
+LISA trains the unprojected linear probe on mixed frozen features. Its groups are the
+four noisy-target/color training groups used by GroupDRO. Each epoch draws
+$\lfloor N / B\rfloor$ minibatches; every minibatch picks one group uniformly at random
+and samples $B$ of its rows without replacement. With probability $p_{\text{sel}}$ the
+minibatch is mixed intra-label (partners share the target and differ in color);
+otherwise intra-domain (partners share the color and differ in target). Partners are
+sampled without replacement from the partner group. Mixing weights are
+$\lambda\sim\mathrm{Beta}(2,2)$ per example, drawn as the median of three uniforms
+from the run generator; features and one-hot targets are mixed with the same $\lambda$
+and the loss is the soft-label cross-entropy. This follows the
+[inherited LISA solver](../../legacy/solver/lisa.py) except that the loss is summed
+over classes before averaging, a constant factor of two. The selection-probability
+grid is the inherited `0`, `0.1`, `0.3`, `0.5`, `0.7`, `0.9`, and `1`.
+
+## SWAD baseline
+
+SWAD trains the unprojected linear probe with ERM minibatches and reports a dense
+weight average chosen by the reference loss-valley rule of
+[Cha et al. (2021)](https://arxiv.org/abs/2102.08604), following the DomainBed
+implementation. Every 100 optimizer updates (DomainBed's MNIST checkpoint frequency)
+the parameters averaged over that segment are recorded together with the live model's
+mean cross-entropy on the source-like validation environments `val_e01` and `val_e02`. Averaging starts when the segment loss has not
+improved for `n_converge = 3` segments; the threshold is the mean of those three losses
+times $1 + r$; averaging stops when the running minimum over the last
+`n_tolerance = 6` segments exceeds the threshold, after which training halts. The
+checkpoint saved at each epoch is the average SWAD would return at that point, or the
+live parameters before averaging starts. The inherited launcher searched a tolerance
+factor of 1.1 through 1.5; the tolerance ratio grid is therefore `0.1`, `0.2`, `0.3`,
+`0.4`, and `0.5`, which contains the reference default 0.3. SWAD's internal validation
+loss uses source-like validation only, under both selection tracks.
+
+## MatchDG-style pair penalty
+
+The inherited "MatchDG" row is a matching penalty on frozen features rather than the
+published contrastive algorithm; it is kept under that name for comparability with
+the paper. The model is a linear featurizer $\phi(x)=W_1x+b_1$ to a latent dimension
+followed by a linear classifier. Training minimizes the mean cross-entropy plus
+$\lambda\,\frac{1}{n}\sum_i\lVert\phi(z_i^{\text{red}}-z_i^{\text{green}})\rVert^2$
+over the same $n = 256$ clean oracle pairs as the primary GRIT result; the inherited
+code used every training source, so this is the pair-budgeted form. Because both
+layers are linear, the composed map is a linear probe, and checkpoints store that
+composition. The latent dimension grid is `8`, `16`, and `32` and the penalty grid is
+`0.1`, `1`, `10`, and `100`, a subset of the inherited 8-by-5 launcher grid.
+
 ## Parameter search
 
 The search is configuration-driven and applies the same saved candidate results to both
@@ -552,6 +618,13 @@ selectors.
   `1000`, and `10000`; its anneal point is fixed at update 100.
 - IRMv1 searches that optimizer grid jointly with penalty coefficients `100`, `1000`,
   `10000`, and `100000`; its anneal point is fixed at update 190.
+- Fish searches that optimizer grid jointly with meta steps `0.001`, `0.01`, `0.1`,
+  and `0.5`.
+- LISA searches that optimizer grid jointly with selection probabilities `0`, `0.1`,
+  `0.3`, `0.5`, `0.7`, `0.9`, and `1`.
+- SWAD searches that optimizer grid jointly with tolerance ratios `0.1` through `0.5`.
+- MatchDG searches that optimizer grid jointly with latent dimensions `8`, `16`, `32`
+  and penalties `0.1`, `1`, `10`, `100`.
 - Every candidate runs on three tuning seeds.
 - The top three configurations receive two confirmation seeds.
 - The five-seed validation mean selects the frozen configuration.

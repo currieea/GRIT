@@ -142,11 +142,11 @@ def _table(name: str, role: str, seed: int, rows: int = 8) -> FeatureTable:
         digits=targets * 5,
         clean_labels=targets,
         targets=targets,
-        colors=targets,
+        colors=torch.arange(rows) % 2,
     )
 
 
-def _fake_cache(plan: SearchPlan) -> CmnistFeatureCache:
+def fake_cache(plan: SearchPlan) -> CmnistFeatureCache:
     manifest = _ManifestIdentity(
         plan.resolved_config.lineage.feature_cache_manifest_digest
     )
@@ -208,7 +208,7 @@ def test_both_tracks_run_the_full_paired_lifecycle(
         not oracle
     )
 
-    cache = _fake_cache(plan)
+    cache = fake_cache(plan)
     loads: list[bool] = []
 
     def fake_cache_loader(
