@@ -320,11 +320,8 @@ def complete_outputs_valid(plan: SearchPlan) -> bool:
         summary_path = root / "summaries" / "cmnist-summary.json"
         paired_paths = (
             tuple(
-                root / "summaries" / f"cmnist-{selector.value}-paired-differences.json"
-                for selector in (
-                    CmnistSelector.PRIMARY_ROBUST,
-                    CmnistSelector.SECONDARY_SOURCE,
-                )
+                root / "summaries" / f"cmnist-{selector}-paired-differences.json"
+                for selector in plan.selectors
             )
             if "erm" in plan.methods and "grit" in plan.methods
             else ()
@@ -344,6 +341,7 @@ def complete_outputs_valid(plan: SearchPlan) -> bool:
         if (
             summary.plan_digest != plan.canonical_digest()
             or summary.lineage != plan.resolved_config.lineage
+            or tuple(item.value for item in summary.selectors) != plan.selectors
             or summary.paired_selectors != paired
         ):
             raise ValueError("CMNIST completion summary is inconsistent")

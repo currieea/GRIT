@@ -40,9 +40,11 @@ from grit.features.cmnist import (
     FeatureTableManifest,
 )
 from grit.methods.projection import FittedLinearProjection, fit_linear_projection
+from grit.methods.training import TrainedLinearProbeRun
 from grit.results import CodeProvenance, EnvironmentProvenance
 from grit.schemas import CmnistSelector, SeedStage, canonical_digest_value
 from grit.search.cmnist import (
+    CmnistTrainedTask,
     compute_cmnist_finalists,
     compute_cmnist_winners,
     materialize_cmnist_candidate_config,
@@ -685,7 +687,7 @@ def _write_manifest_only_cmnist_production(
     return dataset_path, feature_path, pair_path
 
 
-def _write_cmnist_production_config(
+def write_cmnist_production_config(
     root: Path,
     *,
     output_root: Path,
@@ -1094,7 +1096,7 @@ def test_dirty_worktree_is_recorded_not_rejected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     output_root = tmp_path / "output"
-    config_path, _ = _write_cmnist_production_config(
+    config_path, _ = write_cmnist_production_config(
         tmp_path, output_root=output_root
     )
     dirty = CodeProvenance(git_revision="2" * 40, git_dirty=True)
@@ -1111,7 +1113,7 @@ def test_ignored_repository_output_remains_an_allowed_isolated_root(
     tmp_path: Path,
 ) -> None:
     ignored_output = Path.cwd() / "outputs" / f"production-safety-{tmp_path.name}"
-    config_path, _ = _write_cmnist_production_config(
+    config_path, _ = write_cmnist_production_config(
         tmp_path,
         output_root=ignored_output,
     )
@@ -1127,7 +1129,7 @@ def test_plan_rejects_broad_output_roots(
     unsafe_kind: Literal["filesystem", "repository"],
 ) -> None:
     output_root = Path("/") if unsafe_kind == "filesystem" else Path.cwd()
-    config_path, _ = _write_cmnist_production_config(
+    config_path, _ = write_cmnist_production_config(
         tmp_path, output_root=output_root
     )
     with pytest.raises(ValueError, match="filesystem root|repository root"):
@@ -1168,7 +1170,7 @@ def test_first_plan_refuses_nonempty_unrelated_output_directory(
     output_root.mkdir()
     marker = output_root / "unrelated.txt"
     marker.write_text("preserve me", encoding="utf-8")
-    config_path, _ = _write_cmnist_production_config(
+    config_path, _ = write_cmnist_production_config(
         tmp_path, output_root=output_root
     )
     with pytest.raises(ValueError, match="empty or contain a complete compatible plan"):
@@ -1182,7 +1184,7 @@ def test_first_plan_accepts_an_empty_dedicated_output_directory(
 ) -> None:
     output_root = tmp_path / "output"
     output_root.mkdir()
-    config_path, _ = _write_cmnist_production_config(
+    config_path, _ = write_cmnist_production_config(
         tmp_path, output_root=output_root
     )
     plan = plan_production_search(config_path)
@@ -1470,14 +1472,18 @@ def test_status_recomputes_cmnist_finalists_unions_and_winners_read_only(
             selection_root / "secondary-tuning-finalists.json",
             finalists[(method, CmnistSelector.SECONDARY_SOURCE)],
         )
+        union = unions[method]
+        assert union is not None
         persist_canonical_artifact(
-            selection_root / "confirmation-union.json", unions[method]
+            selection_root / "confirmation-union.json", union
         )
     by_id = {candidate.candidate_id: candidate for candidate in plan.candidates}
     confirmation_candidates = tuple(
         by_id[candidate_id]
         for method in ("erm", "grit")
-        for candidate_id in unions[method].confirmation_candidate_ids
+        for union in (unions[method],)
+        if union is not None
+        for candidate_id in union.confirmation_candidate_ids
     )
     confirmation_runs = _cmnist_stage_runs(
         plan, confirmation_candidates, SeedStage.CONFIRMATION
@@ -2059,11 +2065,15 @@ def test_cmnist_real_plan_pilot_runs_two_canonical_tuning_tasks_only(
 
     def fake_train(
         _cache: object, _runtime: object, task: SearchRunTask
-    ) -> SimpleNamespace:
+    ) -> CmnistTrainedTask:
         train_calls.append(task.task_id)
         completed = _cmnist_executor(plan, [])(task, tmp_path)
         assert isinstance(completed, CmnistCompletedStageRun)
-        return SimpleNamespace(validation_metrics=completed.validation_metrics)
+        run = cast(
+            TrainedLinearProbeRun,
+            SimpleNamespace(validation_metrics=completed.validation_metrics),
+        )
+        return CmnistTrainedTask(run, None)
 
     def fake_plan(_path: Path) -> SearchPlan:
         return plan
@@ -2347,7 +2357,7 @@ def test_cli_pilot_selects_erm_and_grit_at_first_seed(
     script = _run_search_script()
     main = cast(Callable[[Sequence[str] | None], int], script.main)
 
-    config_path, _ = _write_cmnist_production_config(
+    config_path, _ = write_cmnist_production_config(
         tmp_path, output_root=tmp_path / "output"
     )
     monkeypatch.setattr(
@@ -2384,7 +2394,7 @@ def test_cli_dry_run_plans_and_reports_without_training(
     main = cast(Callable[[Sequence[str] | None], int], script.main)
 
     output_root = tmp_path / "output"
-    config_path, _ = _write_cmnist_production_config(tmp_path, output_root=output_root)
+    config_path, _ = write_cmnist_production_config(tmp_path, output_root=output_root)
     monkeypatch.setattr(
         "grit.search.plan._code_provenance", lambda: _CLEAN_CODE_PROVENANCE
     )
@@ -2423,7 +2433,7 @@ def test_custom_grid_epochs_and_pair_count_plan_from_yaml(
     monkeypatch.setattr(
         "grit.search.plan._code_provenance", lambda: _CLEAN_CODE_PROVENANCE
     )
-    config_path, _ = _write_cmnist_production_config(
+    config_path, _ = write_cmnist_production_config(
         tmp_path,
         output_root=tmp_path / "output",
         overrides={
@@ -2451,7 +2461,7 @@ def test_custom_grid_epochs_and_pair_count_plan_from_yaml(
 
 
 def test_cmnist_groupdro_only_grid_plans_and_materializes(tmp_path: Path) -> None:
-    config_path, _ = _write_cmnist_production_config(
+    config_path, _ = write_cmnist_production_config(
         tmp_path,
         output_root=tmp_path / "groupdro-output",
         overrides={
@@ -2494,7 +2504,7 @@ def test_cmnist_groupdro_only_grid_plans_and_materializes(tmp_path: Path) -> Non
 def test_cmnist_rex_only_grid_plans_materializes_and_selects_pilot(
     tmp_path: Path,
 ) -> None:
-    config_path, _ = _write_cmnist_production_config(
+    config_path, _ = write_cmnist_production_config(
         tmp_path,
         output_root=tmp_path / "rex-output",
         overrides={
@@ -2536,7 +2546,7 @@ def test_cmnist_rex_only_grid_plans_materializes_and_selects_pilot(
 def test_cmnist_irm_only_grid_plans_materializes_and_selects_pilot(
     tmp_path: Path,
 ) -> None:
-    config_path, _ = _write_cmnist_production_config(
+    config_path, _ = write_cmnist_production_config(
         tmp_path,
         output_root=tmp_path / "irm-output",
         overrides={
@@ -2600,7 +2610,7 @@ def test_cmnist_invariant_method_pilot_runs_one_real_training_task(
     method: Literal["rex", "irm"],
     method_space: dict[str, object],
 ) -> None:
-    config_path, _ = _write_cmnist_production_config(
+    config_path, _ = write_cmnist_production_config(
         tmp_path / method,
         output_root=tmp_path / f"{method}-output",
         overrides={
@@ -2680,7 +2690,7 @@ def test_pair_count_above_prepared_bank_is_rejected(
     monkeypatch.setattr(
         "grit.search.plan._code_provenance", lambda: _CLEAN_CODE_PROVENANCE
     )
-    config_path, _ = _write_cmnist_production_config(
+    config_path, _ = write_cmnist_production_config(
         tmp_path, output_root=tmp_path / "output", overrides={"pair_count": 512}
     )
     with pytest.raises(ValueError, match="prepared bank holds 256"):
@@ -2719,7 +2729,7 @@ def test_unrunnable_grids_fail_at_plan_time(
     overrides: dict[str, object],
     message: str,
 ) -> None:
-    config_path, _ = _write_cmnist_production_config(
+    config_path, _ = write_cmnist_production_config(
         tmp_path, output_root=tmp_path / "output", overrides=overrides
     )
     with pytest.raises(ValueError, match=message):

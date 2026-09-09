@@ -240,12 +240,21 @@ class _CommonProductionSearchConfig(StrictBoundaryModel):
 
 
 class CmnistProductionSearchConfig(_CommonProductionSearchConfig):
+    """`selectors` is either both ordinary selectors or the lone test-oracle track."""
+
     dataset: Literal["cmnist"]
     protocol_id: Literal["cmnist/v1"]
     pair_count: PositiveInt
-    selectors: tuple[Literal["primary_robust"], Literal["secondary_source"]]
+    selectors: (
+        tuple[Literal["primary_robust"], Literal["secondary_source"]]
+        | tuple[Literal["test_oracle"]]
+    )
     batch_size: PositiveInt
     max_epochs: PositiveInt
+
+    @property
+    def test_oracle(self) -> bool:
+        return self.selectors == ("test_oracle",)
 
     @model_validator(mode="after")
     def _validate_grid_fits(self) -> CmnistProductionSearchConfig:
@@ -727,9 +736,15 @@ def _expected_output_schemas(
                 artifact_kind="tuning_finalists",
                 schema_version="grit.cmnist-tuning-finalists/v1",
             ),
-            OutputSchemaVersion(
-                artifact_kind="finalist_union",
-                schema_version="grit.cmnist-finalist-union/v1",
+            *(
+                ()
+                if config.test_oracle
+                else (
+                    OutputSchemaVersion(
+                        artifact_kind="finalist_union",
+                        schema_version="grit.cmnist-finalist-union/v1",
+                    ),
+                )
             ),
             OutputSchemaVersion(
                 artifact_kind="frozen_candidate",

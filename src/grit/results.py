@@ -14,7 +14,7 @@ from grit.config import (
     RotatedMnistExperimentConfig,
 )
 from grit.methods.checkpoints import RestorationReceipt
-from grit.schemas import StrictBoundaryModel
+from grit.schemas import CmnistSelector, StrictBoundaryModel
 from grit.selection.cmnist import (
     DiagnosticMetricRecord,
     DiagnosticSelectionDecision,
@@ -307,6 +307,8 @@ class OrdinaryRunResult(StrictBoundaryModel):
 
 
 class CmnistTestOracleDiagnosticResult(StrictBoundaryModel):
+    """One test-oracle run. Its selections are labeled `test_oracle` throughout."""
+
     schema_version: Literal["grit.run-result/v1"]
     result_kind: Literal["cmnist_test_oracle_diagnostic"]
     run_id: NonEmptyStr
@@ -317,6 +319,10 @@ class CmnistTestOracleDiagnosticResult(StrictBoundaryModel):
     environment: EnvironmentProvenance
     diagnostic_selection: DiagnosticSelectionDecision | None
     diagnostic_metrics: tuple[DiagnosticMetricRecord, ...] | None
+    validation_metrics: tuple[ValidationMetricRecord, ...] = ()
+    test_oracle_candidate_selection: FrozenCandidateSelection | None = None
+    test_oracle_checkpoint_selection: FrozenCheckpointSelection | None = None
+    restoration: RestorationReceipt | None = None
     artifacts: tuple[ArtifactReference, ...]
 
     @model_validator(mode="after")
@@ -354,7 +360,79 @@ class CmnistTestOracleDiagnosticResult(StrictBoundaryModel):
             raise ValueError(
                 "diagnostic selection does not match the eligible oracle envelope"
             )
+        self._validate_lifecycle_selection(decision)
         return self
+
+    def _validate_lifecycle_selection(
+        self, decision: DiagnosticSelectionDecision
+    ) -> None:
+        candidate = self.test_oracle_candidate_selection
+        checkpoint = self.test_oracle_checkpoint_selection
+        restoration = self.restoration
+        present = (candidate, checkpoint, restoration)
+        if all(value is None for value in present):
+            return
+        if candidate is None or checkpoint is None or restoration is None:
+            raise ValueError(
+                "a test-oracle lifecycle result requires candidate, checkpoint, and "
+                "restoration together"
+            )
+        if (
+            candidate.selector is not CmnistSelector.TEST_ORACLE
+            or checkpoint.selector is not CmnistSelector.TEST_ORACLE
+        ):
+            raise ValueError(
+                "test-oracle lifecycle selections must be labeled test_oracle"
+            )
+        if candidate.method_id != self.resolved_config.algorithm.kind:
+            raise ValueError("frozen candidate method does not match result algorithm")
+        if candidate.seed_sets != self.resolved_config.seed_sets:
+            raise ValueError("frozen candidate seed sets do not match result config")
+        if (
+            candidate.scientific_config_digest
+            != self.resolved_config.scientific_config_digest()
+        ):
+            raise ValueError("frozen candidate configuration does not match the result")
+        if checkpoint.candidate_selection_id != candidate.frozen_selection_id:
+            raise ValueError("checkpoint selection does not belong to result candidate")
+        if checkpoint.decision.seed not in candidate.seed_sets.final:
+            raise ValueError("checkpoint seed is not configured for final evaluation")
+        if (
+            checkpoint.checkpoint.checkpoint_id != decision.checkpoint_id
+            or checkpoint.checkpoint.run_id != self.run_id
+            or checkpoint.checkpoint.candidate_id != candidate.candidate_id
+            or checkpoint.decision.seed != decision.seed
+        ):
+            raise ValueError(
+                "test-oracle checkpoint selection does not match the oracle envelope"
+            )
+        if restoration.candidate_selection_id != candidate.frozen_selection_id:
+            raise ValueError("restoration does not belong to result candidate")
+        if restoration.checkpoint != checkpoint.checkpoint:
+            raise ValueError("restoration does not match result checkpoint")
+        if not self.validation_metrics:
+            raise ValueError(
+                "a test-oracle lifecycle result records validation accuracies"
+            )
+        expected_identity = (
+            self.run_id,
+            candidate.candidate_id,
+            candidate.method_id,
+            candidate.scientific_config_digest,
+            checkpoint.decision.seed,
+        )
+        for metric in (*self.validation_metrics, *(self.diagnostic_metrics or ())):
+            observed = (
+                metric.run_id,
+                metric.candidate_id,
+                metric.method_id,
+                metric.scientific_config_digest,
+                metric.seed,
+            )
+            if observed != expected_identity:
+                raise ValueError(
+                    "test-oracle metric identity does not match selected result state"
+                )
 
 
 RunResult: TypeAlias = Annotated[

@@ -599,7 +599,10 @@ def _summary(
             for seed in plan.seeds.stages.final:
                 run = by_identity[(method, selector, seed)]
                 result = run.final_result
-                if result is None or result.final_test_metrics is None:
+                if (
+                    not isinstance(result, OrdinaryRunResult)
+                    or result.final_test_metrics is None
+                ):
                     raise ValueError("final run is missing its test result")
                 metric = result.final_test_metrics[0]
                 observations.append(

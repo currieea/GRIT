@@ -6,6 +6,13 @@
   `scratch-project`. Copy and edit for other machines or for the L2 sensitivity (which
   needs `--normalization l2` at prepare time, a separate artifact root, and
   `experiment_variant: l2_normalized_sensitivity`).
+- `cmnist/groupdro-search.yaml`, `cmnist/rex-search.yaml`, `cmnist/irm-search.yaml`:
+  the CMNIST baselines, each in its own output tree so adding one never reruns another.
+- `cmnist/*-test-oracle.yaml`: the same grids and seeds selected on `test_ood`
+  (`selectors: [test_oracle]`), the paper's "oracle validation" columns. Each writes a
+  separate `*-test-oracle` output tree; every result and summary in it is labeled
+  `test_oracle` and must be reported under that heading, never beside the ordinary
+  numbers as if validation-selected.
 - `cmnist/smoke.yaml` and `waterbirds/smoke.yaml`: hermetic end-to-end checks with a
   fake encoder, run by `scripts/smoke.py`. Never report their numbers.
 

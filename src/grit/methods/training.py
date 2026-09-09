@@ -552,8 +552,14 @@ def train_linear_probe(
     seed: int,
     method: LinearProbeTrainingMethod,
     num_classes: int = 2,
+    epoch_hook: Callable[[LinearProbeAlgorithm, CheckpointIdentity], None]
+    | None = None,
 ) -> TrainedLinearProbeRun:
-    """Run trainer-owned epoch/batch iteration and emit validation every epoch."""
+    """Run trainer-owned epoch/batch iteration and emit validation every epoch.
+
+    ``epoch_hook`` runs after each epoch's validation records are captured; the
+    test-oracle track uses it to score ``test_ood`` at every saved checkpoint.
+    """
 
     train_features = torch.cat([table.features for table in training_tables], dim=0).to(
         torch.float32
@@ -581,6 +587,8 @@ def train_linear_probe(
                 projection_rank=method.projection_rank,
             )
         )
+        if epoch_hook is not None:
+            epoch_hook(algorithm, identity)
 
     core = train_linear_probe_epochs(
         train_features,

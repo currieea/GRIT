@@ -1,6 +1,7 @@
 # ColoredMNIST experiment protocol
 
-Status: **Implemented for ERM, oracle GRIT, GroupDRO, V-REx, and IRMv1.
+Status: **Implemented for ERM, oracle GRIT, GroupDRO, V-REx, and IRMv1 under
+validation-only selection and under the separately labeled test-oracle track.
 Conditional and nearest-neighbor pair definitions are still open.**
 
 ## Purpose
@@ -274,9 +275,9 @@ Oracle pair access and oracle model selection are distinct concepts.
 
 - **Projection oracle:** GRIT uses true same-source recolorings from training data to
   estimate nuisance directions. This is compatible with ordinary validation selection.
-- **Test-oracle envelope:** rank, configuration, or checkpoint is chosen using
-  `test_ood`. This is not an ordinary result and may be retained only as a theoretical
-  or diagnostic upper envelope.
+- **Test-oracle track:** rank, configuration, and checkpoint are chosen using
+  `test_ood`. This is not an ordinary result and may be reported only as a separately
+  labeled upper envelope, matching the paper's "oracle validation" columns.
 
 Any test-oracle run must:
 
@@ -285,6 +286,34 @@ Any test-oracle run must:
 - include `test_oracle` in its result type and display label;
 - never populate fields reserved for validation-selected results;
 - never be compared as though it used the ordinary selector.
+
+### Test-oracle validation track
+
+The original study selected hyperparameters and the checkpoint on the $p_c=0.9$ test
+environment. The rewrite reproduces that protocol as its own search tree:
+
+- A production search config opts in with `selectors: [test_oracle]`. It cannot be
+  combined with the ordinary selectors, and it must use its own `output_root`; an
+  ordinary tree is never reused, because per-epoch checkpoints are not persisted and
+  the ordinary tree must never see `test_ood` before its selection is frozen.
+- Every candidate is retrained with the same tuning, confirmation, and final seeds as
+  the ordinary tree, so the two tracks remain paired per seed.
+- Every epoch records the three validation accuracies (for in-domain reporting) and
+  one `diagnostic_test_oracle` record on `test_ood`. The `test_oracle` selector scores a
+  checkpoint by that single `test_ood` accuracy; candidate ranking, top-three
+  confirmation, and the frozen winner follow the ordinary lifecycle over those scores.
+  Ties prefer the earlier epoch.
+- Final seeds select their epoch on `test_ood` and report that epoch's `test_ood`
+  accuracy. Each final run is written as a `cmnist_test_oracle_diagnostic` result whose
+  candidate and checkpoint selections carry the `test_oracle` selector; the ordinary
+  `candidate_selection`, `checkpoint_selection`, and `final_test_metrics` fields never
+  appear in it.
+- Summaries record `selectors: [test_oracle]` and every observation is labeled with
+  that selector. They are reported beside the ordinary results only under an explicit
+  "oracle validation" heading.
+
+Test access in this track goes through the explicit diagnostic view, not the final
+gate; the ordinary selectors continue to reject any `test_ood` record.
 
 ## Configuration contract
 

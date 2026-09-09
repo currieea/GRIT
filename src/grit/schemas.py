@@ -10,10 +10,21 @@ from pydantic import BaseModel, ConfigDict
 
 
 class CmnistSelector(str, Enum):
-    """The two prespecified ordinary ColoredMNIST selectors."""
+    """The two prespecified ordinary selectors plus the labeled test-oracle track."""
 
     PRIMARY_ROBUST = "primary_robust"
     SECONDARY_SOURCE = "secondary_source"
+    TEST_ORACLE = "test_oracle"
+
+    @property
+    def is_ordinary(self) -> bool:
+        return self is not CmnistSelector.TEST_ORACLE
+
+
+ORDINARY_CMNIST_SELECTORS = (
+    CmnistSelector.PRIMARY_ROBUST,
+    CmnistSelector.SECONDARY_SOURCE,
+)
 
 
 class SeedStage(str, Enum):

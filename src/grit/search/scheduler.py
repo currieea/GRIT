@@ -14,12 +14,23 @@ from grit.methods.training import (
     PersistedLinearCheckpointStore,
 )
 from grit.methods.types import MethodId
-from grit.results import CodeProvenance, EnvironmentProvenance, OrdinaryRunResult
-from grit.schemas import CmnistSelector, SeedStage, StrictBoundaryModel
+from grit.results import (
+    CmnistTestOracleDiagnosticResult,
+    CodeProvenance,
+    EnvironmentProvenance,
+    OrdinaryRunResult,
+)
+from grit.schemas import (
+    ORDINARY_CMNIST_SELECTORS,
+    CmnistSelector,
+    SeedStage,
+    StrictBoundaryModel,
+)
 from grit.search.plan import SearchCandidate, SearchLineage, SearchPlan
 from grit.search.waterbirds_contracts import WaterbirdsRunResult
 from grit.selection.cmnist import (
     CheckpointSelectionDecision,
+    DiagnosticMetricRecord,
     FrozenCandidateSelection,
     ValidationMetricRecord,
     select_checkpoint,
@@ -131,10 +142,17 @@ class CmnistCompletedStageRun(StrictBoundaryModel):
     code: CodeProvenance | None = None
     environment: EnvironmentProvenance | None = None
     validation_metrics: tuple[ValidationMetricRecord, ...]
+    diagnostic_metrics: tuple[DiagnosticMetricRecord, ...] | None = None
     checkpoint_decisions: tuple[CheckpointSelectionDecision, ...]
     final_result_relative_path: Literal["final-result.json"] | None = None
     final_result_digest: NonEmptyStr | None = None
-    final_result: OrdinaryRunResult | None = None
+    final_result: OrdinaryRunResult | CmnistTestOracleDiagnosticResult | None = None
+
+    @property
+    def test_oracle(self) -> bool:
+        """True for runs in the labeled test-oracle track."""
+
+        return self.diagnostic_metrics is not None
 
     @model_validator(mode="after")
     def _validate_run(self) -> CmnistCompletedStageRun:
@@ -168,23 +186,36 @@ class CmnistCompletedStageRun(StrictBoundaryModel):
                 metric.projection_rank,
             )
             != expected_identity
-            for metric in self.validation_metrics
+            for metric in (*self.validation_metrics, *(self.diagnostic_metrics or ()))
         ):
             raise ValueError("CMNIST stage metric identity is inconsistent")
-        expected_selectors = (
-            (CmnistSelector(self.task.selector),)
-            if self.task.stage is SeedStage.FINAL
-            else (
-                CmnistSelector.PRIMARY_ROBUST,
-                CmnistSelector.SECONDARY_SOURCE,
-            )
-        )
+        if self.diagnostic_metrics is not None and (
+            self.dataset != "cmnist" or not self.diagnostic_metrics
+        ):
+            raise ValueError("CMNIST test-oracle stages require test_ood evidence")
+        if self.task.stage is SeedStage.FINAL:
+            expected_selectors = (CmnistSelector(self.task.selector),)
+            if (
+                expected_selectors[0] is CmnistSelector.TEST_ORACLE
+            ) != self.test_oracle:
+                raise ValueError(
+                    "CMNIST final stage evidence does not match its selector track"
+                )
+        elif self.test_oracle:
+            expected_selectors = (CmnistSelector.TEST_ORACLE,)
+        else:
+            expected_selectors = ORDINARY_CMNIST_SELECTORS
         if tuple(item.selector for item in self.checkpoint_decisions) != (
             expected_selectors
         ):
             raise ValueError("CMNIST stage checkpoint selectors are inconsistent")
         recomputed = tuple(
-            select_checkpoint(self.validation_metrics, selector)
+            select_checkpoint(
+                self.diagnostic_metrics or ()
+                if selector is CmnistSelector.TEST_ORACLE
+                else self.validation_metrics,
+                selector,
+            )
             for selector in expected_selectors
         )
         if self.checkpoint_decisions != recomputed:
@@ -203,7 +234,15 @@ class CmnistCompletedStageRun(StrictBoundaryModel):
             frozen_winner = self.task.frozen_winner
             if frozen_winner is None:
                 raise AssertionError("validated CMNIST frozen winner disappeared")
-            selected_candidate = result.candidate_selection
+            if isinstance(result, OrdinaryRunResult) == self.test_oracle:
+                raise ValueError(
+                    "CMNIST final result kind does not match its selector track"
+                )
+            selected_candidate = (
+                result.candidate_selection
+                if isinstance(result, OrdinaryRunResult)
+                else result.test_oracle_candidate_selection
+            )
             if selected_candidate is None:
                 raise ValueError("CMNIST final result lacks its frozen candidate")
             if (
@@ -682,9 +721,16 @@ class LocalRunScheduler:
             raise ValueError("selected checkpoint artifact is corrupted") from error
         if isinstance(result, CmnistCompletedStageRun):
             cmnist_result = result.final_result
-            if cmnist_result is None or cmnist_result.checkpoint_selection is None:
+            if cmnist_result is None:
                 raise ValueError("CMNIST final result lacks checkpoint selection")
-            checkpoint_identity = cmnist_result.checkpoint_selection.checkpoint
+            checkpoint_selection = (
+                cmnist_result.checkpoint_selection
+                if isinstance(cmnist_result, OrdinaryRunResult)
+                else cmnist_result.test_oracle_checkpoint_selection
+            )
+            if checkpoint_selection is None:
+                raise ValueError("CMNIST final result lacks checkpoint selection")
+            checkpoint_identity = checkpoint_selection.checkpoint
             checkpoint_references = tuple(
                 item
                 for item in cmnist_result.artifacts

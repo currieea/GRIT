@@ -19,6 +19,7 @@ from grit.config import (
     OPENAI_CLIP_PREPROCESSING_ID,
     OPENAI_CLIP_REVISION,
     OPENAI_CLIP_WEIGHTS_IDENTITY,
+    CmnistTestOracleExperimentConfig,
 )
 from grit.data.cmnist import (
     CmnistConstruction,
@@ -35,6 +36,7 @@ from grit.data.views import (
     FinalTestSplitDescriptor,
     FinalTestView,
     issue_final_test_handle,
+    open_cmnist_test_oracle,
 )
 from grit.schemas import StrictBoundaryModel, canonical_digest_value
 
@@ -523,6 +525,44 @@ class CmnistFeatureCache:
     ) -> FinalTestHandle:
         """Issue identities only; cached test features remain unopened."""
 
+        descriptor, examples = self._test_descriptor_and_examples()
+        return issue_final_test_handle(
+            handle_id=f"final-handle:{run_id}",
+            run_id=run_id,
+            candidate_id=candidate_id,
+            scientific_config_digest=scientific_config_digest,
+            descriptor=descriptor,
+            examples=examples,
+        )
+
+    def open_final_table(self, view: FinalTestView) -> FeatureTable:
+        if view.descriptor.name != "test_ood":
+            raise ValueError(
+                "final feature access requires an authorized test_ood view"
+            )
+        return self._authorized_test_table(view.descriptor, view.examples)
+
+    def open_test_oracle_table(
+        self, config: CmnistTestOracleExperimentConfig, *, run_id: str
+    ) -> FeatureTable:
+        """Open test_ood for an explicitly diagnostic (test-oracle) configuration."""
+
+        descriptor, examples = self._test_descriptor_and_examples()
+        handle = issue_final_test_handle(
+            handle_id=f"test-oracle-handle:{run_id}",
+            run_id=run_id,
+            candidate_id=f"test-oracle:{config.scientific_config_digest()}",
+            scientific_config_digest=config.scientific_config_digest(),
+            descriptor=descriptor,
+            examples=examples,
+            diagnostic_config_digest=config.canonical_digest(),
+        )
+        view = open_cmnist_test_oracle(handle, config)
+        return self._authorized_test_table(view.descriptor, view.examples)
+
+    def _test_descriptor_and_examples(
+        self,
+    ) -> tuple[FinalTestSplitDescriptor, tuple[ExampleIdentity, ...]]:
         descriptor = FinalTestSplitDescriptor(
             dataset_id="cmnist",
             manifest_id=self.manifest.canonical_digest(),
@@ -539,28 +579,21 @@ class CmnistFeatureCache:
             )
             for source_id in self._test_ood.source_ids
         )
-        return issue_final_test_handle(
-            handle_id=f"final-handle:{run_id}",
-            run_id=run_id,
-            candidate_id=candidate_id,
-            scientific_config_digest=scientific_config_digest,
-            descriptor=descriptor,
-            examples=examples,
-        )
+        return descriptor, examples
 
-    def open_final_table(self, view: FinalTestView) -> FeatureTable:
-        if view.descriptor.name != "test_ood":
-            raise ValueError(
-                "final feature access requires an authorized test_ood view"
-            )
-        if view.descriptor.manifest_id != self.manifest.canonical_digest():
+    def _authorized_test_table(
+        self,
+        descriptor: FinalTestSplitDescriptor,
+        examples: tuple[ExampleIdentity, ...],
+    ) -> FeatureTable:
+        if descriptor.manifest_id != self.manifest.canonical_digest():
             raise FeatureCacheValidationError(
-                "authorized final view does not match the feature cache manifest"
+                "authorized test view does not match the feature cache manifest"
             )
-        expected = tuple(example.source_id for example in view.examples)
+        expected = tuple(example.source_id for example in examples)
         if expected != self._test_ood.source_ids:
             raise FeatureCacheValidationError(
-                "authorized final view does not match cached test source identities"
+                "authorized test view does not match cached test source identities"
             )
         return self._test_ood
 

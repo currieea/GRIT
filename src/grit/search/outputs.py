@@ -11,7 +11,7 @@ from typing import Annotated, Literal, TypeAlias
 from pydantic import Field, FiniteFloat, StrictInt, StrictStr, model_validator
 
 from grit.methods.types import IMPLEMENTED_METHODS, MethodId
-from grit.schemas import CmnistSelector, StrictBoundaryModel
+from grit.schemas import ORDINARY_CMNIST_SELECTORS, CmnistSelector, StrictBoundaryModel
 from grit.search.plan import SearchLineage
 from grit.search.waterbirds_contracts import MetricName, WaterbirdsMetricSummary
 
@@ -141,15 +141,29 @@ class CmnistPairedSelectorSummary(StrictBoundaryModel):
 
 
 class CmnistProductionSummary(StrictBoundaryModel):
+    """One search tree's report; `selectors` names its track (ordinary or oracle)."""
+
     schema_version: Literal["grit.cmnist-production-summary/v1"]
     reportable: Literal[True]
     plan_digest: NonEmptyStr
     lineage: SearchLineage
+    selectors: tuple[CmnistSelector, ...] = ORDINARY_CMNIST_SELECTORS
     methods: Annotated[tuple[CmnistMethodSelectorSummary, ...], Field(min_length=1)]
     paired_selectors: tuple[CmnistPairedSelectorSummary, ...]
 
+    @property
+    def test_oracle(self) -> bool:
+        return self.selectors == (CmnistSelector.TEST_ORACLE,)
+
     @model_validator(mode="after")
     def _validate_methods(self) -> CmnistProductionSummary:
+        if self.selectors not in (
+            ORDINARY_CMNIST_SELECTORS,
+            (CmnistSelector.TEST_ORACLE,),
+        ):
+            raise ValueError(
+                "CMNIST summaries use both ordinary selectors or only test_oracle"
+            )
         observed_methods = tuple(dict.fromkeys(item.method_id for item in self.methods))
         if tuple(sorted(observed_methods, key=IMPLEMENTED_METHODS.index)) != (
             observed_methods
@@ -158,20 +172,14 @@ class CmnistProductionSummary(StrictBoundaryModel):
         expected = tuple(
             (method, selector)
             for method in observed_methods
-            for selector in (
-                CmnistSelector.PRIMARY_ROBUST,
-                CmnistSelector.SECONDARY_SOURCE,
-            )
+            for selector in self.selectors
         )
         if tuple((item.method_id, item.selector) for item in self.methods) != expected:
             raise ValueError("CMNIST production summaries require canonical ordering")
         if any(item.lineage != self.lineage for item in self.methods):
             raise ValueError("CMNIST production summary lineage is inconsistent")
         expected_paired_selectors = (
-            (
-                CmnistSelector.PRIMARY_ROBUST,
-                CmnistSelector.SECONDARY_SOURCE,
-            )
+            self.selectors
             if "erm" in observed_methods and "grit" in observed_methods
             else ()
         )

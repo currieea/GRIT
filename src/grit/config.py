@@ -253,6 +253,15 @@ class SeedSets(StrictBoundaryModel):
 class OrdinarySelectionConfig(StrictBoundaryModel):
     selector: CmnistSelector
 
+    @model_validator(mode="after")
+    def _reject_test_oracle(self) -> OrdinarySelectionConfig:
+        if not self.selector.is_ordinary:
+            raise ValueError(
+                "ordinary selection cannot use the test_oracle selector; use the "
+                "cmnist_test_oracle_diagnostic run kind"
+            )
+        return self
+
 
 class CmnistTestOracleSelectionConfig(StrictBoundaryModel):
     selector: Literal["test_ood_accuracy"]

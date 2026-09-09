@@ -16,6 +16,8 @@ from grit.config import (
     CmnistArtifactLineageConfig,
     CmnistDatasetConfig,
     CmnistSourceCounts,
+    CmnistTestOracleExperimentConfig,
+    CmnistTestOracleSelectionConfig,
     CpuRuntimeConfig,
     DisabledPairsConfig,
     DisabledProjectionConfig,
@@ -45,6 +47,7 @@ from grit.methods.projection import FittedLinearProjection, fit_linear_projectio
 from grit.methods.training import (
     GroupDroLinearProbeMethod,
     IrmLinearProbeMethod,
+    LinearProbeAlgorithm,
     MethodId,
     OrdinaryLinearProbeMethod,
     PersistedLinearCheckpointStore,
@@ -54,8 +57,13 @@ from grit.methods.training import (
     persist_selected_linear_checkpoint,
     train_linear_probe,
 )
-from grit.results import ArtifactReference, OrdinaryRunResult, SucceededStatus
-from grit.schemas import CmnistSelector, SeedStage
+from grit.results import (
+    ArtifactReference,
+    CmnistTestOracleDiagnosticResult,
+    OrdinaryRunResult,
+    SucceededStatus,
+)
+from grit.schemas import ORDINARY_CMNIST_SELECTORS, CmnistSelector, SeedStage
 from grit.search.lifecycle import (
     ProductionLifecycleHooks,
     ProductionStatusHooks,
@@ -91,8 +99,11 @@ from grit.search.scheduler import (
     make_search_task,
 )
 from grit.selection.cmnist import (
+    CheckpointIdentity,
+    DiagnosticMetricRecord,
     FinalistUnion,
     FrozenCandidateSelection,
+    SelectorRecord,
     TuningFinalistsArtifact,
     freeze_candidate,
     freeze_final_checkpoint,
@@ -100,23 +111,82 @@ from grit.selection.cmnist import (
     make_tuning_finalists,
     select_checkpoint,
     select_confirmed_candidate,
+    select_test_oracle,
 )
+
+CmnistCandidateConfig = OrdinaryExperimentConfig | CmnistTestOracleExperimentConfig
+CmnistFinalists = dict[tuple[MethodId, CmnistSelector], TuningFinalistsArtifact]
+CmnistUnions = dict[MethodId, FinalistUnion | None]
+CmnistWinners = dict[tuple[MethodId, CmnistSelector], FrozenCandidateSelection]
 
 
 @dataclass(frozen=True, slots=True)
 class _CmnistRuntimeCandidate:
     planned: SearchCandidate
-    config: OrdinaryExperimentConfig
+    config: CmnistCandidateConfig
     projection: FittedLinearProjection | None
+
+
+@dataclass(frozen=True, slots=True)
+class CmnistTrainedTask:
+    run: TrainedLinearProbeRun
+    diagnostic_metrics: tuple[DiagnosticMetricRecord, ...] | None
+
+    def records(self, selector: CmnistSelector) -> tuple[SelectorRecord, ...]:
+        if selector is CmnistSelector.TEST_ORACLE:
+            if self.diagnostic_metrics is None:
+                raise AssertionError("test-oracle selection lacks test_ood records")
+            return self.diagnostic_metrics
+        return self.run.validation_metrics
+
+
+def cmnist_selectors(
+    config: CmnistProductionSearchConfig,
+) -> tuple[CmnistSelector, ...]:
+    return tuple(CmnistSelector(value) for value in config.selectors)
+
+
+def finalists_filename(selector: CmnistSelector) -> str:
+    return {
+        CmnistSelector.PRIMARY_ROBUST: "primary-tuning-finalists.json",
+        CmnistSelector.SECONDARY_SOURCE: "secondary-tuning-finalists.json",
+        CmnistSelector.TEST_ORACLE: "test-oracle-tuning-finalists.json",
+    }[selector]
+
+
+def confirmation_candidate_ids(
+    finalists: CmnistFinalists,
+    unions: CmnistUnions,
+    method: MethodId,
+    selectors: tuple[CmnistSelector, ...],
+) -> tuple[str, ...]:
+    union = unions[method]
+    if union is not None:
+        return union.confirmation_candidate_ids
+    return tuple(
+        dict.fromkeys(
+            decision.candidate_id
+            for selector in selectors
+            for decision in finalists[(method, selector)].ordered_candidates
+        )
+    )
 
 def run_cmnist_search(
     plan: SearchPlan,
     limits: ProductionExecutionLimits | None = None,
 ) -> CmnistProductionSummary | ProductionSearchStatus:
     config = _cmnist_search_config(plan)
+    selectors = cmnist_selectors(config)
     output_root = Path(plan.resolved_config.output_root)
+    # The test-oracle track scores test_ood at every epoch, so it always opens the
+    # full cache; the ordinary track never loads test features before the final stage.
     cache = _load_cmnist_cache(
-        plan, tuning_only=limits is not None and limits.stop_after == "tuning"
+        plan,
+        tuning_only=(
+            not config.test_oracle
+            and limits is not None
+            and limits.stop_after == "tuning"
+        ),
     )
     pair_manifest = _cmnist_pair_manifest(plan) if "grit" in plan.methods else None
     projections: dict[int, FittedLinearProjection] = {}
@@ -149,23 +219,15 @@ def run_cmnist_search(
                     projection.diagnostics,
                 )
                 projections[rank] = projection
-        resolved = materialize_cmnist_candidate_config(
-            plan,
-            candidate,
-            CmnistSelector.PRIMARY_ROBUST,
-        )
+        resolved = materialize_cmnist_candidate_config(plan, candidate, selectors[0])
         return _CmnistRuntimeCandidate(candidate, resolved, projection)
 
     def execute_pre_final(task: SearchRunTask, _run_root: Path) -> CompletedStageRun:
         runtime = runtime_candidate(task.candidate)
         trained = _train_cmnist_task(cache, runtime, task)
-        decisions = (
-            select_checkpoint(
-                trained.validation_metrics, CmnistSelector.PRIMARY_ROBUST
-            ),
-            select_checkpoint(
-                trained.validation_metrics, CmnistSelector.SECONDARY_SOURCE
-            ),
+        decisions = tuple(
+            select_checkpoint(trained.records(selector), selector)
+            for selector in selectors
         )
         return CmnistCompletedStageRun(
             schema_version="grit.cmnist-search-stage-run/v1",
@@ -175,7 +237,8 @@ def run_cmnist_search(
             lineage=plan.resolved_config.lineage,
             code=current_code_provenance(),
             environment=current_environment_provenance(),
-            validation_metrics=trained.validation_metrics,
+            validation_metrics=trained.run.validation_metrics,
+            diagnostic_metrics=trained.diagnostic_metrics,
             checkpoint_decisions=decisions,
         )
 
@@ -189,12 +252,9 @@ def run_cmnist_search(
         return cast(tuple[CmnistCompletedStageRun, ...], runs)
 
     def confirmation_tasks(
-        state: tuple[
-            dict[tuple[MethodId, CmnistSelector], TuningFinalistsArtifact],
-            dict[MethodId, FinalistUnion],
-        ],
+        state: tuple[CmnistFinalists, CmnistUnions],
     ) -> tuple[SearchRunTask, ...]:
-        _, unions = state
+        finalists, unions = state
         return tuple(
             make_search_task(
                 plan,
@@ -203,24 +263,21 @@ def run_cmnist_search(
                 seed,
             )
             for method in plan.methods
-            for candidate_id in unions[method].confirmation_candidate_ids
+            for candidate_id in confirmation_candidate_ids(
+                finalists, unions, method, selectors
+            )
             for seed in config.seeds.stages.confirmation
         )
 
     def make_winners(
-        state: tuple[
-            dict[tuple[MethodId, CmnistSelector], TuningFinalistsArtifact],
-            dict[MethodId, FinalistUnion],
-        ],
+        state: tuple[CmnistFinalists, CmnistUnions],
         runs: tuple[CmnistCompletedStageRun, ...],
         root: Path,
-    ) -> dict[tuple[MethodId, CmnistSelector], FrozenCandidateSelection]:
+    ) -> CmnistWinners:
         finalists, _ = state
         return _freeze_cmnist_winners(plan, finalists, runs, root)
 
-    def final_tasks(
-        winners: dict[tuple[MethodId, CmnistSelector], FrozenCandidateSelection],
-    ) -> tuple[SearchRunTask, ...]:
+    def final_tasks(winners: CmnistWinners) -> tuple[SearchRunTask, ...]:
         return tuple(
             make_final_search_task(
                 plan,
@@ -229,17 +286,12 @@ def run_cmnist_search(
                 frozen,
             )
             for method in plan.methods
-            for selector in (
-                CmnistSelector.PRIMARY_ROBUST,
-                CmnistSelector.SECONDARY_SOURCE,
-            )
+            for selector in selectors
             for frozen in (winners[(method, selector)],)
             for seed in config.seeds.stages.final
         )
 
-    def final_executor(
-        winners: dict[tuple[MethodId, CmnistSelector], FrozenCandidateSelection],
-    ) -> StageExecutor:
+    def final_executor(winners: CmnistWinners) -> StageExecutor:
         if isinstance(cache, CmnistTuningFeatureCache):
             raise AssertionError("tuning-only CMNIST execution reached final stage")
         full_cache = cache
@@ -254,9 +306,10 @@ def run_cmnist_search(
                 runtime.projection,
             )
             trained = _train_cmnist_task(full_cache, runtime, task)
-            decision = select_checkpoint(trained.validation_metrics, selector)
+            decision = select_checkpoint(trained.records(selector), selector)
             frozen_checkpoint = freeze_final_checkpoint(decision, frozen)
-            selected = trained.store.load(frozen_checkpoint.checkpoint.checkpoint_id)
+            run = trained.run
+            selected = run.store.load(frozen_checkpoint.checkpoint.checkpoint_id)
             checkpoint_root = run_root / "selected-checkpoint"
             checkpoint_manifest = persist_selected_linear_checkpoint(
                 selected, checkpoint_root
@@ -265,44 +318,65 @@ def run_cmnist_search(
             restoration = restore_checkpoint(
                 frozen_checkpoint,
                 persisted,
-                trained.algorithm.restore_inference_state,
+                run.algorithm.restore_inference_state,
             )
-            handle = full_cache.issue_final_handle(
-                run_id=trained.run_id,
-                candidate_id=task.candidate.candidate_id,
-                scientific_config_digest=task.candidate.scientific_config_digest,
+            artifacts = _cmnist_result_artifacts(
+                plan, task, checkpoint_manifest.canonical_digest(), runtime
             )
-            final_view = open_final_test(
-                handle, frozen, frozen_checkpoint, restoration
-            )
-            final_table = full_cache.open_final_table(final_view)
-            final_metric = record_final_accuracy(
-                final_view,
-                record_id=f"metric:{trained.run_id}:test_ood",
-                value=evaluate_accuracy(trained.algorithm, final_table),
-                sample_count=len(final_table.source_ids),
-            )
-            result = OrdinaryRunResult(
-                schema_version="grit.run-result/v1",
-                result_kind="ordinary",
-                run_id=trained.run_id,
-                resolved_config=runtime.config,
-                resolved_config_digest=runtime.config.canonical_digest(),
-                status=SucceededStatus(kind="succeeded"),
-                code=current_code_provenance(),
-                environment=current_environment_provenance(),
-                validation_metrics=trained.validation_metrics,
-                candidate_selection=frozen,
-                checkpoint_selection=frozen_checkpoint,
-                restoration=restoration,
-                final_test_metrics=(final_metric,),
-                artifacts=_cmnist_result_artifacts(
-                    plan,
-                    task,
-                    checkpoint_manifest.canonical_digest(),
-                    runtime,
-                ),
-            )
+            result: OrdinaryRunResult | CmnistTestOracleDiagnosticResult
+            if isinstance(runtime.config, CmnistTestOracleExperimentConfig):
+                diagnostics = trained.diagnostic_metrics
+                if diagnostics is None:
+                    raise AssertionError("test-oracle final run lacks test_ood records")
+                result = CmnistTestOracleDiagnosticResult(
+                    schema_version="grit.run-result/v1",
+                    result_kind="cmnist_test_oracle_diagnostic",
+                    run_id=run.run_id,
+                    resolved_config=runtime.config,
+                    resolved_config_digest=runtime.config.canonical_digest(),
+                    status=SucceededStatus(kind="succeeded"),
+                    code=current_code_provenance(),
+                    environment=current_environment_provenance(),
+                    diagnostic_selection=select_test_oracle(diagnostics),
+                    diagnostic_metrics=diagnostics,
+                    validation_metrics=run.validation_metrics,
+                    test_oracle_candidate_selection=frozen,
+                    test_oracle_checkpoint_selection=frozen_checkpoint,
+                    restoration=restoration,
+                    artifacts=artifacts,
+                )
+            else:
+                handle = full_cache.issue_final_handle(
+                    run_id=run.run_id,
+                    candidate_id=task.candidate.candidate_id,
+                    scientific_config_digest=task.candidate.scientific_config_digest,
+                )
+                final_view = open_final_test(
+                    handle, frozen, frozen_checkpoint, restoration
+                )
+                final_table = full_cache.open_final_table(final_view)
+                final_metric = record_final_accuracy(
+                    final_view,
+                    record_id=f"metric:{run.run_id}:test_ood",
+                    value=evaluate_accuracy(run.algorithm, final_table),
+                    sample_count=len(final_table.source_ids),
+                )
+                result = OrdinaryRunResult(
+                    schema_version="grit.run-result/v1",
+                    result_kind="ordinary",
+                    run_id=run.run_id,
+                    resolved_config=runtime.config,
+                    resolved_config_digest=runtime.config.canonical_digest(),
+                    status=SucceededStatus(kind="succeeded"),
+                    code=current_code_provenance(),
+                    environment=current_environment_provenance(),
+                    validation_metrics=run.validation_metrics,
+                    candidate_selection=frozen,
+                    checkpoint_selection=frozen_checkpoint,
+                    restoration=restoration,
+                    final_test_metrics=(final_metric,),
+                    artifacts=artifacts,
+                )
             persist_canonical_artifact(run_root / "final-result.json", result)
             completed = CmnistCompletedStageRun(
                 schema_version="grit.cmnist-search-stage-run/v1",
@@ -312,7 +386,8 @@ def run_cmnist_search(
                 lineage=plan.resolved_config.lineage,
                 code=current_code_provenance(),
                 environment=current_environment_provenance(),
-                validation_metrics=trained.validation_metrics,
+                validation_metrics=run.validation_metrics,
+                diagnostic_metrics=trained.diagnostic_metrics,
                 checkpoint_decisions=(decision,),
                 final_result_relative_path="final-result.json",
                 final_result_digest=result.canonical_digest(),
@@ -324,11 +399,8 @@ def run_cmnist_search(
         return execute_final
 
     def make_summary(
-        state: tuple[
-            dict[tuple[MethodId, CmnistSelector], TuningFinalistsArtifact],
-            dict[MethodId, FinalistUnion],
-        ],
-        winners: dict[tuple[MethodId, CmnistSelector], FrozenCandidateSelection],
+        state: tuple[CmnistFinalists, CmnistUnions],
+        winners: CmnistWinners,
         runs: tuple[CmnistCompletedStageRun, ...],
     ) -> CmnistProductionSummary:
         finalists, _ = state
@@ -364,61 +436,71 @@ def _cmnist_finalists(
     plan: SearchPlan,
     runs: tuple[CmnistCompletedStageRun, ...],
     output_root: Path,
-) -> tuple[
-    dict[tuple[MethodId, CmnistSelector], TuningFinalistsArtifact],
-    dict[MethodId, FinalistUnion],
-]:
+) -> tuple[CmnistFinalists, CmnistUnions]:
     artifacts, unions = compute_cmnist_finalists(plan, runs)
+    selectors = cmnist_selectors(_cmnist_search_config(plan))
     for method in plan.methods:
-        primary = artifacts[(method, CmnistSelector.PRIMARY_ROBUST)]
-        secondary = artifacts[(method, CmnistSelector.SECONDARY_SOURCE)]
-        union = unions[method]
         root = output_root / "selection" / method
-        persist_canonical_artifact(
-            root / "primary-tuning-finalists.json", primary
-        )
-        persist_canonical_artifact(
-            root / "secondary-tuning-finalists.json", secondary
-        )
-        persist_canonical_artifact(root / "confirmation-union.json", union)
+        for selector in selectors:
+            persist_canonical_artifact(
+                root / finalists_filename(selector), artifacts[(method, selector)]
+            )
+        union = unions[method]
+        if union is not None:
+            persist_canonical_artifact(root / "confirmation-union.json", union)
     return artifacts, unions
+
+def _selector_records(
+    runs: tuple[CmnistCompletedStageRun, ...],
+    method: MethodId,
+    selector: CmnistSelector,
+) -> tuple[SelectorRecord, ...]:
+    """Ordinary selectors read validation records; test_oracle reads test_ood."""
+
+    records: list[SelectorRecord] = []
+    for run in runs:
+        if run.task.candidate.method_id != method:
+            continue
+        if selector is CmnistSelector.TEST_ORACLE:
+            if run.diagnostic_metrics is None:
+                raise ValueError(
+                    "test-oracle selection requires test_ood records in every run"
+                )
+            records.extend(run.diagnostic_metrics)
+        else:
+            records.extend(run.validation_metrics)
+    return tuple(records)
 
 def compute_cmnist_finalists(
     plan: SearchPlan,
     runs: tuple[CmnistCompletedStageRun, ...],
-) -> tuple[
-    dict[tuple[MethodId, CmnistSelector], TuningFinalistsArtifact],
-    dict[MethodId, FinalistUnion],
-]:
-    metrics = tuple(metric for run in runs for metric in run.validation_metrics)
-    artifacts: dict[
-        tuple[MethodId, CmnistSelector], TuningFinalistsArtifact
-    ] = {}
-    unions: dict[MethodId, FinalistUnion] = {}
+) -> tuple[CmnistFinalists, CmnistUnions]:
+    selectors = cmnist_selectors(_cmnist_search_config(plan))
+    artifacts: CmnistFinalists = {}
+    unions: CmnistUnions = {}
     for method in plan.methods:
-        method_metrics = tuple(item for item in metrics if item.method_id == method)
-        primary = make_tuning_finalists(
-            method_metrics,
-            CmnistSelector.PRIMARY_ROBUST,
-            plan.seeds.stages,
+        for selector in selectors:
+            artifacts[(method, selector)] = make_tuning_finalists(
+                _selector_records(runs, method, selector),
+                selector,
+                plan.seeds.stages,
+            )
+        unions[method] = (
+            make_finalist_union(
+                artifacts[(method, CmnistSelector.PRIMARY_ROBUST)],
+                artifacts[(method, CmnistSelector.SECONDARY_SOURCE)],
+            )
+            if selectors == ORDINARY_CMNIST_SELECTORS
+            else None
         )
-        secondary = make_tuning_finalists(
-            method_metrics,
-            CmnistSelector.SECONDARY_SOURCE,
-            plan.seeds.stages,
-        )
-        union = make_finalist_union(primary, secondary)
-        artifacts[(method, CmnistSelector.PRIMARY_ROBUST)] = primary
-        artifacts[(method, CmnistSelector.SECONDARY_SOURCE)] = secondary
-        unions[method] = union
     return artifacts, unions
 
 def _freeze_cmnist_winners(
     plan: SearchPlan,
-    finalists: dict[tuple[MethodId, CmnistSelector], TuningFinalistsArtifact],
+    finalists: CmnistFinalists,
     runs: tuple[CmnistCompletedStageRun, ...],
     output_root: Path,
-) -> dict[tuple[MethodId, CmnistSelector], FrozenCandidateSelection]:
+) -> CmnistWinners:
     winners = compute_cmnist_winners(plan, finalists, runs)
     for (method, selector), frozen in winners.items():
         persist_canonical_artifact(
@@ -432,26 +514,20 @@ def _freeze_cmnist_winners(
 
 def compute_cmnist_winners(
     plan: SearchPlan,
-    finalists: dict[tuple[MethodId, CmnistSelector], TuningFinalistsArtifact],
+    finalists: CmnistFinalists,
     runs: tuple[CmnistCompletedStageRun, ...],
-) -> dict[tuple[MethodId, CmnistSelector], FrozenCandidateSelection]:
-    metrics = tuple(metric for run in runs for metric in run.validation_metrics)
-    winners: dict[
-        tuple[MethodId, CmnistSelector], FrozenCandidateSelection
-    ] = {}
+) -> CmnistWinners:
+    winners: CmnistWinners = {}
     for method in plan.methods:
-        for selector in (
-            CmnistSelector.PRIMARY_ROBUST,
-            CmnistSelector.SECONDARY_SOURCE,
-        ):
+        for selector in cmnist_selectors(_cmnist_search_config(plan)):
             artifact = finalists[(method, selector)]
             finalist_ids = {
                 item.candidate_id for item in artifact.ordered_candidates
             }
             records = tuple(
                 item
-                for item in metrics
-                if item.method_id == method and item.candidate_id in finalist_ids
+                for item in _selector_records(runs, method, selector)
+                if item.candidate_id in finalist_ids
             )
             decision = select_confirmed_candidate(
                 records, artifact, plan.seeds.stages
@@ -464,7 +540,7 @@ def materialize_cmnist_candidate_config(
     plan: SearchPlan,
     candidate: SearchCandidate,
     selector: CmnistSelector,
-) -> OrdinaryExperimentConfig:
+) -> CmnistCandidateConfig:
     config = _cmnist_search_config(plan)
     lineage = plan.resolved_config.lineage
     training = LinearProbeTrainingConfig(
@@ -554,9 +630,8 @@ def materialize_cmnist_candidate_config(
         raise AssertionError(
             f"CMNIST config materializer is missing {candidate.method_id}"
         )
-    resolved = OrdinaryExperimentConfig(
+    common: dict[str, object] = dict(
         schema_version="grit.experiment/v1",
-        run_kind="ordinary",
         experiment_name=config.experiment_name,
         protocol_id="cmnist/v1",
         reportable=True,
@@ -595,8 +670,22 @@ def materialize_cmnist_candidate_config(
             feature_cache_manifest_digest=lineage.feature_cache_manifest_digest,
             pair_manifest_digest=pair_digest,
         ),
-        selection=OrdinarySelectionConfig(selector=selector),
     )
+    resolved: CmnistCandidateConfig
+    if selector is CmnistSelector.TEST_ORACLE:
+        resolved = CmnistTestOracleExperimentConfig(
+            run_kind="cmnist_test_oracle_diagnostic",
+            diagnostic_selection=CmnistTestOracleSelectionConfig(
+                selector="test_ood_accuracy", test_oracle=True
+            ),
+            **common,  # pyright: ignore[reportArgumentType]
+        )
+    else:
+        resolved = OrdinaryExperimentConfig(
+            run_kind="ordinary",
+            selection=OrdinarySelectionConfig(selector=selector),
+            **common,  # pyright: ignore[reportArgumentType]
+        )
     if resolved.scientific_config_digest() != candidate.scientific_config_digest:
         raise ValueError("planned CMNIST candidate digest cannot be materialized")
     return resolved
@@ -605,7 +694,7 @@ def _train_cmnist_task(
     cache: CmnistFeatureCache | CmnistTuningFeatureCache,
     runtime: _CmnistRuntimeCandidate,
     task: SearchRunTask,
-) -> TrainedLinearProbeRun:
+) -> CmnistTrainedTask:
     training_tables = cache.training_tables()
     algorithm = runtime.config.algorithm
     if isinstance(algorithm, (RexAlgorithmConfig, IrmAlgorithmConfig)):
@@ -655,16 +744,54 @@ def _train_cmnist_task(
             projection=runtime.projection,
             projection_rank=task.candidate.requested_rank,
         )
-    return train_linear_probe(
+    run_id = f"run:{task.task_id}"
+    diagnostics: list[DiagnosticMetricRecord] | None = None
+    epoch_hook = None
+    if isinstance(runtime.config, CmnistTestOracleExperimentConfig):
+        if isinstance(cache, CmnistTuningFeatureCache):
+            raise AssertionError("test-oracle training requires the full cache")
+        test_table = cache.open_test_oracle_table(runtime.config, run_id=run_id)
+        diagnostics = []
+        collected = diagnostics
+
+        def score_test_ood(
+            algorithm: LinearProbeAlgorithm, identity: CheckpointIdentity
+        ) -> None:
+            collected.append(
+                DiagnosticMetricRecord(
+                    record_id=f"metric:{run_id}:{identity.checkpoint_id}:test_ood",
+                    run_id=run_id,
+                    candidate_id=task.candidate.candidate_id,
+                    method_id=task.candidate.method_id,
+                    scientific_config_digest=task.candidate.scientific_config_digest,
+                    checkpoint_id=identity.checkpoint_id,
+                    epoch=identity.epoch,
+                    seed=task.seed,
+                    value=evaluate_accuracy(algorithm, test_table),
+                    sample_count=len(test_table.source_ids),
+                    metric_kind="diagnostic_test_oracle",
+                    seed_stage=task.stage,
+                    split_name="test_ood",
+                    metric_name="accuracy",
+                    projection_rank=task.candidate.requested_rank,
+                )
+            )
+
+        epoch_hook = score_test_ood
+    run = train_linear_probe(
         training_tables,
         cache.validation_tables(),
         runtime.config.training,
-        run_id=f"run:{task.task_id}",
+        run_id=run_id,
         candidate_id=task.candidate.candidate_id,
         scientific_config_digest=task.candidate.scientific_config_digest,
         seed_stage=task.stage,
         seed=task.seed,
         method=method,
+        epoch_hook=epoch_hook,
+    )
+    return CmnistTrainedTask(
+        run, None if diagnostics is None else tuple(diagnostics)
     )
 
 def _cmnist_result_artifacts(
@@ -724,10 +851,11 @@ def _cmnist_result_artifacts(
 
 def _cmnist_summary(
     plan: SearchPlan,
-    finalists: dict[tuple[MethodId, CmnistSelector], TuningFinalistsArtifact],
-    winners: dict[tuple[MethodId, CmnistSelector], FrozenCandidateSelection],
+    finalists: CmnistFinalists,
+    winners: CmnistWinners,
     runs: tuple[CmnistCompletedStageRun, ...],
 ) -> CmnistProductionSummary:
+    selectors = cmnist_selectors(_cmnist_search_config(plan))
     by_identity = {
         (
             run.task.candidate.method_id,
@@ -738,17 +866,11 @@ def _cmnist_summary(
     }
     methods: list[CmnistMethodSelectorSummary] = []
     for method in plan.methods:
-        for selector in (
-            CmnistSelector.PRIMARY_ROBUST,
-            CmnistSelector.SECONDARY_SOURCE,
-        ):
+        for selector in selectors:
             observations: list[CmnistFinalSeedObservation] = []
             for seed in plan.seeds.stages.final:
                 run = by_identity[(method, selector, seed)]
-                result = run.final_result
-                if result is None or result.final_test_metrics is None:
-                    raise AssertionError("completed final run lacks CMNIST metrics")
-                metric = result.final_test_metrics[0]
+                record_id, value = _final_test_observation(run)
                 observations.append(
                     CmnistFinalSeedObservation(
                         seed=seed,
@@ -757,8 +879,8 @@ def _cmnist_summary(
                         result_path=(
                             f"{run.task.relative_directory}/final-result.json"
                         ),
-                        metric_record_id=metric.record_id,
-                        test_ood_accuracy=metric.value,
+                        metric_record_id=record_id,
+                        test_ood_accuracy=value,
                     )
                 )
             values = tuple(
@@ -786,10 +908,7 @@ def _cmnist_summary(
     paired: list[CmnistPairedSelectorSummary] = []
     method_map = {(item.method_id, item.selector): item for item in methods}
     if "erm" in plan.methods and "grit" in plan.methods:
-        for selector in (
-            CmnistSelector.PRIMARY_ROBUST,
-            CmnistSelector.SECONDARY_SOURCE,
-        ):
+        for selector in selectors:
             erm = method_map[("erm", selector)]
             grit = method_map[("grit", selector)]
             erm_values = {
@@ -829,9 +948,27 @@ def _cmnist_summary(
         reportable=True,
         plan_digest=plan.canonical_digest(),
         lineage=plan.resolved_config.lineage,
+        selectors=selectors,
         methods=tuple(methods),
         paired_selectors=tuple(paired),
     )
+
+
+def _final_test_observation(run: CmnistCompletedStageRun) -> tuple[str, float]:
+    """Return the reported test_ood record for an ordinary or test-oracle final run."""
+
+    result = run.final_result
+    if isinstance(result, OrdinaryRunResult):
+        if result.final_test_metrics is None:
+            raise AssertionError("completed final run lacks CMNIST metrics")
+        metric = result.final_test_metrics[0]
+        return metric.record_id, float(metric.value)
+    if isinstance(result, CmnistTestOracleDiagnosticResult):
+        decision = result.diagnostic_selection
+        if decision is None:
+            raise AssertionError("completed test-oracle run lacks its selection")
+        return decision.selected_record_id, float(decision.objective_value)
+    raise AssertionError("completed final run lacks its result")
 
 def _load_cmnist_cache(
     plan: SearchPlan,
@@ -886,6 +1023,7 @@ def _cmnist_search_config(plan: SearchPlan) -> CmnistProductionSearchConfig:
 
 def cmnist_status_from_plan(plan: SearchPlan) -> ProductionSearchStatus:
     config = _cmnist_search_config(plan)
+    selectors = cmnist_selectors(config)
     by_id = {item.candidate_id: item for item in plan.candidates}
 
     def coerce_runs(
@@ -896,33 +1034,30 @@ def cmnist_status_from_plan(plan: SearchPlan) -> ProductionSearchStatus:
         return cast(tuple[CmnistCompletedStageRun, ...], runs)
 
     def finalists_complete(
-        state: tuple[
-            dict[tuple[MethodId, CmnistSelector], TuningFinalistsArtifact],
-            dict[MethodId, FinalistUnion],
-        ],
+        state: tuple[CmnistFinalists, CmnistUnions],
         root: Path,
     ) -> bool:
         expected_finalists, expected_unions = state
         count = 0
+        expected_count = 0
         for method in plan.methods:
             selection_root = root / "selection" / method
-            artifacts = (
+            artifacts: list[
+                tuple[Path, type[TuningFinalistsArtifact] | type[FinalistUnion], object]
+            ] = [
                 (
-                    selection_root / "primary-tuning-finalists.json",
+                    selection_root / finalists_filename(selector),
                     TuningFinalistsArtifact,
-                    expected_finalists[(method, CmnistSelector.PRIMARY_ROBUST)],
-                ),
-                (
-                    selection_root / "secondary-tuning-finalists.json",
-                    TuningFinalistsArtifact,
-                    expected_finalists[(method, CmnistSelector.SECONDARY_SOURCE)],
-                ),
-                (
-                    selection_root / "confirmation-union.json",
-                    FinalistUnion,
-                    expected_unions[method],
-                ),
-            )
+                    expected_finalists[(method, selector)],
+                )
+                for selector in selectors
+            ]
+            union = expected_unions[method]
+            if union is not None:
+                artifacts.append(
+                    (selection_root / "confirmation-union.json", FinalistUnion, union)
+                )
+            expected_count += len(artifacts)
             for path, artifact_type, expected in artifacts:
                 if not path.exists():
                     continue
@@ -935,15 +1070,12 @@ def cmnist_status_from_plan(plan: SearchPlan) -> ProductionSearchStatus:
                         "CMNIST selection artifact does not match canonical tuning "
                         f"results: {path}"
                     )
-        return count == len(plan.methods) * (len(config.selectors) + 1)
+        return count == expected_count
 
     def confirmation_tasks(
-        state: tuple[
-            dict[tuple[MethodId, CmnistSelector], TuningFinalistsArtifact],
-            dict[MethodId, FinalistUnion],
-        ],
+        state: tuple[CmnistFinalists, CmnistUnions],
     ) -> tuple[SearchRunTask, ...]:
-        _, unions = state
+        finalists, unions = state
         return tuple(
             make_search_task(
                 plan,
@@ -952,14 +1084,13 @@ def cmnist_status_from_plan(plan: SearchPlan) -> ProductionSearchStatus:
                 seed,
             )
             for method in plan.methods
-            for candidate_id in unions[method].confirmation_candidate_ids
+            for candidate_id in confirmation_candidate_ids(
+                finalists, unions, method, selectors
+            )
             for seed in config.seeds.stages.confirmation
         )
 
-    def winner_count(
-        winners: dict[tuple[MethodId, CmnistSelector], FrozenCandidateSelection],
-        root: Path,
-    ) -> int:
+    def winner_count(winners: CmnistWinners, root: Path) -> int:
         count = 0
         for identity, expected in winners.items():
             method, selector = identity
@@ -977,9 +1108,7 @@ def cmnist_status_from_plan(plan: SearchPlan) -> ProductionSearchStatus:
                 )
         return count
 
-    def final_tasks(
-        winners: dict[tuple[MethodId, CmnistSelector], FrozenCandidateSelection],
-    ) -> tuple[SearchRunTask, ...]:
+    def final_tasks(winners: CmnistWinners) -> tuple[SearchRunTask, ...]:
         return tuple(
             make_final_search_task(
                 plan,

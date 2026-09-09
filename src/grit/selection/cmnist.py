@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Sequence
 from statistics import fmean
-from typing import Annotated, Literal, TypeAlias
+from typing import Annotated, Literal, TypeAlias, cast
 
 from pydantic import (
     Field,
@@ -21,6 +21,11 @@ from grit.schemas import CmnistSelector, SeedStage, StrictBoundaryModel
 
 NonEmptyStr: TypeAlias = Annotated[StrictStr, Field(min_length=1)]
 NonNegativeInt: TypeAlias = Annotated[StrictInt, Field(ge=0)]
+SELECTOR_SPLIT_COUNTS: dict[CmnistSelector, int] = {
+    CmnistSelector.PRIMARY_ROBUST: 3,
+    CmnistSelector.SECONDARY_SOURCE: 2,
+    CmnistSelector.TEST_ORACLE: 1,
+}
 
 
 class _MetricIdentity(StrictBoundaryModel):
@@ -61,6 +66,9 @@ class DiagnosticMetricRecord(_MetricIdentity):
     projection_rank: NonNegativeInt | None
 
 
+SelectorRecord: TypeAlias = ValidationMetricRecord | DiagnosticMetricRecord
+
+
 class CheckpointIdentity(StrictBoundaryModel):
     checkpoint_id: NonEmptyStr
     candidate_id: NonEmptyStr
@@ -83,10 +91,10 @@ class CheckpointSelectionDecision(StrictBoundaryModel):
 
     @model_validator(mode="after")
     def _validate_contributors(self) -> CheckpointSelectionDecision:
-        expected_count = 3 if self.selector is CmnistSelector.PRIMARY_ROBUST else 2
+        expected_count = SELECTOR_SPLIT_COUNTS[self.selector]
         if len(self.contributing_record_ids) != expected_count:
             raise ValueError(
-                "checkpoint selection must cite every selector validation split"
+                "checkpoint selection must cite every selector split exactly once"
             )
         if len(set(self.contributing_record_ids)) != len(self.contributing_record_ids):
             raise ValueError("checkpoint selection record IDs must be unique")
@@ -398,6 +406,29 @@ def _require_validation_records(
     )
 
 
+def _require_selector_records(
+    records: Sequence[SelectorRecord],
+    selector: CmnistSelector,
+) -> tuple[SelectorRecord, ...]:
+    """Ordinary selectors see validation records only; test_oracle sees test_ood."""
+
+    if selector.is_ordinary:
+        return _require_validation_records(
+            cast(Sequence[ValidationMetricRecord], records)
+        )
+    materialized = tuple(records)
+    if not materialized:
+        raise ValueError("test-oracle selection requires diagnostic metric records")
+    if any(type(record) is not DiagnosticMetricRecord for record in materialized):
+        raise TypeError(
+            "the test_oracle selector accepts DiagnosticMetricRecord values only"
+        )
+    return tuple(
+        DiagnosticMetricRecord.model_validate(record.model_dump(mode="python"))
+        for record in materialized
+    )
+
+
 def _require_diagnostic_records(
     records: Sequence[DiagnosticMetricRecord],
 ) -> tuple[DiagnosticMetricRecord, ...]:
@@ -461,7 +492,7 @@ def _require_diagnostic_records(
 
 def _diagnostic_tie_key(
     record: DiagnosticMetricRecord,
-) -> tuple[str, str, str, int, str, str, int, int, str]:
+) -> tuple[str, str, str, int, str, int, str, int, str]:
     rank_key = record.projection_rank if record.projection_rank is not None else -1
     return (
         record.method_id,
@@ -469,8 +500,8 @@ def _diagnostic_tie_key(
         record.scientific_config_digest,
         rank_key,
         record.run_id,
-        record.checkpoint_id,
         record.epoch,
+        record.checkpoint_id,
         record.seed,
         record.record_id,
     )
@@ -513,6 +544,10 @@ def _selector_splits(
 ) -> tuple[str, ...]:
     cmnist = {"val_e01", "val_e02", "val_e05"}
     rotated = {"val_r0", "val_r45", "val_r60"}
+    if selector is CmnistSelector.TEST_ORACLE:
+        if observed_splits <= {"test_ood"}:
+            return ("test_ood",)
+        raise ValueError("the test_oracle selector scores test_ood records only")
     if observed_splits <= cmnist:
         return (
             ("val_e01", "val_e02", "val_e05")
@@ -549,12 +584,12 @@ def _checkpoint_sort_key(
 
 
 def select_checkpoint(
-    records: Sequence[ValidationMetricRecord],
+    records: Sequence[SelectorRecord],
     selector: CmnistSelector,
 ) -> CheckpointSelectionDecision:
     """Select one persisted checkpoint within one candidate/run/seed."""
 
-    validation_records = _require_validation_records(records)
+    validation_records = _require_selector_records(records, selector)
     run_keys = {
         (
             record.run_id,
@@ -574,7 +609,7 @@ def select_checkpoint(
     if len(run_projection_ranks) != 1:
         raise ValueError("checkpoint selection cannot change projection rank")
 
-    grouped: dict[str, list[ValidationMetricRecord]] = defaultdict(list)
+    grouped: dict[str, list[SelectorRecord]] = defaultdict(list)
     for record in validation_records:
         grouped[record.checkpoint_id].append(record)
 
@@ -650,18 +685,18 @@ def select_checkpoint(
 
 
 def _rank_candidates_for_seed_keys(
-    records: Sequence[ValidationMetricRecord],
+    records: Sequence[SelectorRecord],
     selector: CmnistSelector,
     expected_seed_keys: set[tuple[SeedStage, int]],
 ) -> tuple[CandidateSelectionDecision, ...]:
     """Rank candidates after enforcing one exact configured stage/seed table."""
 
-    validation_records = _require_validation_records(records)
+    validation_records = _require_selector_records(records, selector)
     methods = {record.method_id for record in validation_records}
     if len(methods) != 1:
         raise ValueError("methods must be selected independently")
 
-    by_run: dict[tuple[str, str], list[ValidationMetricRecord]] = defaultdict(list)
+    by_run: dict[tuple[str, str], list[SelectorRecord]] = defaultdict(list)
     for record in validation_records:
         by_run[(record.candidate_id, record.run_id)].append(record)
 
@@ -712,14 +747,14 @@ def _rank_candidates_for_seed_keys(
 
 
 def rank_tuning_candidates(
-    records: Sequence[ValidationMetricRecord],
+    records: Sequence[SelectorRecord],
     selector: CmnistSelector,
     seed_sets: SeedSets,
 ) -> tuple[CandidateSelectionDecision, ...]:
     """Rank one method using exactly the configured three tuning seeds."""
 
     validated_seed_sets = _revalidate_seed_sets(seed_sets)
-    validation_records = _require_validation_records(records)
+    validation_records = _require_selector_records(records, selector)
     if any(record.seed_stage is not SeedStage.TUNING for record in validation_records):
         raise ValueError("tuning ranking accepts tuning-stage records only")
     expected = {(SeedStage.TUNING, seed) for seed in validated_seed_sets.tuning}
@@ -727,7 +762,7 @@ def rank_tuning_candidates(
 
 
 def make_tuning_finalists(
-    records: Sequence[ValidationMetricRecord],
+    records: Sequence[SelectorRecord],
     selector: CmnistSelector,
     seed_sets: SeedSets,
 ) -> TuningFinalistsArtifact:
@@ -749,7 +784,7 @@ def make_tuning_finalists(
 
 
 def select_confirmed_candidate(
-    confirmation_records: Sequence[ValidationMetricRecord],
+    confirmation_records: Sequence[SelectorRecord],
     finalists: TuningFinalistsArtifact,
     seed_sets: SeedSets,
 ) -> CandidateSelectionDecision:
@@ -761,7 +796,9 @@ def select_confirmed_candidate(
     )
     if validated_finalists.tuning_seeds != validated_seed_sets.tuning:
         raise ValueError("finalist artifact tuning seeds do not match configuration")
-    validation_records = _require_validation_records(confirmation_records)
+    validation_records = _require_selector_records(
+        confirmation_records, validated_finalists.selector
+    )
     if any(
         record.seed_stage is not SeedStage.CONFIRMATION for record in validation_records
     ):
