@@ -173,7 +173,7 @@ def test_renderings_share_validation_sources_labels_and_content() -> None:
     validation_tables = (
         construction.val_e01,
         construction.val_e02,
-        construction.val_e05,
+        construction.val_held_out,
     )
     assert len({table.source_ids for table in validation_tables}) == 1
     assert all(

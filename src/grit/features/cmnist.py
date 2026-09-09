@@ -38,7 +38,11 @@ from grit.data.views import (
     issue_final_test_handle,
     open_cmnist_test_oracle,
 )
-from grit.schemas import StrictBoundaryModel, canonical_digest_value
+from grit.schemas import (
+    HELD_OUT_VALIDATION_NAMES,
+    StrictBoundaryModel,
+    canonical_digest_value,
+)
 
 OPENAI_CLIP_MODEL = "ViT-B/32"
 OPENAI_CLIP_WEIGHTS_SHA256 = OPENAI_CLIP_WEIGHTS_IDENTITY.removeprefix("sha256:")
@@ -438,17 +442,19 @@ class CmnistFeatureCacheManifest(StrictBoundaryModel):
 
     @model_validator(mode="after")
     def _validate_tables(self) -> CmnistFeatureCacheManifest:
+        names = tuple(table.table_name for table in self.tables)
+        held_out = names[4] if len(names) > 4 else None
         expected = (
             "train_e01",
             "train_e02",
             "val_e01",
             "val_e02",
-            "val_e05",
+            held_out,
             "test_ood",
             "oracle_pair_red",
             "oracle_pair_green",
         )
-        if tuple(table.table_name for table in self.tables) != expected:
+        if held_out not in HELD_OUT_VALIDATION_NAMES or names != expected:
             raise ValueError("CMNIST feature cache must contain the fixed table set")
         expected_roles: tuple[TableRole, ...] = (
             "training",
@@ -500,7 +506,7 @@ class CmnistFeatureCache:
     train_e02: FeatureTable
     val_e01: FeatureTable
     val_e02: FeatureTable
-    val_e05: FeatureTable
+    val_held_out: FeatureTable
     _test_ood: FeatureTable
     oracle_pair_red: FeatureTable
     oracle_pair_green: FeatureTable
@@ -511,7 +517,7 @@ class CmnistFeatureCache:
         return self.train_e01, self.train_e02
 
     def validation_tables(self) -> tuple[FeatureTable, FeatureTable, FeatureTable]:
-        return self.val_e01, self.val_e02, self.val_e05
+        return self.val_e01, self.val_e02, self.val_held_out
 
     def pair_tables(self) -> tuple[FeatureTable, FeatureTable]:
         return self.oracle_pair_red, self.oracle_pair_green
@@ -606,7 +612,7 @@ class CmnistTuningFeatureCache:
     train_e02: FeatureTable
     val_e01: FeatureTable
     val_e02: FeatureTable
-    val_e05: FeatureTable
+    val_held_out: FeatureTable
     oracle_pair_red: FeatureTable
     oracle_pair_green: FeatureTable
     manifest: CmnistFeatureCacheManifest
@@ -616,7 +622,7 @@ class CmnistTuningFeatureCache:
         return self.train_e01, self.train_e02
 
     def validation_tables(self) -> tuple[FeatureTable, FeatureTable, FeatureTable]:
-        return self.val_e01, self.val_e02, self.val_e05
+        return self.val_e01, self.val_e02, self.val_held_out
 
     def pair_tables(self) -> tuple[FeatureTable, FeatureTable]:
         return self.oracle_pair_red, self.oracle_pair_green
@@ -848,7 +854,7 @@ def load_cmnist_feature_cache(
         train_e02=loaded[1],
         val_e01=loaded[2],
         val_e02=loaded[3],
-        val_e05=loaded[4],
+        val_held_out=loaded[4],
         _test_ood=loaded[5],
         oracle_pair_red=loaded[6],
         oracle_pair_green=loaded[7],
@@ -882,7 +888,7 @@ def load_cmnist_tuning_feature_cache(
         train_e02=selected[1],
         val_e01=selected[2],
         val_e02=selected[3],
-        val_e05=selected[4],
+        val_held_out=selected[4],
         oracle_pair_red=selected[5],
         oracle_pair_green=selected[6],
         manifest=manifest,

@@ -582,7 +582,11 @@ def materialize_cmnist_candidate_config(
                 test=10_000,
             ),
             training_split_names=("train_e01", "train_e02"),
-            validation_split_names=("val_e01", "val_e02", "val_e05"),
+            validation_split_names=(
+                "val_e01",
+                "val_e02",
+                lineage.held_out_validation_split,
+            ),
             final_test_split_name="test_ood",
         ),
         representation=FrozenFeatureConfig(

@@ -213,14 +213,11 @@ class OrdinaryRunResult(StrictBoundaryModel):
             validation_by_id[record_id] for record_id in contributor_ids
         )
         rotated = self.resolved_config.protocol_id == "rotated_mnist/v1"
+        all_splits = tuple(self.resolved_config.dataset.validation_split_names)
         expected_splits = (
-            (
-                ("val_r0", "val_r45", "val_r60")
-                if rotated
-                else ("val_e01", "val_e02", "val_e05")
-            )
+            all_splits
             if checkpoint.selector.value == "primary_robust"
-            else (("val_r0", "val_r45") if rotated else ("val_e01", "val_e02"))
+            else all_splits[:2]
         )
         contributor_identity = {
             (metric.checkpoint_id, metric.epoch) for metric in contributors

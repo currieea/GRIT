@@ -17,10 +17,28 @@ from pydantic import (
 )
 
 from grit.config import SeedSets
-from grit.schemas import CmnistSelector, SeedStage, StrictBoundaryModel
+from grit.schemas import (
+    HELD_OUT_VALIDATION_NAMES,
+    IN_DOMAIN_VALIDATION_NAMES,
+    CmnistSelector,
+    SeedStage,
+    StrictBoundaryModel,
+)
 
 NonEmptyStr: TypeAlias = Annotated[StrictStr, Field(min_length=1)]
 NonNegativeInt: TypeAlias = Annotated[StrictInt, Field(ge=0)]
+ValidationSplitName: TypeAlias = Literal[
+    "val_e01",
+    "val_e02",
+    "val_e03",
+    "val_e04",
+    "val_e05",
+    "val_e06",
+    "val_e07",
+    "val_r0",
+    "val_r45",
+    "val_r60",
+]
 SELECTOR_SPLIT_COUNTS: dict[CmnistSelector, int] = {
     CmnistSelector.PRIMARY_ROBUST: 3,
     CmnistSelector.SECONDARY_SOURCE: 2,
@@ -46,7 +64,7 @@ class ValidationMetricRecord(_MetricIdentity):
 
     metric_kind: Literal["validation"]
     seed_stage: SeedStage
-    split_name: Literal["val_e01", "val_e02", "val_e05", "val_r0", "val_r45", "val_r60"]
+    split_name: ValidationSplitName
     metric_name: Literal["accuracy"]
     projection_rank: NonNegativeInt | None
 
@@ -542,18 +560,23 @@ def select_test_oracle(
 def _selector_splits(
     selector: CmnistSelector, observed_splits: set[str]
 ) -> tuple[str, ...]:
-    cmnist = {"val_e01", "val_e02", "val_e05"}
+    in_domain = set(IN_DOMAIN_VALIDATION_NAMES)
+    held_out = set(HELD_OUT_VALIDATION_NAMES)
     rotated = {"val_r0", "val_r45", "val_r60"}
     if selector is CmnistSelector.TEST_ORACLE:
         if observed_splits <= {"test_ood"}:
             return ("test_ood",)
         raise ValueError("the test_oracle selector scores test_ood records only")
-    if observed_splits <= cmnist:
-        return (
-            ("val_e01", "val_e02", "val_e05")
-            if selector is CmnistSelector.PRIMARY_ROBUST
-            else ("val_e01", "val_e02")
-        )
+    if observed_splits <= in_domain | held_out:
+        if selector is CmnistSelector.SECONDARY_SOURCE:
+            return IN_DOMAIN_VALIDATION_NAMES
+        observed_held_out = sorted(observed_splits & held_out)
+        if len(observed_held_out) != 1:
+            raise ValueError(
+                "the primary selector requires exactly one held-out validation "
+                f"rendering, found {observed_held_out!r}"
+            )
+        return (*IN_DOMAIN_VALIDATION_NAMES, observed_held_out[0])
     if observed_splits <= rotated:
         return (
             ("val_r0", "val_r45", "val_r60")

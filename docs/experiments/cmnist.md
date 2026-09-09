@@ -118,6 +118,16 @@ membership reproducibly without changing any target count.
 | `val_e05` | Validation | `validation_sources` | 0.5 | 0.5 | Selection and reporting |
 | `test_ood` | Test | `test_sources` | 0.9 | 0.1 | Final reporting only |
 
+The third validation rendering is the held-out domain. Its flip rate is chosen at
+preparation time (`scripts/prepare_cmnist.py --held-out-flip-prob`) from `0.3`, `0.4`,
+`0.5`, `0.6`, or `0.7`, and its environment is named for that rate: `val_e03` through
+`val_e07`. The primary protocol is `val_e05`; the others are a prespecified sensitivity
+on how far the held-out domain sits from the training correlation (0.3 and 0.4 are
+closer to training, 0.6 and 0.7 lean toward the test reversal). Each rate is a separate
+prepared artifact root and a separate search tree, never mixed within one selector.
+The primary robustness selector then takes the worst accuracy over `val_e01`, `val_e02`,
+and whichever held-out rendering the artifact carries.
+
 The three validation environments are three renderings of the same 10,000 held-out
 sources. They are not 30,000 independent examples. Their source image, source ID, digit,
 clean label, and noisy target are shared; only color varies.

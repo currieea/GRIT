@@ -31,7 +31,11 @@ from grit.methods.projection import FittedLinearProjection
 from grit.methods.training_state import LinearProbeState
 from grit.methods.types import MethodId
 from grit.schemas import SeedStage, StrictBoundaryModel
-from grit.selection.cmnist import CheckpointIdentity, ValidationMetricRecord
+from grit.selection.cmnist import (
+    CheckpointIdentity,
+    ValidationMetricRecord,
+    ValidationSplitName,
+)
 
 __all__ = ["LinearProbeState"]
 
@@ -704,17 +708,7 @@ def _validation_metrics(
             sample_count=len(table.source_ids),
             metric_kind="validation",
             seed_stage=seed_stage,
-            split_name=cast(
-                Literal[
-                    "val_e01",
-                    "val_e02",
-                    "val_e05",
-                    "val_r0",
-                    "val_r45",
-                    "val_r60",
-                ],
-                table.name,
-            ),
+            split_name=cast(ValidationSplitName, table.name),
             metric_name="accuracy",
             projection_rank=projection_rank,
         )

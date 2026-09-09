@@ -19,7 +19,13 @@ from grit.data.views import (
     ValidationView,
     validate_cmnist_repeated_validation_views,
 )
-from grit.schemas import StrictBoundaryModel, canonical_digest_value
+from grit.schemas import (
+    HELD_OUT_VALIDATION_NAMES,
+    StrictBoundaryModel,
+    canonical_digest_value,
+    held_out_validation_flip_prob,
+    held_out_validation_name,
+)
 
 PARTITION_METHOD_ID = "cmnist-stratified-hash-v1"
 RENDERING_METHOD_ID = "cmnist-rgb-render-v1"
@@ -40,7 +46,11 @@ EnvironmentName: TypeAlias = Literal[
     "train_e02",
     "val_e01",
     "val_e02",
+    "val_e03",
+    "val_e04",
     "val_e05",
+    "val_e06",
+    "val_e07",
     "test_ood",
 ]
 
@@ -177,44 +187,56 @@ class CmnistEnvironmentSpec(StrictBoundaryModel):
     color_flip_prob: Probability
 
 
+def cmnist_environment_specs(
+    held_out_flip_prob: float = 0.5,
+) -> tuple[CmnistEnvironmentSpec, ...]:
+    """The protocol environments; only the held-out validation rate is a choice."""
+
+    held_out = held_out_validation_name(held_out_flip_prob)
+    return (
+        CmnistEnvironmentSpec(
+            name="train_e01",
+            role="training",
+            source_partition_id="train_e01_sources",
+            color_flip_prob=0.1,
+        ),
+        CmnistEnvironmentSpec(
+            name="train_e02",
+            role="training",
+            source_partition_id="train_e02_sources",
+            color_flip_prob=0.2,
+        ),
+        CmnistEnvironmentSpec(
+            name="val_e01",
+            role="validation",
+            source_partition_id="validation_sources",
+            color_flip_prob=0.1,
+        ),
+        CmnistEnvironmentSpec(
+            name="val_e02",
+            role="validation",
+            source_partition_id="validation_sources",
+            color_flip_prob=0.2,
+        ),
+        CmnistEnvironmentSpec(
+            name=held_out,
+            role="validation",
+            source_partition_id="validation_sources",
+            color_flip_prob=held_out_validation_flip_prob(held_out),
+        ),
+        CmnistEnvironmentSpec(
+            name="test_ood",
+            role="final_test",
+            source_partition_id="test_sources",
+            color_flip_prob=0.9,
+        ),
+    )
+
+
 CMNIST_ENVIRONMENT_SPECS: tuple[CmnistEnvironmentSpec, ...] = (
-    CmnistEnvironmentSpec(
-        name="train_e01",
-        role="training",
-        source_partition_id="train_e01_sources",
-        color_flip_prob=0.1,
-    ),
-    CmnistEnvironmentSpec(
-        name="train_e02",
-        role="training",
-        source_partition_id="train_e02_sources",
-        color_flip_prob=0.2,
-    ),
-    CmnistEnvironmentSpec(
-        name="val_e01",
-        role="validation",
-        source_partition_id="validation_sources",
-        color_flip_prob=0.1,
-    ),
-    CmnistEnvironmentSpec(
-        name="val_e02",
-        role="validation",
-        source_partition_id="validation_sources",
-        color_flip_prob=0.2,
-    ),
-    CmnistEnvironmentSpec(
-        name="val_e05",
-        role="validation",
-        source_partition_id="validation_sources",
-        color_flip_prob=0.5,
-    ),
-    CmnistEnvironmentSpec(
-        name="test_ood",
-        role="final_test",
-        source_partition_id="test_sources",
-        color_flip_prob=0.9,
-    ),
+    cmnist_environment_specs(0.5)
 )
+HELD_OUT_ENVIRONMENT_INDEX = 4
 
 
 class EnvironmentManifest(StrictBoundaryModel):
@@ -245,12 +267,34 @@ class CmnistDatasetManifest(StrictBoundaryModel):
             raise ValueError("partition manifest digest is inconsistent")
         if self.construction_seed != self.partition_manifest.construction_seed:
             raise ValueError("dataset and partition construction seeds must match")
-        expected_names = tuple(spec.name for spec in CMNIST_ENVIRONMENT_SPECS)
-        if tuple(item.name for item in self.environments) != expected_names:
+        names = tuple(item.name for item in self.environments)
+        if (
+            len(names) != len(CMNIST_ENVIRONMENT_SPECS)
+            or names[HELD_OUT_ENVIRONMENT_INDEX] not in HELD_OUT_VALIDATION_NAMES
+        ):
+            raise ValueError(
+                "dataset environments must use canonical protocol ordering"
+            )
+        expected_names = tuple(
+            spec.name
+            for spec in cmnist_environment_specs(
+                held_out_validation_flip_prob(names[HELD_OUT_ENVIRONMENT_INDEX])
+            )
+        )
+        if names != expected_names:
             raise ValueError(
                 "dataset environments must use canonical protocol ordering"
             )
         return self
+
+    @property
+    def held_out_validation_name(self) -> str:
+        return self.environments[HELD_OUT_ENVIRONMENT_INDEX].name
+
+    def environment_specs(self) -> tuple[CmnistEnvironmentSpec, ...]:
+        return cmnist_environment_specs(
+            float(self.environments[HELD_OUT_ENVIRONMENT_INDEX].color_flip_prob)
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -288,7 +332,7 @@ class CmnistConstruction:
     train_e02: RenderedCmnistTable
     val_e01: RenderedCmnistTable
     val_e02: RenderedCmnistTable
-    val_e05: RenderedCmnistTable
+    val_held_out: RenderedCmnistTable
     _test_ood: RenderedCmnistTable
     partitions: CmnistPartitions
     manifest: CmnistDatasetManifest
@@ -325,7 +369,7 @@ class CmnistConstruction:
                 ),
                 examples=table.identities(),
             )
-            for table in (self.val_e01, self.val_e02, self.val_e05)
+            for table in (self.val_e01, self.val_e02, self.val_held_out)
         )
         typed_views = (views[0], views[1], views[2])
         validate_cmnist_repeated_validation_views(typed_views)
@@ -339,7 +383,7 @@ class CmnistConstruction:
             self.train_e02,
             self.val_e01,
             self.val_e02,
-            self.val_e05,
+            self.val_held_out,
             self._test_ood,
         )
 
@@ -538,12 +582,20 @@ def construct_cmnist(
     construction_seed: int,
     label_flip_prob: float = 0.25,
     targets: CmnistPartitionTargets = PRODUCTION_PARTITION_TARGETS,
-    environment_specs: tuple[CmnistEnvironmentSpec, ...] = CMNIST_ENVIRONMENT_SPECS,
+    held_out_flip_prob: float = 0.5,
+    environment_specs: tuple[CmnistEnvironmentSpec, ...] | None = None,
 ) -> CmnistConstruction:
-    """Partition sources, sample source-stable labels, and render fixed environments."""
+    """Partition sources, sample source-stable labels, and render fixed environments.
+
+    ``held_out_flip_prob`` chooses the third validation rendering (``val_e03`` to
+    ``val_e07``); everything else is fixed by the protocol.
+    """
 
     if not 0.0 <= label_flip_prob <= 1.0:
         raise ValueError("label_flip_prob must lie in [0, 1]")
+    protocol_specs = cmnist_environment_specs(held_out_flip_prob)
+    if environment_specs is None:
+        environment_specs = protocol_specs
     train = _validated_pool(train_pool, "train", targets.official_train_count)
     test = _validated_pool(test_pool, "test", targets.test)
     partitions = partition_cmnist_sources(
@@ -552,7 +604,7 @@ def construct_cmnist(
         construction_seed=construction_seed,
         targets=targets,
     )
-    canonical_specs = {spec.name: spec for spec in CMNIST_ENVIRONMENT_SPECS}
+    canonical_specs = {spec.name: spec for spec in protocol_specs}
     supplied_specs = {spec.name: spec for spec in environment_specs}
     if supplied_specs != canonical_specs or len(environment_specs) != len(
         canonical_specs
@@ -573,7 +625,7 @@ def construct_cmnist(
         "test_sources": "test",
     }
     tables: dict[str, RenderedCmnistTable] = {}
-    for name in tuple(spec.name for spec in CMNIST_ENVIRONMENT_SPECS):
+    for name in tuple(spec.name for spec in protocol_specs):
         spec = supplied_specs[name]
         pool = pool_by_split[split_by_partition[spec.source_partition_id]]
         tables[name] = _render_environment(
@@ -585,8 +637,7 @@ def construct_cmnist(
         )
 
     environment_manifests = tuple(
-        _environment_manifest(tables[spec.name], spec)
-        for spec in CMNIST_ENVIRONMENT_SPECS
+        _environment_manifest(tables[spec.name], spec) for spec in protocol_specs
     )
     manifest = CmnistDatasetManifest(
         schema_version="grit.cmnist-dataset/v1",
@@ -605,7 +656,7 @@ def construct_cmnist(
         train_e02=tables["train_e02"],
         val_e01=tables["val_e01"],
         val_e02=tables["val_e02"],
-        val_e05=tables["val_e05"],
+        val_held_out=tables[protocol_specs[HELD_OUT_ENVIRONMENT_INDEX].name],
         _test_ood=tables["test_ood"],
         partitions=partitions,
         manifest=manifest,

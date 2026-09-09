@@ -248,6 +248,7 @@ def prepare_official_cmnist(
     feature_device: str,
     clip_batch_size: int,
     pair_count: int = 256,
+    held_out_flip_prob: float = 0.5,
 ) -> None:
     """Explicit real-data/official-CLIP preparation command implementation."""
 
@@ -271,6 +272,7 @@ def prepare_official_cmnist(
         test_pool,
         construction_seed=construction_seed,
         targets=PRODUCTION_PARTITION_TARGETS,
+        held_out_flip_prob=held_out_flip_prob,
     )
     pairs = build_clean_oracle_pairs(
         pair_source_view(construction, train_pool),

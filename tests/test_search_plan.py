@@ -16,7 +16,6 @@ from pydantic import ValidationError
 
 from grit.config import SeedSets
 from grit.data.cmnist import (
-    CMNIST_ENVIRONMENT_SPECS,
     CmnistDatasetManifest,
     CmnistOraclePairManifest,
     CmnistPartitionManifest,
@@ -25,6 +24,7 @@ from grit.data.cmnist import (
     EnvironmentManifest,
     OraclePairRecord,
     SourcePartitionRecord,
+    cmnist_environment_specs,
 )
 from grit.data.waterbirds import (
     WATERBIRDS_GROUP_ORDER,
@@ -42,7 +42,12 @@ from grit.features.cmnist import (
 from grit.methods.projection import FittedLinearProjection, fit_linear_projection
 from grit.methods.training import TrainedLinearProbeRun
 from grit.results import CodeProvenance, EnvironmentProvenance
-from grit.schemas import CmnistSelector, SeedStage, canonical_digest_value
+from grit.schemas import (
+    CmnistSelector,
+    SeedStage,
+    canonical_digest_value,
+    held_out_validation_name,
+)
 from grit.search.cmnist import (
     CmnistTrainedTask,
     compute_cmnist_finalists,
@@ -467,6 +472,7 @@ def _write_manifest_only_cmnist_production(
     *,
     encoder: EncoderIdentity | None = None,
     invalid_official_train_universe: bool = False,
+    held_out_flip_prob: float = 0.5,
 ) -> tuple[Path, Path, Path]:
     train_e01_indices = tuple(range(25_000))
     if invalid_official_train_universe:
@@ -526,7 +532,7 @@ def _write_manifest_only_cmnist_production(
             ),
             record_digest=f"sha256:records:{spec.name}",
         )
-        for spec in CMNIST_ENVIRONMENT_SPECS
+        for spec in cmnist_environment_specs(held_out_flip_prob)
     )
     dataset = CmnistDatasetManifest(
         schema_version="grit.cmnist-dataset/v1",
@@ -588,7 +594,11 @@ def _write_manifest_only_cmnist_production(
         ("train_e02", "training", source_ids["train_e02"]),
         ("val_e01", "validation", source_ids["validation"]),
         ("val_e02", "validation", source_ids["validation"]),
-        ("val_e05", "validation", source_ids["validation"]),
+        (
+            held_out_validation_name(held_out_flip_prob),
+            "validation",
+            source_ids["validation"],
+        ),
         ("test_ood", "final_test", source_ids["test"]),
         (
             "oracle_pair_red",
@@ -692,8 +702,11 @@ def write_cmnist_production_config(
     *,
     output_root: Path,
     overrides: dict[str, object] | None = None,
+    held_out_flip_prob: float = 0.5,
 ) -> tuple[Path, tuple[Path, Path, Path]]:
-    artifact_paths = _write_manifest_only_cmnist_production(root / "prepared")
+    artifact_paths = _write_manifest_only_cmnist_production(
+        root / "prepared", held_out_flip_prob=held_out_flip_prob
+    )
     payload = _config().model_dump(mode="json")
     payload.update(overrides or {})
     payload["artifacts"] = {

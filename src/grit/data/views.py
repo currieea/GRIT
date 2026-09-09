@@ -7,7 +7,11 @@ from typing import TYPE_CHECKING, Literal
 from pydantic import Field, StrictStr, model_validator
 
 from grit.config import CmnistTestOracleExperimentConfig
-from grit.schemas import StrictBoundaryModel
+from grit.schemas import (
+    HELD_OUT_VALIDATION_NAMES,
+    IN_DOMAIN_VALIDATION_NAMES,
+    StrictBoundaryModel,
+)
 
 if TYPE_CHECKING:
     from grit.methods.checkpoints import RestorationReceipt
@@ -67,7 +71,7 @@ class ValidationSplitDescriptor(_SplitDescriptor):
     @model_validator(mode="after")
     def _validate_cmnist_role(self) -> ValidationSplitDescriptor:
         allowed = {
-            "cmnist": {"val_e01", "val_e02", "val_e05"},
+            "cmnist": {*IN_DOMAIN_VALIDATION_NAMES, *HELD_OUT_VALIDATION_NAMES},
             "rotated_mnist": {"val_r0", "val_r45", "val_r60"},
         }
         if (
@@ -118,9 +122,8 @@ class DiagnosticSplitDescriptor(_SplitDescriptor):
         protected_names = {
             "train_e01",
             "train_e02",
-            "val_e01",
-            "val_e02",
-            "val_e05",
+            *IN_DOMAIN_VALIDATION_NAMES,
+            *HELD_OUT_VALIDATION_NAMES,
             "test_ood",
         }
         protected_sources = {
@@ -364,10 +367,14 @@ def validate_cmnist_repeated_validation_views(
 
     if any(type(view) is not ValidationView for view in views):
         raise TypeError("repeated validation checks accept ValidationView values only")
-    expected_names = ("val_e01", "val_e02", "val_e05")
     names = tuple(view.descriptor.name for view in views)
-    if names != expected_names:
-        raise ValueError(f"validation views must be ordered as {expected_names!r}")
+    if names[:2] != IN_DOMAIN_VALIDATION_NAMES or (
+        names[2] not in HELD_OUT_VALIDATION_NAMES
+    ):
+        raise ValueError(
+            "validation views must be ordered as val_e01, val_e02, then the held-out "
+            f"rendering, not {names!r}"
+        )
     dataset_ids = {view.descriptor.dataset_id for view in views}
     if dataset_ids != {"cmnist"}:
         raise ValueError("CMNIST validation views must share dataset_id='cmnist'")

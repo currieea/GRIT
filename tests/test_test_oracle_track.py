@@ -150,6 +150,7 @@ def fake_cache(plan: SearchPlan) -> CmnistFeatureCache:
     manifest = _ManifestIdentity(
         plan.resolved_config.lineage.feature_cache_manifest_digest
     )
+    held_out = plan.resolved_config.lineage.held_out_validation_split
     pair_red = _table("oracle_pair_red", "pair_projection", 7)
     pair_green = FeatureTable(
         name="oracle_pair_green",
@@ -166,7 +167,7 @@ def fake_cache(plan: SearchPlan) -> CmnistFeatureCache:
         train_e02=_table("train_e02", "training", 2),
         val_e01=_table("val_e01", "validation", 3),
         val_e02=_table("val_e02", "validation", 4),
-        val_e05=_table("val_e05", "validation", 5),
+        val_held_out=_table(held_out, "validation", 5),
         _test_ood=_table("test_ood", "final_test", 6),
         oracle_pair_red=pair_red,
         oracle_pair_green=pair_green,

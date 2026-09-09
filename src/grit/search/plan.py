@@ -57,7 +57,6 @@ from grit.config import (
     SwadAlgorithmConfig,
 )
 from grit.data.cmnist import (
-    CMNIST_ENVIRONMENT_SPECS,
     CmnistDatasetManifest,
     CmnistOraclePairManifest,
 )
@@ -77,7 +76,13 @@ from grit.features.waterbirds import WaterbirdsFeatureCacheManifest
 from grit.methods.types import IMPLEMENTED_METHODS, METHOD_LABELS, MethodId
 from grit.paths import REPO_ROOT, expand_config_path
 from grit.results import CodeProvenance, EnvironmentProvenance
-from grit.schemas import CmnistSelector, StrictBoundaryModel, canonical_digest_value
+from grit.schemas import (
+    DEFAULT_HELD_OUT_VALIDATION_NAME,
+    CmnistSelector,
+    HeldOutValidationName,
+    StrictBoundaryModel,
+    canonical_digest_value,
+)
 from grit.search.waterbirds_contracts import WaterbirdsCandidateConfig
 
 NonEmptyStr: TypeAlias = Annotated[StrictStr, Field(min_length=1)]
@@ -431,11 +436,18 @@ class VerifiedInputArtifact(StrictBoundaryModel):
 
 
 class SearchLineage(StrictBoundaryModel):
+    """Input-artifact identity. The held-out validation name is omitted when it is
+    the protocol default so pre-existing plans and task IDs are unchanged."""
+
     dataset_manifest_digest: NonEmptyStr
     feature_cache_manifest_digest: NonEmptyStr
     pair_manifest_digest: NonEmptyStr
     normalization: Normalization
     adjusted_weight_spec_digest: NonEmptyStr | None
+    held_out_validation_split: HeldOutValidationName = Field(
+        default=DEFAULT_HELD_OUT_VALIDATION_NAME,
+        exclude_if=lambda value: value == DEFAULT_HELD_OUT_VALIDATION_NAME,
+    )
 
 
 class ResolvedProductionSearchConfig(StrictBoundaryModel):
@@ -1327,7 +1339,11 @@ def _candidate_scientific_digest(
                     test=10_000,
                 ),
                 training_split_names=("train_e01", "train_e02"),
-                validation_split_names=("val_e01", "val_e02", "val_e05"),
+                validation_split_names=(
+                    "val_e01",
+                    "val_e02",
+                    lineage.held_out_validation_split,
+                ),
                 final_test_split_name="test_ood",
             ),
             representation=FrozenFeatureConfig(
@@ -1558,6 +1574,9 @@ def _verify_cmnist_artifacts(
             pair_manifest_digest=pair_digest,
             normalization=config.normalization,
             adjusted_weight_spec_digest=None,
+            held_out_validation_split=cast(
+                HeldOutValidationName, dataset.held_out_validation_name
+            ),
         ),
         _artifact_records(
             dataset_path, dataset, feature_path, feature, pair_path, pairs
@@ -1729,7 +1748,7 @@ def _validate_cmnist_feature_manifest(
     }
     expected_environment_sources: dict[str, tuple[str, ...]] = {}
     for spec, environment in zip(
-        CMNIST_ENVIRONMENT_SPECS, dataset.environments, strict=True
+        dataset.environment_specs(), dataset.environments, strict=True
     ):
         partition = partitions[spec.source_partition_id]
         source_ids = tuple(

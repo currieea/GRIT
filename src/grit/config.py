@@ -16,7 +16,15 @@ from pydantic import (
     model_validator,
 )
 
-from grit.schemas import CmnistSelector, StrictBoundaryModel, canonical_digest_value
+from grit.schemas import (
+    HELD_OUT_VALIDATION_NAMES,
+    IN_DOMAIN_VALIDATION_NAMES,
+    CmnistSelector,
+    CmnistValidationName,
+    HeldOutValidationName,
+    StrictBoundaryModel,
+    canonical_digest_value,
+)
 
 NonEmptyStr: TypeAlias = Annotated[StrictStr, Field(min_length=1)]
 NonNegativeInt: TypeAlias = Annotated[StrictInt, Field(ge=0)]
@@ -52,18 +60,29 @@ class CmnistDatasetConfig(StrictBoundaryModel):
     label_flip_prob: Probability
     source_counts: CmnistSourceCounts
     training_split_names: tuple[Literal["train_e01", "train_e02"], ...]
-    validation_split_names: tuple[Literal["val_e01", "val_e02", "val_e05"], ...]
+    validation_split_names: tuple[CmnistValidationName, ...]
     final_test_split_name: Literal["test_ood"]
 
     @model_validator(mode="after")
     def _validate_required_splits(self) -> CmnistDatasetConfig:
         expected_training = ("train_e01", "train_e02")
-        expected_validation = ("val_e01", "val_e02", "val_e05")
         if self.training_split_names != expected_training:
             raise ValueError(f"training_split_names must be {expected_training!r}")
-        if self.validation_split_names != expected_validation:
-            raise ValueError(f"validation_split_names must be {expected_validation!r}")
+        names = self.validation_split_names
+        if (
+            len(names) != 3
+            or names[:2] != IN_DOMAIN_VALIDATION_NAMES
+            or names[2] not in HELD_OUT_VALIDATION_NAMES
+        ):
+            raise ValueError(
+                "validation_split_names must be val_e01, val_e02, and one held-out "
+                f"rendering from {HELD_OUT_VALIDATION_NAMES!r}"
+            )
         return self
+
+    @property
+    def held_out_validation_split(self) -> HeldOutValidationName:
+        return self.validation_split_names[2]  # pyright: ignore[reportReturnType]
 
 
 class RotatedMnistDatasetConfig(StrictBoundaryModel):
