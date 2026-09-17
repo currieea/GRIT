@@ -1,4 +1,4 @@
-"""Waterbirds paper table: every CMNIST method under both selector tracks."""
+"""Waterbirds validation-selected baselines and test-oracle isolation checks."""
 
 from __future__ import annotations
 
@@ -10,11 +10,14 @@ import torch
 
 from grit.config import (
     FishAlgorithmConfig,
+    FishrAlgorithmConfig,
     GroupDroAlgorithmConfig,
     IrmAlgorithmConfig,
     LisaAlgorithmConfig,
     MatchDgAlgorithmConfig,
+    RdmAlgorithmConfig,
     RexAlgorithmConfig,
+    SdAlgorithmConfig,
     SwadAlgorithmConfig,
 )
 from grit.features.waterbirds import (
@@ -76,6 +79,15 @@ FULL_GRID: dict[str, object] = {
     "swad_tolerance_ratios": [0.3],
     "matchdg_latent_dims": [8],
     "matchdg_penalty_weights": [1.0],
+    "sd_penalty_weights": [0.1],
+    "fishr_penalty_weights": [100.0],
+    # These checks train for one or two epochs, so the warm-up is shortened
+    # explicitly; production keeps the protocol's 1,500 updates.
+    "fishr_penalty_anneal_updates": 2,
+    "fishr_ema": 0.95,
+    "rdm_penalty_weights": [1.0],
+    "rdm_penalty_anneal_updates": 2,
+    "rdm_variance_weight": 0.004,
 }
 
 
@@ -306,12 +318,18 @@ def test_plan_binds_every_method_to_waterbirds_environments_and_groups(
             algorithm = resolved.algorithm
             if isinstance(
                 algorithm,
-                RexAlgorithmConfig | IrmAlgorithmConfig | FishAlgorithmConfig,
+                RexAlgorithmConfig
+                | IrmAlgorithmConfig
+                | FishAlgorithmConfig
+                | FishrAlgorithmConfig
+                | RdmAlgorithmConfig,
             ):
                 assert algorithm.environment_names == (
                     "background_land",
                     "background_water",
                 )
+            if isinstance(algorithm, SdAlgorithmConfig):
+                assert algorithm.sampling == "uniform_without_replacement"
             if isinstance(algorithm, GroupDroAlgorithmConfig | LisaAlgorithmConfig):
                 assert algorithm.group_definition == "target_background"
             if isinstance(algorithm, SwadAlgorithmConfig):
@@ -338,7 +356,7 @@ def test_plan_binds_every_method_to_waterbirds_environments_and_groups(
     ],
     ids=["ordinary", "test_oracle"],
 )
-def test_both_tracks_run_every_method_through_the_lifecycle(
+def test_validation_methods_and_test_oracle_subset_run_through_the_lifecycle(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     selectors: tuple[str, ...],
@@ -417,7 +435,7 @@ def test_both_tracks_run_every_method_through_the_lifecycle(
     assert (output_root / "summaries" / "waterbirds-paired-differences.json").is_file()
 
 
-def test_checked_waterbirds_configs_cover_every_method_under_both_tracks(
+def test_checked_waterbirds_configs_cover_every_method(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("PROJECT_SCRATCH", "/scratch")
@@ -434,6 +452,10 @@ def test_checked_waterbirds_configs_cover_every_method_under_both_tracks(
         assert config.output_root.endswith("-test-oracle") is oracle
         for method in config.search_space.methods:
             seen[(method, "test_oracle" if oracle else "ordinary")] = path.name
-    assert {key[0] for key in seen} == set(WATERBIRDS_METHODS)
-    assert {key[1] for key in seen} == {"ordinary", "test_oracle"}
-    assert len(set(seen.values())) == 16
+    ordinary = {key[0] for key in seen if key[1] == "ordinary"}
+    oracle_track = {key[0] for key in seen if key[1] == "test_oracle"}
+    assert ordinary == set(WATERBIRDS_METHODS)
+    # The checked-in SD, Fishr, and RDM configs select on validation; the protocol
+    # adds no diagnostic search files for them.
+    assert oracle_track == set(WATERBIRDS_METHODS) - {"sd", "fishr", "rdm"}
+    assert len(set(seen.values())) == 19

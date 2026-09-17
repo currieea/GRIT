@@ -9,10 +9,16 @@ from typing import Literal
 
 import torch
 
-from grit.config import LinearProbeTrainingConfig
+from grit.config import (
+    FishrAlgorithmConfig,
+    LinearProbeTrainingConfig,
+    RdmAlgorithmConfig,
+)
 from grit.methods.fishr import FishrGradientVarianceEma, fishr_penalty
 from grit.methods.invariance import (
+    environment_balanced_epoch_batch_count,
     environment_balanced_epoch_batches,
+    require_active_penalty_updates,
     spectral_decoupling_objective,
 )
 from grit.methods.lisa import (
@@ -31,6 +37,7 @@ from grit.methods.training import (
     random_epoch_batches,
     require_aligned_ids,
 )
+from grit.methods.types import METHOD_LABELS
 
 
 @dataclass(slots=True)
@@ -495,3 +502,44 @@ class RdmLinearProbeMethod(LinearProbeMethodDefaults):
         )
         self._schedule.end_update()
         return loss
+
+
+def bind_risk_matching_method(
+    algorithm: FishrAlgorithmConfig | RdmAlgorithmConfig,
+    *,
+    environment_ids: torch.Tensor,
+    environment_count: int,
+    training: LinearProbeTrainingConfig,
+) -> FishrLinearProbeMethod | RdmLinearProbeMethod:
+    """Bind Fishr or RDM for any dataset that supplies aligned environment IDs.
+
+    Only here are the training row counts, the batch size, and the epoch count all
+    known, so this is where a warm-up that would never activate is caught, before the
+    first update.
+    """
+
+    require_active_penalty_updates(
+        warm_up_updates=int(algorithm.penalty_anneal_updates),
+        updates_per_epoch=environment_balanced_epoch_batch_count(
+            environment_ids,
+            environment_count=environment_count,
+            batch_size=int(training.batch_size),
+        ),
+        max_epochs=int(training.max_epochs),
+        label=METHOD_LABELS[algorithm.kind],
+    )
+    if isinstance(algorithm, FishrAlgorithmConfig):
+        return FishrLinearProbeMethod(
+            environment_ids=environment_ids,
+            environment_count=environment_count,
+            penalty_weight=float(algorithm.penalty_weight),
+            penalty_anneal_updates=int(algorithm.penalty_anneal_updates),
+            ema_decay=float(algorithm.ema),
+        )
+    return RdmLinearProbeMethod(
+        environment_ids=environment_ids,
+        environment_count=environment_count,
+        penalty_weight=float(algorithm.penalty_weight),
+        penalty_anneal_updates=int(algorithm.penalty_anneal_updates),
+        variance_weight=float(algorithm.variance_weight),
+    )

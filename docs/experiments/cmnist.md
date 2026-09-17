@@ -5,10 +5,10 @@ SWAD, and oracle-pair MatchDG under validation-only selection and under the sepa
 labeled test-oracle track. Conditional and nearest-neighbor pair definitions are still
 open.**
 
-**SD, Fishr, and RDM are implemented and synthetically verified for CMNIST;
-real-data training/validation pilots remain outstanding.**
-Waterbirds and RotatedMNIST integration for these three is deferred; their search
-configurations reject them.
+**SD, Fishr, and RDM are implemented and synthetically verified for CMNIST and
+Waterbirds; real-data training/validation pilots remain outstanding for both.**
+RotatedMNIST integration for these three is deferred; its search configuration admits
+only ERM and GRIT.
 
 ## Purpose
 
@@ -748,27 +748,29 @@ RDM's summed Gaussian kernel is accumulated in the reference's order. Its object
 and gradients matched the reference on the checked float32 inputs; this is a numerical
 check, not a guarantee of bitwise identity across inputs or platforms.
 
-SD, Fishr, and RDM are CMNIST-only method IDs. The Waterbirds search configuration
-rejects them by name rather than planning candidates its runner cannot bind, and
-RotatedMNIST already admits only ERM and GRIT.
+SD, Fishr, and RDM are bound for CMNIST and Waterbirds. The dataset supplies only the
+environment IDs; the objectives, EMA, warm-up schedule, and optimizer reset are shared.
+RotatedMNIST still admits only ERM and GRIT, which its own search configuration
+enforces.
 
 ### Implementation acceptance
 
-The current scope is CMNIST, using shared objectives and the existing linear-probe
-trainer, method IDs, configuration, planner, dataset bindings, and summaries. Add
-only settings that affect training or prevent information leaks. Preserve compatibility
-with existing method configurations and candidate identities. Each method has an ordinary
-CMNIST search YAML in a separate output tree. Preserve the existing explicit
-test-oracle isolation when wiring the methods, but these initial configurations use
-validation selection only. Waterbirds integration, RotatedMNIST, and new diagnostic
-search files are deferred; the Waterbirds protocol specifies the future bindings.
+The current scope is CMNIST and Waterbirds, using shared objectives and the existing
+linear-probe trainer, method IDs, configuration, planner, dataset bindings, and
+summaries. Add only settings that affect training or prevent information leaks.
+Preserve compatibility with existing method configurations and candidate identities.
+Each method has an ordinary search YAML per dataset in a separate output tree. Preserve
+the existing explicit test-oracle isolation when wiring the methods, but these initial
+configurations use validation selection only. RotatedMNIST and new diagnostic search
+files are deferred; the [Waterbirds protocol](waterbirds.md#additional-baselines-sd-fishr-and-rdm)
+states that dataset's bindings.
 
 Required checks include independent autograd agreement for Fishr's analytic gradients
 and penalty derivatives; reference objective agreement; warm-up/reset and EMA behavior;
 RDM worst-environment ties and small-batch rejection; and zero-penalty agreement with
 the corresponding supervised objective under identical sampling and optimizer state.
 Zero penalties are numerical controls, not extra production candidates. Exercise the
-new methods through the CMNIST lifecycle with small synthetic caches, checking
+new methods through each dataset's lifecycle with small synthetic caches, checking
 validation selection, checkpoint restoration, and no pair/test access during training.
 Keep inference checkpoints as linear weights and bias: training-only EMA state must not
 change during evaluation. If using existing interrupted-run recovery, recreate all

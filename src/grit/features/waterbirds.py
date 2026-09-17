@@ -370,8 +370,8 @@ def _training_table(
 def _training_environment_ids(manifest: WaterbirdsFeatureCacheManifest) -> torch.Tensor:
     """Training backgrounds (0 land, 1 water) aligned with `training_table()` rows.
 
-    Method-definition access for V-REx, IRMv1, and Fish only; ERM's table stays
-    redacted.
+    Method-definition access for V-REx, IRMv1, Fish, Fishr, and RDM; the ordinary
+    training table used by ERM and SD stays redacted.
     """
 
     return torch.tensor(

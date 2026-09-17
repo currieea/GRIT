@@ -46,19 +46,14 @@ from grit.features.cmnist import (
 from grit.lifecycle import open_final_test, record_final_accuracy
 from grit.methods.baselines import (
     FishLinearProbeMethod,
-    FishrLinearProbeMethod,
     LisaLinearProbeMethod,
     MatchDgLinearProbeMethod,
-    RdmLinearProbeMethod,
     SpectralDecouplingLinearProbeMethod,
     SwadLinearProbeMethod,
+    bind_risk_matching_method,
 )
 from grit.methods.checkpoints import restore_checkpoint
 from grit.methods.groupdro import CMNIST_GROUP_COUNT, cmnist_group_ids
-from grit.methods.invariance import (
-    environment_balanced_epoch_batch_count,
-    require_active_penalty_updates,
-)
 from grit.methods.projection import FittedLinearProjection, fit_linear_projection
 from grit.methods.training import (
     GroupDroLinearProbeMethod,
@@ -74,7 +69,6 @@ from grit.methods.training import (
     persist_selected_linear_checkpoint,
     train_linear_probe,
 )
-from grit.methods.types import METHOD_LABELS
 from grit.results import (
     ArtifactReference,
     CmnistTestOracleDiagnosticResult,
@@ -749,33 +743,13 @@ def _cmnist_method(
                 environment_count=len(training_tables),
                 meta_step_size=float(algorithm.meta_step_size),
             )
-        # Only Fishr and RDM remain, and only here are the row counts and the epoch
-        # length known, so this is where a warm-up that would never activate is
-        # caught, before the first update.
-        require_active_penalty_updates(
-            warm_up_updates=int(algorithm.penalty_anneal_updates),
-            updates_per_epoch=environment_balanced_epoch_batch_count(
-                environment_ids,
-                environment_count=len(training_tables),
-                batch_size=int(runtime.config.training.batch_size),
-            ),
-            max_epochs=int(runtime.config.training.max_epochs),
-            label=METHOD_LABELS[algorithm.kind],
-        )
-        if isinstance(algorithm, FishrAlgorithmConfig):
-            return FishrLinearProbeMethod(
-                environment_ids=environment_ids,
-                environment_count=len(training_tables),
-                penalty_weight=float(algorithm.penalty_weight),
-                penalty_anneal_updates=int(algorithm.penalty_anneal_updates),
-                ema_decay=float(algorithm.ema),
-            )
-        return RdmLinearProbeMethod(
+        # Fishr and RDM are all that remain; the shared binder also applies the
+        # warm-up guard, which needs this candidate's epoch length.
+        return bind_risk_matching_method(
+            algorithm,
             environment_ids=environment_ids,
             environment_count=len(training_tables),
-            penalty_weight=float(algorithm.penalty_weight),
-            penalty_anneal_updates=int(algorithm.penalty_anneal_updates),
-            variance_weight=float(algorithm.variance_weight),
+            training=runtime.config.training,
         )
     if isinstance(algorithm, GroupDroAlgorithmConfig | LisaAlgorithmConfig):
         if algorithm.group_definition != "target_color":

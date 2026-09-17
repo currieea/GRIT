@@ -80,7 +80,6 @@ from grit.features.cmnist import CmnistFeatureCacheManifest, EncoderIdentity
 from grit.features.rotated_mnist import RotatedMnistFeatureCacheManifest
 from grit.features.waterbirds import WaterbirdsFeatureCacheManifest
 from grit.methods.types import (
-    CMNIST_ONLY_METHODS,
     IMPLEMENTED_METHODS,
     METHOD_LABELS,
     MethodId,
@@ -415,7 +414,6 @@ class WaterbirdsProductionSearchConfig(_CommonProductionSearchConfig):
 
     @model_validator(mode="after")
     def _validate_grid_fits(self) -> WaterbirdsProductionSearchConfig:
-        _reject_cmnist_only_methods(self.search_space, "Waterbirds")
         _require_runnable_grid(self.search_space, self.pair_count)
         return self
 
@@ -444,21 +442,6 @@ class RotatedMnistProductionSearchConfig(_CommonProductionSearchConfig):
 
 FEATURE_DIMENSION = 512
 FINALIST_COUNT = 3
-
-
-def _reject_cmnist_only_methods(space: SearchSpaceConfig, dataset: str) -> None:
-    """Refuse to plan methods this dataset's runner cannot bind to the trainer."""
-
-    deferred = tuple(
-        METHOD_LABELS[method]
-        for method in space.methods
-        if method in CMNIST_ONLY_METHODS
-    )
-    if deferred:
-        raise ValueError(
-            f"{', '.join(deferred)} are implemented for CMNIST only; {dataset} "
-            "integration is deferred"
-        )
 
 
 def _require_runnable_grid(space: SearchSpaceConfig, pair_count: int) -> None:

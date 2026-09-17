@@ -18,12 +18,15 @@ import torch
 
 from grit.config import (
     FishAlgorithmConfig,
+    FishrAlgorithmConfig,
     GroupDroAlgorithmConfig,
     IrmAlgorithmConfig,
     LinearProbeTrainingConfig,
     LisaAlgorithmConfig,
     MatchDgAlgorithmConfig,
+    RdmAlgorithmConfig,
     RexAlgorithmConfig,
+    SdAlgorithmConfig,
     SwadAlgorithmConfig,
 )
 from grit.data.waterbirds import (
@@ -47,7 +50,9 @@ from grit.methods.baselines import (
     FishLinearProbeMethod,
     LisaLinearProbeMethod,
     MatchDgLinearProbeMethod,
+    SpectralDecouplingLinearProbeMethod,
     SwadLinearProbeMethod,
+    bind_risk_matching_method,
 )
 from grit.methods.projection import FittedLinearProjection
 from grit.methods.training import (
@@ -618,14 +623,32 @@ def _waterbirds_method(
     """Bind one planned candidate's algorithm config to the shared trainer.
 
     Backgrounds and groups are read through the cache's method-definition accessors;
-    ERM, GRIT, SWAD, and MatchDG never touch them.
+    ERM, GRIT, SD, SWAD, and MatchDG never touch them.
     """
 
     algorithm = runtime.config.algorithm
+    if isinstance(algorithm, SdAlgorithmConfig):
+        return SpectralDecouplingLinearProbeMethod(
+            penalty_weight=float(algorithm.penalty_weight)
+        )
     if isinstance(
-        algorithm, RexAlgorithmConfig | IrmAlgorithmConfig | FishAlgorithmConfig
+        algorithm,
+        RexAlgorithmConfig
+        | IrmAlgorithmConfig
+        | FishAlgorithmConfig
+        | FishrAlgorithmConfig
+        | RdmAlgorithmConfig,
     ):
         environment_ids = cache.training_environment_ids()
+        if isinstance(algorithm, FishrAlgorithmConfig | RdmAlgorithmConfig):
+            # The shared binder also applies the warm-up guard, which needs this
+            # candidate's actual epoch length.
+            return bind_risk_matching_method(
+                algorithm,
+                environment_ids=environment_ids,
+                environment_count=WATERBIRDS_ENVIRONMENT_COUNT,
+                training=runtime.config.training,
+            )
         if isinstance(algorithm, RexAlgorithmConfig):
             return RexLinearProbeMethod(
                 environment_ids=environment_ids,

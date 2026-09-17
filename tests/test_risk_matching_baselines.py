@@ -1,7 +1,8 @@
-"""SD, Fishr, and RDM: objectives, warm-up, planning, and the CMNIST lifecycle."""
+"""SD, Fishr, and RDM: objectives, warm-up, planning, and the dataset lifecycles."""
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
@@ -37,10 +38,12 @@ from grit.methods.training import (
     TrainedLinearProbeRun,
     train_linear_probe,
 )
-from grit.methods.types import CMNIST_ONLY_METHODS
 from grit.schemas import CmnistSelector, SeedStage
 from grit.search.cmnist import materialize_cmnist_candidate_config
-from grit.search.outputs import CmnistProductionSummary
+from grit.search.outputs import (
+    CmnistProductionSummary,
+    WaterbirdsProductionSummary,
+)
 from grit.search.plan import (
     APPROVED_FISHR_PENALTY_WEIGHTS,
     APPROVED_RDM_PENALTY_WEIGHTS,
@@ -57,6 +60,13 @@ from grit.search.run import (
     production_search_status,
     run_production_search,
 )
+from grit.search.scheduler import make_search_task
+from grit.search.waterbirds import (
+    _RuntimeCandidate,  # pyright: ignore[reportPrivateUsage]
+    _waterbirds_method,  # pyright: ignore[reportPrivateUsage]
+    materialize_waterbirds_candidate_config,
+)
+from grit.search.waterbirds_contracts import WaterbirdsRunResult
 from tests.test_baselines import (
     _config,  # pyright: ignore[reportPrivateUsage]
     _environment_ids,  # pyright: ignore[reportPrivateUsage]
@@ -64,6 +74,7 @@ from tests.test_baselines import (
 )
 from tests.test_search_plan import write_cmnist_production_config
 from tests.test_test_oracle_track import fake_cache
+from tests.test_waterbirds_paper_table import fake_cache as waterbirds_fake_cache
 from tests.test_waterbirds_paper_table import write_waterbirds_production_config
 
 FISHR_EMA_DECAY = 0.95
@@ -514,39 +525,217 @@ def test_new_baseline_grids_plan_and_materialize(
         plan_production_search(other[0])
 
 
-def test_waterbirds_refuses_the_cmnist_only_methods(tmp_path: Path) -> None:
-    config_path, _ = write_waterbirds_production_config(
+WATERBIRDS_SPACES: dict[str, dict[str, object]] = {
+    "sd": {"sd_penalty_weights": [0.1]},
+    "fishr": {
+        "fishr_penalty_weights": [100.0],
+        # Waterbirds runs 28 updates per epoch, so a short check must shorten the
+        # warm-up explicitly; production keeps the protocol's 1,500 updates.
+        "fishr_penalty_anneal_updates": 2,
+        "fishr_ema": FISHR_EMA,
+    },
+    "rdm": {
+        "rdm_penalty_weights": [1.0],
+        "rdm_penalty_anneal_updates": 2,
+        "rdm_variance_weight": RDM_VARIANCE_WEIGHT,
+    },
+}
+
+
+def _waterbirds_plan(
+    root: Path, methods: tuple[str, ...], *, max_epochs: int = 1
+) -> tuple[SearchPlan, tuple[Path, Path, Path]]:
+    space: dict[str, object] = {
+        "methods": list(methods),
+        "learning_rates": [0.01],
+        "weight_decays": [0.0, 0.0001, 0.001],
+    }
+    for method in methods:
+        space.update(WATERBIRDS_SPACES[method])
+    config_path, artifacts = write_waterbirds_production_config(
+        root,
+        output_root=root / "output",
+        search_space=space,
+        max_epochs=max_epochs,
+    )
+    return plan_production_search(config_path), artifacts
+
+
+@pytest.mark.parametrize("method", ["sd", "fishr", "rdm"])
+def test_waterbirds_binds_the_new_baselines_without_pair_information(
+    tmp_path: Path, method: Literal["sd", "fishr", "rdm"]
+) -> None:
+    """Background environments bind; oracle pairs and the projection stay out."""
+
+    plan, artifacts = _waterbirds_plan(tmp_path, (method,))
+    candidate = plan.candidates[0]
+    resolved = materialize_waterbirds_candidate_config(plan, candidate, None)
+    algorithm = resolved.algorithm
+    assert algorithm.kind == method
+    assert resolved.selector == "waterbirds_validation_worst_group"
+    assert resolved.pair_manifest_digest is None, (
+        "these methods receive no oracle pair identities"
+    )
+    assert resolved.projection_diagnostics_digest is None
+    assert resolved.projection_rank is None
+    assert resolved.scientific_config_digest() == candidate.scientific_config_digest
+    if isinstance(algorithm, SdAlgorithmConfig):
+        assert algorithm.sampling == "uniform_without_replacement"
+        assert not hasattr(algorithm, "environment_names"), (
+            "SD trains without training background labels"
+        )
+    else:
+        assert isinstance(algorithm, FishrAlgorithmConfig | RdmAlgorithmConfig)
+        assert algorithm.environment_names == ("background_land", "background_water")
+
+    cache = waterbirds_fake_cache(plan, artifacts[1])
+    runtime = _RuntimeCandidate(candidate, resolved, None, None)
+    seeds = plan.seeds.stages
+    task = make_search_task(plan, candidate, SeedStage.TUNING, seeds.tuning[0])
+    bound = _waterbirds_method(cache, runtime, task)
+    assert bound.method_id == method
+    assert bound.projection is None and bound.projection_rank is None
+    environment_ids = cache.training_environment_ids()
+    # The canonical training set: 3,554 land-background and 1,241 water-background
+    # records, which the balanced sampler turns into 28 updates per epoch.
+    assert int((environment_ids == 0).sum()) == 3_554
+    assert int((environment_ids == 1).sum()) == 1_241
+    if isinstance(bound, SpectralDecouplingLinearProbeMethod):
+        assert not hasattr(bound, "environment_ids")
+    else:
+        assert isinstance(bound, FishrLinearProbeMethod | RdmLinearProbeMethod)
+        assert torch.equal(bound.environment_ids, environment_ids)
+        assert bound.environment_count == 2
+        batches = bound.epoch_batches(
+            row_count=int(environment_ids.numel()),
+            batch_size=256,
+            generator=torch.Generator().manual_seed(0),
+        )
+        assert len(batches) == 28
+        # RDM's sample variance needs at least two rows per environment, and the
+        # remainder batch carries 98 of each.
+        assert [int(len(batch)) for batch in batches][-1] == 196
+        for rows in batches:
+            environments = environment_ids[rows]
+            assert int((environments == 0).sum()) == int((environments == 1).sum()) >= 2
+
+
+@pytest.mark.parametrize("method", ["fishr", "rdm"])
+def test_waterbirds_rejects_a_warm_up_that_would_never_activate(
+    tmp_path: Path, method: Literal["fishr", "rdm"]
+) -> None:
+    """The protocol's 1,500-update warm-up outlasts a one-epoch Waterbirds run."""
+
+    space = dict(WATERBIRDS_SPACES[method])
+    space[f"{method}_penalty_anneal_updates"] = FISHR_PENALTY_ANNEAL_UPDATES
+    config_path, artifacts = write_waterbirds_production_config(
         tmp_path,
         output_root=tmp_path / "output",
         search_space={
-            "methods": ["erm", "sd"],
+            "methods": [method],
             "learning_rates": [0.01],
             "weight_decays": [0.0, 0.0001, 0.001],
-            "sd_penalty_weights": [0.1],
+            **space,
         },
+        max_epochs=1,
     )
-    with pytest.raises(ValidationError, match="CMNIST only"):
-        load_production_search_config(config_path)
+    plan = plan_production_search(config_path)
+    candidate = plan.candidates[0]
+    resolved = materialize_waterbirds_candidate_config(plan, candidate, None)
+    runtime = _RuntimeCandidate(candidate, resolved, None, None)
+    seeds = plan.seeds.stages
+    task = make_search_task(plan, candidate, SeedStage.TUNING, seeds.tuning[0])
+    cache = waterbirds_fake_cache(plan, artifacts[1])
+    with pytest.raises(ValueError, match="leaves no penalized update"):
+        _waterbirds_method(cache, runtime, task)
 
 
+def test_new_baselines_run_the_waterbirds_lifecycle_on_fake_features(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output_root = tmp_path / "output"
+    methods = ("sd", "fishr", "rdm")
+    space: dict[str, object] = {
+        "methods": list(methods),
+        "learning_rates": [0.01],
+        "weight_decays": [0.0, 0.0001, 0.001],
+    }
+    for method in methods:
+        space.update(WATERBIRDS_SPACES[method])
+    config_path, artifacts = write_waterbirds_production_config(
+        tmp_path, output_root=output_root, search_space=space, max_epochs=1
+    )
+    plan = plan_production_search(config_path)
+    cache = waterbirds_fake_cache(plan, artifacts[1])
+
+    def fake_cache_loader(_plan: SearchPlan, *, tuning_only: bool = False):
+        return cache
+
+    monkeypatch.setattr("grit.search.waterbirds._load_cache", fake_cache_loader)
+    summary = run_production_search(config_path)
+    assert isinstance(summary, WaterbirdsProductionSummary)
+    assert summary.selector == "waterbirds_validation_worst_group"
+    assert summary.test_oracle is False
+    assert tuple(item.method_id for item in summary.methods) == methods
+    final_seeds = plan.seeds.stages.final
+    for item in summary.methods:
+        assert tuple(seed for seed, _ in item.worst_group_by_seed) == final_seeds
+        assert item.adjusted_average_summary.seed_count == len(final_seeds)
+    assert production_search_status(config_path).phase == "complete"
+
+    final_paths = sorted(output_root.rglob("final-result.json"))
+    assert len(final_paths) == len(methods) * len(final_seeds)
+    for path in final_paths:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        assert "diagnostic_metrics" not in payload, (
+            "ordinary final results must not contain test-oracle diagnostics"
+        )
+        result = WaterbirdsRunResult.model_validate_json(
+            path.read_text(encoding="utf-8")
+        )
+        assert result.candidate_selection.selector == (
+            "waterbirds_validation_worst_group"
+        )
+        assert result.resolved_config.pair_manifest_digest is None
+        assert result.restoration.checkpoint == result.checkpoint_selection.checkpoint
+    for method in methods:
+        assert sorted(
+            path.name for path in (output_root / "selection" / method).iterdir()
+        ) == ["tuning-finalists.json", "winner.json"]
+    checkpoints = tuple(output_root.rglob("selected-checkpoint/manifest.json"))
+    assert len(checkpoints) == len(methods) * len(final_seeds)
+    store = PersistedLinearCheckpointStore(checkpoints[0].parent)
+    restored = store.load(store.store_id.removeprefix("linear-checkpoint:"))
+    assert restored.state.weight.shape == (2, 512)
+
+
+APPROVED_PENALTY_WEIGHTS = {
+    "sd": APPROVED_SD_PENALTY_WEIGHTS,
+    "fishr": APPROVED_FISHR_PENALTY_WEIGHTS,
+    "rdm": APPROVED_RDM_PENALTY_WEIGHTS,
+}
+
+
+@pytest.mark.parametrize(
+    ("dataset", "selectors"),
+    [
+        ("cmnist", ("primary_robust", "secondary_source")),
+        ("waterbirds", ("waterbirds_validation_worst_group",)),
+    ],
+)
 def test_checked_configs_use_the_documented_grids_and_separate_output_trees(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, dataset: str, selectors: tuple[str, ...]
 ) -> None:
     monkeypatch.setenv("PROJECT_SCRATCH", "/scratch")
-    root = Path(__file__).resolve().parents[1] / "configs/cmnist"
-    expected = {
-        "sd": (APPROVED_SD_PENALTY_WEIGHTS, "/scratch/outputs/cmnist-sd"),
-        "fishr": (APPROVED_FISHR_PENALTY_WEIGHTS, "/scratch/outputs/cmnist-fishr"),
-        "rdm": (APPROVED_RDM_PENALTY_WEIGHTS, "/scratch/outputs/cmnist-rdm"),
-    }
+    root = Path(__file__).resolve().parents[1] / "configs" / dataset
     roots: set[str] = set()
-    for method, (weights, output_root) in expected.items():
+    for method, weights in APPROVED_PENALTY_WEIGHTS.items():
         config = load_production_search_config(root / f"{method}-search.yaml")
         space = config.search_space
         assert space.methods == (method,)
         assert getattr(space, f"{method}_penalty_weights") == weights
-        assert config.output_root == output_root
-        assert config.selectors == ("primary_robust", "secondary_source"), (
+        assert config.output_root == f"/scratch/outputs/{dataset}-{method}"
+        assert config.selectors == selectors, (
             "the initial configurations select on validation only"
         )
         roots.add(config.output_root)
@@ -559,8 +748,8 @@ def test_checked_configs_use_the_documented_grids_and_separate_output_trees(
     assert rdm.rdm_variance_weight == RDM_VARIANCE_WEIGHT
     assert not any(
         (root / f"{method}-search-test-oracle.yaml").exists()
-        for method in CMNIST_ONLY_METHODS
-    ), "no diagnostic search files are added with this change"
+        for method in APPROVED_PENALTY_WEIGHTS
+    ), "no diagnostic search files are added for these methods"
 
 
 def test_new_baselines_run_the_cmnist_lifecycle_on_fake_features(

@@ -95,11 +95,12 @@ tracks have their own configs; see `configs/README.md`. Selection uses validatio
 unless the config and output are explicitly labeled `test-oracle`; see
 `docs/experiments/cmnist.md`.
 
-SD, Fishr, and RDM are also implemented for CMNIST, with separate validation-search
-configs under `configs/cmnist/`. They reuse the prepared features and have synthetic
-verification; real-data pilots remain outstanding. Fishr/RDM runs must extend beyond
-their configured warm-up. These methods are not yet integrated with Waterbirds or
-RotatedMNIST. See the [config index](configs/README.md) and
+SD, Fishr, and RDM are also implemented for CMNIST and Waterbirds, with separate
+validation-search configs under `configs/cmnist/` and `configs/waterbirds/`. They reuse
+the already prepared features and have synthetic verification; real-data pilots remain
+outstanding for both datasets. Fishr/RDM runs must extend beyond their configured
+warm-up. RotatedMNIST still runs ERM and GRIT only. See the
+[config index](configs/README.md) and
 [method definitions](docs/experiments/cmnist.md#additional-baselines-sd-fishr-and-rdm).
 
 ## RotatedMNIST

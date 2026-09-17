@@ -20,10 +20,12 @@ from grit.config import (
     PAIR_CONSUMING_ALGORITHMS,
     AlgorithmConfig,
     FishAlgorithmConfig,
+    FishrAlgorithmConfig,
     GroupDroAlgorithmConfig,
     IrmAlgorithmConfig,
     LinearProbeTrainingConfig,
     LisaAlgorithmConfig,
+    RdmAlgorithmConfig,
     RexAlgorithmConfig,
     SeedSets,
     SwadAlgorithmConfig,
@@ -103,7 +105,12 @@ class WaterbirdsCandidateConfig(StrictBoundaryModel):
         ):
             raise ValueError("Waterbirds group methods use label/background groups")
         if isinstance(
-            algorithm, RexAlgorithmConfig | IrmAlgorithmConfig | FishAlgorithmConfig
+            algorithm,
+            RexAlgorithmConfig
+            | IrmAlgorithmConfig
+            | FishAlgorithmConfig
+            | FishrAlgorithmConfig
+            | RdmAlgorithmConfig,
         ) and algorithm.environment_names != ("background_land", "background_water"):
             raise ValueError("Waterbirds invariant methods use background environments")
         if isinstance(

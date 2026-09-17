@@ -8,10 +8,9 @@ Waterbirds artifacts and searches on Jujube, with results still under audit. Thi
 protocol does not certify server completion; check the exact config's canonical output
 using `scripts/search_status.py`.
 
-**Next implementation: SD, Fishr, and RDM are specified in this protocol and the
-shared CMNIST definitions, and are implemented for CMNIST only. Waterbirds does not
-run them yet: the Waterbirds search configuration rejects those method IDs by name,
-so the bindings below are a specification, not working code.**
+**SD, Fishr, and RDM are now bound for Waterbirds under the ordinary validation
+track, with synthetic verification only; real-data training/validation pilots on the
+ECN servers remain outstanding before their initial grids are frozen for production.**
 
 ## Purpose
 
@@ -38,18 +37,19 @@ The first complete Waterbirds study includes:
   Waterbirds-CF, each defined exactly as in the [ColoredMNIST protocol](cmnist.md) with
   the Waterbirds bindings stated below;
 - SD, Fishr, and RDM on the same frozen Waterbirds-CF features, as specified under
-  [Additional baselines](#additional-baselines-sd-fishr-and-rdm), pending implementation;
+  [Additional baselines](#additional-baselines-sd-fishr-and-rdm);
 - GRIT with oracle, conditional, and nearest-neighbor pairs on Waterbirds-CF; and
 - a separately reported rank-zero GRIT identity-projection sanity control.
 
-The existing methods run under two selection tracks: the ordinary validation worst-group
+The original paper-table baselines have configurations for two selection tracks:
+the ordinary validation worst-group
 selector, and the test-oracle track that reproduces the paper's test-selected protocol as
 a separately labeled envelope (see "Test-oracle validation track"). Estimated pairs
 (conditional and nearest) remain open; the implemented table uses the 240 clean oracle
 pairs for GRIT and the MatchDG-style row.
-When implemented for Waterbirds, the initial SD, Fishr, and RDM search files will use
-ordinary validation selection only; their integration must retain the existing isolation
-of explicit test-oracle execution.
+The SD, Fishr, and RDM search files use ordinary validation selection only; the
+existing isolation of explicit test-oracle execution is unchanged, and no diagnostic
+search file is checked in for them.
 
 The initial study does not include raw-image training, group-blind selection, or
 snow/desert backgrounds.
@@ -471,6 +471,9 @@ and selectors are those of this document.
 Use the objectives, initial grids, warm-up/reset conventions, reference sources, and
 implementation acceptance checks in the
 [shared CMNIST specification](cmnist.md#additional-baselines-sd-fishr-and-rdm).
+The method classes, warm-up schedule, optimizer reset, and warm-up guard are the shared
+implementation; Waterbirds supplies only the background environment IDs and the
+training table.
 All three methods receive the same 4,795 supervised Waterbirds-CF records as ERM,
 including the existing generated minority endpoints, but no oracle pairing relation.
 They require no additional image construction or feature extraction.
@@ -483,7 +486,11 @@ environment, so the RDM sample-variance estimator is defined. There are 28 updat
 epoch and 2,800 over 100 epochs. Their initial warm-up ends at update 1500, approximately
 54% through training; pilots must cross that boundary before judging behavior. Each
 method uses validation worst-group checkpoint and configuration selection and the same
-3 tuning, 2 confirmation, and 10 final seeds as existing methods.
+3 tuning, 2 confirmation, and 10 final seeds as existing methods. The warm-up guard
+derives the epoch length from the actual training row counts, the configured batch
+size, and the epoch count, and rejects a run before its first update if no penalized
+update would remain; the counts above are the expected production values, not
+constants in the guard.
 
 These background-defined environments have very different bird-label proportions:
 land backgrounds contain 3,498 landbirds and 56 waterbirds; water backgrounds contain
@@ -583,11 +590,12 @@ penalties `10` through `10000` with the anneal point fixed at update 100; IRMv1 
 adding a method never reruns another, while the shared final seeds keep paired
 comparisons valid across trees.
 
-For the pending SD/Fishr/RDM addition, use 80/64/64 candidates respectively, as defined
-in the shared specification. Add `configs/waterbirds/{sd,fishr,rdm}-search.yaml` with
-separate output roots and ordinary validation selection. Run bounded training/validation
-pilots before freezing the full search; report actual candidate counts and runtime.
-The initial addition does not require new test-oracle configuration files.
+SD, Fishr, and RDM emit 80, 64, and 64 candidates respectively, as defined in the
+shared specification. `configs/waterbirds/{sd,fishr,rdm}-search.yaml` carry those grids
+with separate output roots and ordinary validation selection; there are no test-oracle
+configuration files for them. Run bounded training/validation pilots that cross the
+warm-up boundary before freezing the full search, and report actual candidate counts
+and runtime.
 
 Milestone 6A implements this ERM/oracle-GRIT grid over explicit prepared manifests. Strict
 planning accepts only the production 4,795/1,199/5,794 Waterbirds-CF inventory, exact
@@ -823,4 +831,6 @@ are not valid ordinary selections and numerical parity is not an exit requiremen
       lifecycle implemented and hermetically tested
 - [ ] Conditional and nearest-pair details approved
 - [x] V-REx, IRMv1, Fish, LISA, SWAD, and MatchDG search spaces specified
-- [ ] SD, Fishr, and RDM Waterbirds integration and real-data pilots completed
+- [x] SD, Fishr, and RDM Waterbirds bindings, configurations, and synthetic
+      verification implemented
+- [ ] SD, Fishr, and RDM real-data Waterbirds pilots run and initial grids frozen

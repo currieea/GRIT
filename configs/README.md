@@ -10,18 +10,22 @@
   `waterbirds/{groupdro,rex,irm,fish,lisa,swad,matchdg}-search.yaml`: the baselines,
   each in its own output tree so adding one never reruns another. The Waterbirds files
   need the prepared `waterbirds-none` artifacts from `scripts/prepare_waterbirds.py`.
-- `cmnist/{sd,fishr,rdm}-search.yaml`: the additional CMNIST-only baselines, with
-  80, 64, and 64 candidates respectively and ordinary validation selection. They reuse
-  `cmnist-none` features; no additional data preparation is needed. Fishr and RDM use
-  a 1,500-update warm-up; a shortened run must leave at least one update after warm-up
-  or it is rejected when the method binds to the cache. Real-data validation pilots
-  are still required before freezing these initial grids for production searches.
+- `cmnist/{sd,fishr,rdm}-search.yaml` and `waterbirds/{sd,fishr,rdm}-search.yaml`: the
+  additional baselines, with 80, 64, and 64 candidates respectively and ordinary
+  validation selection. They reuse the already prepared `cmnist-none` and
+  `waterbirds-none` features; no additional data preparation is needed. SD uses ERM
+  sampling and no background labels; Fishr and RDM use the balanced sampler over the
+  two training environments (`train_e01`/`train_e02` for CMNIST, land/water backgrounds
+  for Waterbirds). Fishr and RDM use a 1,500-update warm-up; a shortened run must leave
+  at least one update after warm-up or it is rejected when the method binds to the
+  cache. Real-data validation pilots are still required on both datasets before
+  freezing these initial grids for production searches.
 - `cmnist/*-test-oracle.yaml` and `waterbirds/*-test-oracle.yaml`: the same grids and
   seeds selected on the test split (`selectors: [test_oracle]`), the paper's "oracle
   validation" columns. Each writes a separate `*-test-oracle` output tree; every result
   and summary in it is labeled `test_oracle` and must be reported under that heading,
-  never beside the ordinary numbers as if validation-selected. SD, Fishr, and RDM do
-  not have checked-in test-oracle configurations.
+  never beside the ordinary numbers as if validation-selected. SD, Fishr, and RDM have
+  no checked-in test-oracle configurations on either dataset.
 - `cmnist/smoke.yaml` and `waterbirds/smoke.yaml`: hermetic end-to-end checks with a
   fake encoder, run by `scripts/smoke.py`. Never report their numbers.
 
