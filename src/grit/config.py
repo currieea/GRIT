@@ -259,6 +259,35 @@ class MatchDgAlgorithmConfig(StrictBoundaryModel):
     pair_penalty: Literal["mean_squared_featurizer_difference"]
 
 
+class SdAlgorithmConfig(StrictBoundaryModel):
+    """Spectral Decoupling: no environments, no warm-up, ERM sampling."""
+
+    kind: Literal["sd"]
+    penalty_weight: Annotated[StrictFloat, Field(gt=0.0)]
+    penalty: Literal["mean_squared_logits"]
+    sampling: Literal["uniform_without_replacement"]
+
+
+class FishrAlgorithmConfig(StrictBoundaryModel):
+    kind: Literal["fishr"]
+    environment_names: EnvironmentNames
+    penalty_weight: Annotated[StrictFloat, Field(gt=0.0)]
+    penalty_anneal_updates: NonNegativeInt
+    ema: Annotated[StrictFloat, Field(ge=0.0, lt=1.0)]
+    penalty: Literal["classifier_gradient_variance_distance"]
+    sampling: Literal["environment_balanced_without_replacement"]
+
+
+class RdmAlgorithmConfig(StrictBoundaryModel):
+    kind: Literal["rdm"]
+    environment_names: EnvironmentNames
+    penalty_weight: Annotated[StrictFloat, Field(gt=0.0)]
+    penalty_anneal_updates: NonNegativeInt
+    variance_weight: Annotated[StrictFloat, Field(ge=0.0)]
+    penalty: Literal["worst_environment_versus_pooled_risk_mmd"]
+    sampling: Literal["environment_balanced_without_replacement"]
+
+
 AlgorithmConfig: TypeAlias = Annotated[
     ErmAlgorithmConfig
     | GritAlgorithmConfig
@@ -268,7 +297,10 @@ AlgorithmConfig: TypeAlias = Annotated[
     | FishAlgorithmConfig
     | LisaAlgorithmConfig
     | SwadAlgorithmConfig
-    | MatchDgAlgorithmConfig,
+    | MatchDgAlgorithmConfig
+    | SdAlgorithmConfig
+    | FishrAlgorithmConfig
+    | RdmAlgorithmConfig,
     Field(discriminator="kind"),
 ]
 
@@ -401,7 +433,11 @@ class _CommonCmnistExperimentConfig(StrictBoundaryModel):
                 raise ValueError("CMNIST group methods require target-color groups")
             if isinstance(
                 self.algorithm,
-                RexAlgorithmConfig | IrmAlgorithmConfig | FishAlgorithmConfig,
+                RexAlgorithmConfig
+                | IrmAlgorithmConfig
+                | FishAlgorithmConfig
+                | FishrAlgorithmConfig
+                | RdmAlgorithmConfig,
             ) and self.algorithm.environment_names != ("train_e01", "train_e02"):
                 raise ValueError("CMNIST invariant methods use the training sources")
             if isinstance(

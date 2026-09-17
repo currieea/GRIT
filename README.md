@@ -95,6 +95,13 @@ tracks have their own configs; see `configs/README.md`. Selection uses validatio
 unless the config and output are explicitly labeled `test-oracle`; see
 `docs/experiments/cmnist.md`.
 
+SD, Fishr, and RDM are also implemented for CMNIST, with separate validation-search
+configs under `configs/cmnist/`. They reuse the prepared features and have synthetic
+verification; real-data pilots remain outstanding. Fishr/RDM runs must extend beyond
+their configured warm-up. These methods are not yet integrated with Waterbirds or
+RotatedMNIST. See the [config index](configs/README.md) and
+[method definitions](docs/experiments/cmnist.md#additional-baselines-sd-fishr-and-rdm).
+
 ## RotatedMNIST
 
 The first RotatedMNIST slice uses disjoint MNIST source partitions, 0- and 45-degree

@@ -37,6 +37,7 @@ from grit.config import (
     EnvironmentNames,
     ErmAlgorithmConfig,
     FishAlgorithmConfig,
+    FishrAlgorithmConfig,
     FrozenFeatureConfig,
     GritAlgorithmConfig,
     GroupDefinition,
@@ -49,12 +50,14 @@ from grit.config import (
     OraclePairsConfig,
     OrdinaryExperimentConfig,
     OrdinarySelectionConfig,
+    RdmAlgorithmConfig,
     RexAlgorithmConfig,
     RotatedMnistArtifactLineageConfig,
     RotatedMnistDatasetConfig,
     RotatedMnistExperimentConfig,
     RotatedMnistOraclePairsConfig,
     RotatedMnistSourceCounts,
+    SdAlgorithmConfig,
     SeedSets,
     SwadAlgorithmConfig,
     SwadLossSplitNames,
@@ -76,7 +79,12 @@ from grit.data.waterbirds_pairs import WaterbirdsOraclePairManifest
 from grit.features.cmnist import CmnistFeatureCacheManifest, EncoderIdentity
 from grit.features.rotated_mnist import RotatedMnistFeatureCacheManifest
 from grit.features.waterbirds import WaterbirdsFeatureCacheManifest
-from grit.methods.types import IMPLEMENTED_METHODS, METHOD_LABELS, MethodId
+from grit.methods.types import (
+    CMNIST_ONLY_METHODS,
+    IMPLEMENTED_METHODS,
+    METHOD_LABELS,
+    MethodId,
+)
 from grit.paths import REPO_ROOT, expand_config_path
 from grit.results import CodeProvenance, EnvironmentProvenance
 from grit.schemas import (
@@ -126,6 +134,14 @@ APPROVED_SWAD_TOLERANCE_RATIOS: tuple[float, ...] = (0.1, 0.2, 0.3, 0.4, 0.5)
 APPROVED_MATCHDG_LATENT_DIMS: tuple[int, ...] = (8, 16, 32)
 APPROVED_MATCHDG_PENALTY_WEIGHTS: tuple[float, ...] = (0.1, 1.0, 10.0, 100.0)
 SWAD_SEGMENT_UPDATES = 100
+APPROVED_SD_PENALTY_WEIGHTS: tuple[float, ...] = (1e-5, 1e-4, 1e-3, 1e-2, 1e-1)
+APPROVED_FISHR_PENALTY_WEIGHTS: tuple[float, ...] = (10.0, 100.0, 1_000.0, 10_000.0)
+APPROVED_RDM_PENALTY_WEIGHTS: tuple[float, ...] = (0.1, 1.0, 5.0, 10.0)
+# The reference's default update thresholds, not a fraction of this study's training.
+FISHR_PENALTY_ANNEAL_UPDATES = 1500
+RDM_PENALTY_ANNEAL_UPDATES = 1500
+FISHR_EMA = 0.95
+RDM_VARIANCE_WEIGHT = 0.004
 
 
 class _YamlModule(Protocol):
@@ -186,6 +202,27 @@ class SearchSpaceConfig(StrictBoundaryModel):
     matchdg_penalty_weights: tuple[StrictFloat, ...] = Field(
         default=(), exclude_if=lambda values: not values
     )
+    sd_penalty_weights: tuple[StrictFloat, ...] = Field(
+        default=(), exclude_if=lambda values: not values
+    )
+    fishr_penalty_weights: tuple[StrictFloat, ...] = Field(
+        default=(), exclude_if=lambda values: not values
+    )
+    fishr_penalty_anneal_updates: Annotated[StrictInt, Field(ge=0)] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    fishr_ema: Annotated[StrictFloat, Field(ge=0.0, lt=1.0)] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    rdm_penalty_weights: tuple[StrictFloat, ...] = Field(
+        default=(), exclude_if=lambda values: not values
+    )
+    rdm_penalty_anneal_updates: Annotated[StrictInt, Field(ge=0)] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    rdm_variance_weight: Annotated[StrictFloat, Field(ge=0.0)] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @model_validator(mode="after")
     def _validate_space(self) -> SearchSpaceConfig:
@@ -205,6 +242,9 @@ class SearchSpaceConfig(StrictBoundaryModel):
             ("swad_tolerance_ratios", self.swad_tolerance_ratios),
             ("matchdg_latent_dims", self.matchdg_latent_dims),
             ("matchdg_penalty_weights", self.matchdg_penalty_weights),
+            ("sd_penalty_weights", self.sd_penalty_weights),
+            ("fishr_penalty_weights", self.fishr_penalty_weights),
+            ("rdm_penalty_weights", self.rdm_penalty_weights),
         ):
             if len(set(values)) != len(values):
                 raise ValueError(f"{name} contains duplicate values")
@@ -218,6 +258,13 @@ class SearchSpaceConfig(StrictBoundaryModel):
             raise ValueError("matchdg_latent_dims must be positive")
         if any(value <= 0 for value in self.matchdg_penalty_weights):
             raise ValueError("matchdg_penalty_weights must be positive")
+        for name, weights in (
+            ("sd_penalty_weights", self.sd_penalty_weights),
+            ("fishr_penalty_weights", self.fishr_penalty_weights),
+            ("rdm_penalty_weights", self.rdm_penalty_weights),
+        ):
+            if any(value <= 0 for value in weights):
+                raise ValueError(f"{name} must be positive")
         selected_grids: tuple[
             tuple[MethodId, str, tuple[float, ...] | tuple[int, ...]], ...
         ] = (
@@ -226,6 +273,9 @@ class SearchSpaceConfig(StrictBoundaryModel):
             ("swad", "swad_tolerance_ratios", self.swad_tolerance_ratios),
             ("matchdg", "matchdg_latent_dims", self.matchdg_latent_dims),
             ("matchdg", "matchdg_penalty_weights", self.matchdg_penalty_weights),
+            ("sd", "sd_penalty_weights", self.sd_penalty_weights),
+            ("fishr", "fishr_penalty_weights", self.fishr_penalty_weights),
+            ("rdm", "rdm_penalty_weights", self.rdm_penalty_weights),
         )
         for method, name, values in selected_grids:
             if (method in self.methods) != bool(values):
@@ -272,6 +322,24 @@ class SearchSpaceConfig(StrictBoundaryModel):
             raise ValueError(
                 "irm_penalty_anneal_updates must be set exactly when IRM is selected"
             )
+        # Fishr's EMA decay and RDM's variance weight are fixed per search rather than
+        # searched, but they change training, so a run states them explicitly.
+        fixed_settings: tuple[tuple[MethodId, str, object], ...] = (
+            (
+                "fishr",
+                "fishr_penalty_anneal_updates",
+                self.fishr_penalty_anneal_updates,
+            ),
+            ("fishr", "fishr_ema", self.fishr_ema),
+            ("rdm", "rdm_penalty_anneal_updates", self.rdm_penalty_anneal_updates),
+            ("rdm", "rdm_variance_weight", self.rdm_variance_weight),
+        )
+        for method, name, value in fixed_settings:
+            if (method in self.methods) != (value is not None):
+                raise ValueError(
+                    f"{name} must be set exactly when {METHOD_LABELS[method]} is "
+                    "selected"
+                )
         return self
 
 
@@ -347,6 +415,7 @@ class WaterbirdsProductionSearchConfig(_CommonProductionSearchConfig):
 
     @model_validator(mode="after")
     def _validate_grid_fits(self) -> WaterbirdsProductionSearchConfig:
+        _reject_cmnist_only_methods(self.search_space, "Waterbirds")
         _require_runnable_grid(self.search_space, self.pair_count)
         return self
 
@@ -375,6 +444,21 @@ class RotatedMnistProductionSearchConfig(_CommonProductionSearchConfig):
 
 FEATURE_DIMENSION = 512
 FINALIST_COUNT = 3
+
+
+def _reject_cmnist_only_methods(space: SearchSpaceConfig, dataset: str) -> None:
+    """Refuse to plan methods this dataset's runner cannot bind to the trainer."""
+
+    deferred = tuple(
+        METHOD_LABELS[method]
+        for method in space.methods
+        if method in CMNIST_ONLY_METHODS
+    )
+    if deferred:
+        raise ValueError(
+            f"{', '.join(deferred)} are implemented for CMNIST only; {dataset} "
+            "integration is deferred"
+        )
 
 
 def _require_runnable_grid(space: SearchSpaceConfig, pair_count: int) -> None:
@@ -421,6 +505,12 @@ def _method_setting_count(space: SearchSpaceConfig, method: MethodId) -> int:
         return len(space.swad_tolerance_ratios)
     if method == "matchdg":
         return len(space.matchdg_latent_dims) * len(space.matchdg_penalty_weights)
+    if method == "sd":
+        return len(space.sd_penalty_weights)
+    if method == "fishr":
+        return len(space.fishr_penalty_weights)
+    if method == "rdm":
+        return len(space.rdm_penalty_weights)
     raise AssertionError(f"candidate grid is missing method {method}")
 
 
@@ -568,6 +658,9 @@ REQUIRED_SETTINGS: dict[MethodId, frozenset[str]] = {
     "lisa": frozenset({"lisa_selection_prob"}),
     "swad": frozenset({"swad_tolerance_ratio"}),
     "matchdg": frozenset({"matchdg_latent_dim", "penalty_weight"}),
+    "sd": frozenset({"penalty_weight"}),
+    "fishr": frozenset({"penalty_weight"}),
+    "rdm": frozenset({"penalty_weight"}),
 }
 
 
@@ -690,6 +783,11 @@ _FLOAT_FIELDS = frozenset(
         "lisa_selection_probs",
         "swad_tolerance_ratios",
         "matchdg_penalty_weights",
+        "sd_penalty_weights",
+        "fishr_penalty_weights",
+        "fishr_ema",
+        "rdm_penalty_weights",
+        "rdm_variance_weight",
         "relative_singular_value_tolerance",
     }
 )
@@ -1137,6 +1235,15 @@ def _method_settings_grid(
             for dim in sorted(space.matchdg_latent_dims)
             for weight in sorted(space.matchdg_penalty_weights)
         )
+    if method in ("sd", "fishr", "rdm"):
+        weights = {
+            "sd": space.sd_penalty_weights,
+            "fishr": space.fishr_penalty_weights,
+            "rdm": space.rdm_penalty_weights,
+        }[method]
+        return tuple(
+            MethodSettings(penalty_weight=float(weight)) for weight in sorted(weights)
+        )
     raise AssertionError(f"candidate grid is missing method {method}")
 
 
@@ -1308,6 +1415,45 @@ def candidate_algorithm_config(
             latent_dim=latent,
             penalty_weight=weight,
             pair_penalty="mean_squared_featurizer_difference",
+        )
+    if method in ("sd", "fishr", "rdm"):
+        weight = setting.penalty_weight
+        if weight is None:
+            raise AssertionError(f"planned {method} candidate lacks a penalty weight")
+        if method == "sd":
+            return SdAlgorithmConfig(
+                kind="sd",
+                penalty_weight=weight,
+                penalty="mean_squared_logits",
+                sampling="uniform_without_replacement",
+            )
+        space = config.search_space
+        if method == "fishr":
+            anneal = space.fishr_penalty_anneal_updates
+            ema = space.fishr_ema
+            if anneal is None or ema is None:
+                raise AssertionError("planned Fishr candidate lacks fixed settings")
+            return FishrAlgorithmConfig(
+                kind="fishr",
+                environment_names=environment_names,
+                penalty_weight=weight,
+                penalty_anneal_updates=anneal,
+                ema=ema,
+                penalty="classifier_gradient_variance_distance",
+                sampling="environment_balanced_without_replacement",
+            )
+        anneal = space.rdm_penalty_anneal_updates
+        variance_weight = space.rdm_variance_weight
+        if anneal is None or variance_weight is None:
+            raise AssertionError("planned RDM candidate lacks fixed settings")
+        return RdmAlgorithmConfig(
+            kind="rdm",
+            environment_names=environment_names,
+            penalty_weight=weight,
+            penalty_anneal_updates=anneal,
+            variance_weight=variance_weight,
+            penalty="worst_environment_versus_pooled_risk_mmd",
+            sampling="environment_balanced_without_replacement",
         )
     raise AssertionError(f"algorithm config materializer is missing method {method}")
 

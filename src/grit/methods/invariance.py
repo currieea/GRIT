@@ -1,4 +1,4 @@
-"""Environment-aware minibatches and invariant-training objectives."""
+"""Environment-aware minibatches and shared frozen-feature training objectives."""
 
 from __future__ import annotations
 
@@ -65,6 +65,51 @@ def environment_balanced_epoch_batches(
         )
         offset += count
     return tuple(batches)
+
+
+def environment_balanced_epoch_batch_count(
+    environment_ids: torch.Tensor,
+    *,
+    environment_count: int,
+    batch_size: int,
+) -> int:
+    """How many batches one balanced epoch yields, without drawing them."""
+
+    ids = environment_ids.detach().cpu().to(torch.int64)
+    if environment_count <= 1:
+        raise ValueError("invariant training requires at least two environments")
+    if batch_size <= 0 or batch_size % environment_count != 0:
+        raise ValueError(
+            "environment-balanced batch size must be positive and divisible by "
+            "the environment count"
+        )
+    per_environment = batch_size // environment_count
+    largest = max(
+        int((ids == environment).sum()) for environment in range(environment_count)
+    )
+    return len(range(0, largest, per_environment))
+
+
+def require_active_penalty_updates(
+    *,
+    warm_up_updates: int,
+    updates_per_epoch: int,
+    max_epochs: int,
+    label: str,
+) -> None:
+    """Refuse a run whose warm-up would swallow every update.
+
+    A warmed-up method that never activates its penalty is plain ERM wearing the
+    method's name, which would be reported as that method's result.
+    """
+
+    total = updates_per_epoch * max_epochs
+    if warm_up_updates >= total:
+        raise ValueError(
+            f"{label} warm-up of {warm_up_updates} updates leaves no penalized "
+            f"update in a run of {total} ({updates_per_epoch} per epoch over "
+            f"{max_epochs} epochs); shorten the warm-up or lengthen the run"
+        )
 
 
 def environment_mean_losses(
@@ -171,3 +216,24 @@ def irmv1_objective(
     if penalty_weight > 1.0:
         objective = objective / penalty_weight
     return objective
+
+
+def spectral_decoupling_objective(
+    logits: torch.Tensor,
+    targets: torch.Tensor,
+    *,
+    penalty_weight: float,
+) -> torch.Tensor:
+    """Mean cross-entropy plus the mean squared raw logit.
+
+    The penalty averages over examples and classes and is applied to the raw logits,
+    without centering or a softmax, from the first update.
+    """
+
+    if logits.ndim != 2 or int(logits.shape[0]) == 0:
+        raise ValueError("SD logits must have shape [N, classes]")
+    if targets.ndim != 1 or int(targets.shape[0]) != int(logits.shape[0]):
+        raise ValueError("SD targets must align with logits")
+    return functional.cross_entropy(logits, targets) + penalty_weight * logits.pow(
+        2
+    ).mean()

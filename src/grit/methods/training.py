@@ -69,12 +69,31 @@ class LinearProbeAlgorithm:
         with torch.no_grad():
             self._model.weight.copy_(weight)
             self._model.bias.copy_(bias)
-        self._optimizer = torch.optim.Adam(
-            self._model.parameters(),
-            lr=float(config.learning_rate),
-            weight_decay=float(config.weight_decay),
-        )
+        self._learning_rate = float(config.learning_rate)
+        self._weight_decay = float(config.weight_decay)
+        self._optimizer = self._new_optimizer()
         self._projection = projection
+
+    def _new_optimizer(self) -> torch.optim.Adam:
+        return torch.optim.Adam(
+            self._model.parameters(),
+            lr=self._learning_rate,
+            weight_decay=self._weight_decay,
+        )
+
+    def reset_optimizer(self) -> None:
+        """Discard Adam's moments, keeping the model and the candidate's settings.
+
+        Fishr and RDM reset once when their penalty activates, because Adam does not
+        take kindly to the jump in gradient magnitude at that update.
+        """
+
+        self._optimizer = self._new_optimizer()
+
+    def prepare_features(self, features: torch.Tensor) -> torch.Tensor:
+        """The classifier's actual input; methods that need it must not re-derive it."""
+
+        return self._prepare(features)
 
     def update(self, features: torch.Tensor, targets: torch.Tensor) -> float:
         """Perform the algorithm-owned mutation for one trainer-provided batch."""

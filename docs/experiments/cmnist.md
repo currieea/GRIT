@@ -5,6 +5,11 @@ SWAD, and oracle-pair MatchDG under validation-only selection and under the sepa
 labeled test-oracle track. Conditional and nearest-neighbor pair definitions are still
 open.**
 
+**SD, Fishr, and RDM are implemented and synthetically verified for CMNIST;
+real-data training/validation pilots remain outstanding.**
+Waterbirds and RotatedMNIST integration for these three is deferred; their search
+configurations reject them.
+
 ## Purpose
 
 Define a rigorous ColoredMNIST experiment for comparing ERM with GRIT/ECMP and its
@@ -614,6 +619,162 @@ layers are linear, the composed map is a linear probe, and checkpoints store tha
 composition. The latent dimension grid is `8`, `16`, and `32` and the penalty grid is
 `0.1`, `1`, `10`, and `100`, a subset of the inherited 8-by-5 launcher grid.
 
+## Additional baselines: SD, Fishr, and RDM
+
+These methods train the same unprojected linear classifier on the existing frozen CLIP
+cache. They require no new images, augmentations, trainable encoder, or oracle pair
+identities. SD receives training features and noisy targets only. Fishr and RDM also
+receive the same `train_e01`/`train_e02` environment IDs and balanced batches as V-REx.
+The definitions here also govern Waterbirds with its documented environment bindings.
+
+References are the [SD paper](https://arxiv.org/abs/2011.09468),
+[Fishr paper](https://arxiv.org/abs/2109.02934),
+[RDM paper](https://arxiv.org/abs/2310.18598), and DomainBed at commit
+[`b93c22a1cfc3`](https://github.com/facebookresearch/DomainBed/tree/b93c22a1cfc3b2428398272c1a116c8de1f4139e):
+[algorithms](https://github.com/facebookresearch/DomainBed/blob/b93c22a1cfc3b2428398272c1a116c8de1f4139e/domainbed/algorithms.py),
+[moving-average helper](https://github.com/facebookresearch/DomainBed/blob/b93c22a1cfc3b2428398272c1a116c8de1f4139e/domainbed/lib/misc.py),
+and [hyperparameters](https://github.com/facebookresearch/DomainBed/blob/b93c22a1cfc3b2428398272c1a116c8de1f4139e/domainbed/hparams_registry.py).
+All three methods, including RDM, are present at that revision, and the numerical
+conventions below were checked against it. DomainBed and BackPACK are not runtime
+dependencies; the tests carry small transcriptions of the reference arithmetic.
+
+### Spectral Decoupling (`sd`)
+
+Use ERM's sampler and minimize mean cross-entropy plus `lambda * mean(logits ** 2)`,
+averaging the penalty over examples and classes. Penalize raw logits, without centering
+or softmax. Apply the penalty from the first update, with no warm-up or optimizer reset.
+
+### Fishr (`fishr`)
+
+Match within-environment population variances of per-example classifier gradients,
+including both weight and bias. For a single example with feature vector $z$, softmax
+probabilities $p$, and one-hot target $q$, compute the exact gradients analytically:
+$g_W=(p-q)z^\top$ and $g_b=p-q$. These are gradients of individual losses, without a
+minibatch-mean scaling factor. Retain their dependence on the current classifier so the
+variance penalty differentiates back to its parameters.
+
+Use the reference EMA with decay `0.95`, initialized to zero separately for each
+environment and parameter tensor. Update it during warm-up as well as active training;
+retain gradients through the current variance and detach historical state. Use the
+reference `1 / (1 - ema)` correction, not Adam-style time-dependent bias correction.
+Match each corrected environment variance to the mean across environments, using the
+reference mean squared distance over concatenated weight and bias coordinates, then
+averaging over environments. The objective is mean cross-entropy plus `lambda` times
+this penalty; do not inherit V-REx's whole-loss rescaling.
+
+### Risk Distribution Matching (`rdm`)
+
+Compute individual cross-entropy losses in each training environment. Select the
+environment with highest mean loss (ties use the lowest environment ID), then match
+its loss distribution to the pooled minibatch loss distribution. Use the reference
+biased MMD estimator, including diagonal kernel entries, and summed Gaussian kernels
+with inverse bandwidths `[0.0001, 0.001, 0.01, 0.1, 1, 10, 100, 1000]`.
+Gradients flow through both loss distributions; only the discrete worst-environment
+choice is nondifferentiable.
+
+Minimize the mean environment risk plus `lambda * MMD` and a variance penalty weighted
+by `0.004`. The latter is the sum of the sample variances (`correction=1`) of pooled
+losses and worst-environment losses. Require at least two examples per environment
+batch, including remainders, whenever this estimator is evaluated; reject incompatible
+run configurations before training rather than silently changing the estimator.
+
+### Warm-up, search, and pilots
+
+For Fishr and RDM, updates `0..1499` use cross-entropy alone; update `1500` activates
+the configured penalties and resets Adam once, retaining model parameters and Fishr's
+EMA. Use the candidate's learning rate and weight decay before and after the reset.
+For RDM this deliberately ties the reference's separate post-warm-up learning rate to
+the ordinary probe learning-rate search, avoiding another search dimension. Neither
+method rescales the whole loss by its penalty weight. A configured zero warm-up starts
+penalized training immediately with the fresh optimizer.
+
+The initial grids cross the existing 16 learning-rate/weight-decay combinations:
+
+| Method | Searched coefficient | Fixed method settings | Candidates |
+|---|---|---|---:|
+| SD | `1e-5, 1e-4, 1e-3, 1e-2, 1e-1` | No warm-up | 80 |
+| Fishr | `10, 100, 1000, 10000` | EMA `0.95`; warm-up 1500 updates | 64 |
+| RDM | `0.1, 1, 5, 10` | Variance weight `0.004`; warm-up 1500 updates | 64 |
+
+CMNIST has 7,840 updates, so warm-up occupies approximately 19% of training. Waterbirds
+has 2,800 updates, so it occupies approximately 54%. These preserve the reference's
+default update threshold, not a common fraction of training. The new methods' production
+plans must leave at least one active-penalty update; short verification runs must set an
+appropriately smaller warm-up explicitly. This is enforced, not merely stated: a Fishr
+or RDM run whose warm-up would consume every update is rejected before its first update,
+because such a run is cross-entropy training reported under the method's name. The check
+happens where the method is bound to the trainer, since the epoch length follows from the
+training row counts, the batch size, and the epoch count together.
+
+Before a full search, run bounded training/validation pilots that cross the warm-up
+boundary and measure numerical stability, penalty scale, and runtime. Revise these
+initial grids or fixed settings only from training/validation evidence, updating the
+protocol and configuration before production selection. No test metric may inform that
+revision. Report the actual search budget and runtime; shared optimizer grids do not
+imply equal tuning effort. Keep existing final-seed and checkpoint-selection rules.
+
+### Interpretation when assumptions are imperfect
+
+Assumption mismatch is not an automatic reason to exclude a baseline. These experiments
+assess usefulness within a common frozen-feature and limited-compute setting, including
+shifts that challenge a method's motivation or theoretical assumptions. Report the
+available supervision and the adaptation explicitly. In particular, GRIT's oracle
+pair identities provide additional information unavailable to these three methods.
+
+Separate a data-assumption stress test from an implementation that disables the central
+mechanism. SD, Fishr, and RDM retain active classifier objectives here. A penalty applied
+only to an entirely frozen representation would not establish the original method's
+flexibility. Apply the same scrutiny to GRIT's nuisance-subspace assumptions.
+
+Both CMNIST training environments favor color in the same direction. Agreement across
+environments therefore does not by itself identify causal features. Lower performance
+can establish a limitation in this setting; attributing it specifically to an assumption
+violation requires a controlled sensitivity that varies that violation. Optimization,
+tuning budget, representation quality, and information access remain alternative
+explanations. Do not describe a frozen-feature result as a full end-to-end reproduction.
+
+### Implementation notes
+
+Fishr's BackPACK dependency is unnecessary here: the closed-form per-example
+gradients above are exact for the linear probe and are verified against autograd.
+Its EMA keeps one state vector per environment over the concatenated weight and bias
+coordinates rather than one per parameter tensor; every operation in the reference is
+elementwise, so this is the same arithmetic.
+
+The reference computes each penalty on every update and multiplies it by a zero weight
+during warm-up. Warm-up updates here skip the penalty term instead, which has the same
+gradient, except that Fishr still computes its gradient variances so the EMA advances.
+RDM's summed Gaussian kernel is accumulated in the reference's order. Its objective
+and gradients matched the reference on the checked float32 inputs; this is a numerical
+check, not a guarantee of bitwise identity across inputs or platforms.
+
+SD, Fishr, and RDM are CMNIST-only method IDs. The Waterbirds search configuration
+rejects them by name rather than planning candidates its runner cannot bind, and
+RotatedMNIST already admits only ERM and GRIT.
+
+### Implementation acceptance
+
+The current scope is CMNIST, using shared objectives and the existing linear-probe
+trainer, method IDs, configuration, planner, dataset bindings, and summaries. Add
+only settings that affect training or prevent information leaks. Preserve compatibility
+with existing method configurations and candidate identities. Each method has an ordinary
+CMNIST search YAML in a separate output tree. Preserve the existing explicit
+test-oracle isolation when wiring the methods, but these initial configurations use
+validation selection only. Waterbirds integration, RotatedMNIST, and new diagnostic
+search files are deferred; the Waterbirds protocol specifies the future bindings.
+
+Required checks include independent autograd agreement for Fishr's analytic gradients
+and penalty derivatives; reference objective agreement; warm-up/reset and EMA behavior;
+RDM worst-environment ties and small-batch rejection; and zero-penalty agreement with
+the corresponding supervised objective under identical sampling and optimizer state.
+Zero penalties are numerical controls, not extra production candidates. Exercise the
+new methods through the CMNIST lifecycle with small synthetic caches, checking
+validation selection, checkpoint restoration, and no pair/test access during training.
+Keep inference checkpoints as linear weights and bias: training-only EMA state must not
+change during evaluation. If using existing interrupted-run recovery, recreate all
+training state on restart rather than introducing partial-resume infrastructure.
+Run `uv run ruff check .`, `uv run basedpyright`, and `uv run pytest`.
+
 ## Parameter search
 
 The search is configuration-driven and applies the same saved candidate results to both
@@ -635,6 +796,8 @@ selectors.
 - SWAD searches that optimizer grid jointly with tolerance ratios `0.1` through `0.5`.
 - MatchDG searches that optimizer grid jointly with latent dimensions `8`, `16`, `32`
   and penalties `0.1`, `1`, `10`, `100`.
+- SD, Fishr, and RDM use the initial grids and pilot procedure in
+  [Additional baselines](#additional-baselines-sd-fishr-and-rdm).
 - Every candidate runs on three tuning seeds.
 - The top three configurations receive two confirmation seeds.
 - The five-seed validation mean selects the frozen configuration.
@@ -645,8 +808,9 @@ selectors.
 The search runner saves every resolved candidate and per-seed validation metric. W&B may
 mirror the search, but local structured results define selection semantics.
 
-The production lifecycle implements the approved ERM/oracle-GRIT grid and independent
-GroupDRO, V-REx, and IRMv1 grids locally. The production schema
+The production lifecycle implements the ERM/oracle-GRIT grid and independent
+GroupDRO, V-REx, IRMv1, Fish, LISA, SWAD, MatchDG, SD, Fishr, and RDM grids locally.
+The SD/Fishr/RDM grids remain initial choices pending real-data pilots. The production schema
 requires explicit dataset, feature-cache, and 256-pair manifest paths; the canonical
 production inventory; pinned official OpenAI CLIP identity; one matching normalization;
 and explicit construction, pair, 3 tuning, 2 confirmation, and 10 final seeds. Planning
@@ -665,9 +829,9 @@ Final tasks cannot be planned from validation records alone: they require the ma
 frozen-winner artifact, then train on a fresh final seed, select an epoch from validation,
 persist and restore that checkpoint, and only then open `test_ood`. Canonical stage results,
 selection artifacts, ten-seed summaries, per-seed paired differences, and the verified
-experiment index are local authority. No real 1,152-run tuning stage was executed while
-implementing this system, nor were the V-REx or IRMv1 searches, so this status makes no
-scientific performance claim.
+experiment index are local authority. Implementation tests establish pipeline behavior,
+not production completion or scientific performance. Check each server output tree
+with `scripts/search_status.py`; the SD/Fishr/RDM real-data pilots remain outstanding.
 
 Final results report mean, standard deviation, and a 95% t-interval across final seeds.
 Because methods use the same final seeds, comparisons also report paired per-seed
@@ -756,7 +920,7 @@ Primary references:
 
 - Whether $p_y=0$ is a required sensitivity experiment
 - Conditional/random and nearest-neighbor pair definitions
-- Additional baseline methods required for the first complete study
+- Any further baselines beyond the specified SD, Fishr, and RDM addition
 - Whether a reporting-only paired ID rendering of final test sources is useful
 - Upper supported Python and future training-accelerator versions beyond the initial
   PyTorch 2.11.0/CUDA 12.8 feature-preparation profile

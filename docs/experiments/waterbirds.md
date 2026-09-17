@@ -2,9 +2,16 @@
 
 Status: **Implemented for ERM, oracle GRIT, GroupDRO, V-REx, IRMv1, Fish, LISA, SWAD,
 and the MatchDG-style pair penalty under both the validation track and the separately
-labeled test-oracle track. No real Waterbirds run exists yet: source assets (Waterbirds,
-CUB, masks, Places) still need to be acquired on a server; estimated-pair definitions
-are still open.**
+labeled test-oracle track. Estimated-pair definitions are still open.**
+The [repository overview](../../README.md#current-state-september-2026) reports real
+Waterbirds artifacts and searches on Jujube, with results still under audit. This
+protocol does not certify server completion; check the exact config's canonical output
+using `scripts/search_status.py`.
+
+**Next implementation: SD, Fishr, and RDM are specified in this protocol and the
+shared CMNIST definitions, and are implemented for CMNIST only. Waterbirds does not
+run them yet: the Waterbirds search configuration rejects those method IDs by name,
+so the bindings below are a specification, not working code.**
 
 ## Purpose
 
@@ -30,14 +37,19 @@ The first complete Waterbirds study includes:
 - GroupDRO, V-REx, IRMv1, Fish, LISA, SWAD, and the MatchDG-style pair penalty on
   Waterbirds-CF, each defined exactly as in the [ColoredMNIST protocol](cmnist.md) with
   the Waterbirds bindings stated below;
+- SD, Fishr, and RDM on the same frozen Waterbirds-CF features, as specified under
+  [Additional baselines](#additional-baselines-sd-fishr-and-rdm), pending implementation;
 - GRIT with oracle, conditional, and nearest-neighbor pairs on Waterbirds-CF; and
 - a separately reported rank-zero GRIT identity-projection sanity control.
 
-Every method runs under two selection tracks: the ordinary validation worst-group
+The existing methods run under two selection tracks: the ordinary validation worst-group
 selector, and the test-oracle track that reproduces the paper's test-selected protocol as
 a separately labeled envelope (see "Test-oracle validation track"). Estimated pairs
 (conditional and nearest) remain open; the implemented table uses the 240 clean oracle
 pairs for GRIT and the MatchDG-style row.
+When implemented for Waterbirds, the initial SD, Fishr, and RDM search files will use
+ordinary validation selection only; their integration must retain the existing isolation
+of explicit test-oracle execution.
 
 The initial study does not include raw-image training, group-blind selection, or
 snow/desert backgrounds.
@@ -240,7 +252,7 @@ needed for the canonical experiment.
 
 ### Method-specific information access
 
-- ERM receives Waterbirds-CF training images and bird labels but not pair identities or
+- ERM and SD receive Waterbirds-CF training images and bird labels but not pair identities or
   training background labels.
 - Oracle GRIT receives the same supervised records plus the 240 exact pair identities.
 - Conditional and nearest GRIT receive training labels and background metadata only as
@@ -248,7 +260,7 @@ needed for the canonical experiment.
   identities.
 - GroupDRO and LISA may use `(y, background)` group labels during training because
   group annotation is part of those method definitions.
-- V-REx, IRMv1, and Fish receive the training background as their environment label
+- V-REx, IRMv1, Fish, Fishr, and RDM receive the training background as their environment label
   (environment 0 is land, environment 1 is water) because environment annotation is part
   of those method definitions. They do not receive pair identities.
 - The MatchDG-style pair penalty receives the same 240 oracle pair identities as oracle
@@ -454,6 +466,41 @@ to:
 Nothing else changes: the optimizer grid, batch size, epochs, seeds, checkpoint rule,
 and selectors are those of this document.
 
+## Additional baselines: SD, Fishr, and RDM
+
+Use the objectives, initial grids, warm-up/reset conventions, reference sources, and
+implementation acceptance checks in the
+[shared CMNIST specification](cmnist.md#additional-baselines-sd-fishr-and-rdm).
+All three methods receive the same 4,795 supervised Waterbirds-CF records as ERM,
+including the existing generated minority endpoints, but no oracle pairing relation.
+They require no additional image construction or feature extraction.
+
+SD uses ordinary ERM minibatches and no training background metadata. Fishr and RDM
+use land/water backgrounds as environments with the same deterministic balanced sampler
+as V-REx: 128 records from each environment per full batch, exhausting the larger
+environment once per epoch and cycling the smaller. The final batch has 98 records per
+environment, so the RDM sample-variance estimator is defined. There are 28 updates per
+epoch and 2,800 over 100 epochs. Their initial warm-up ends at update 1500, approximately
+54% through training; pilots must cross that boundary before judging behavior. Each
+method uses validation worst-group checkpoint and configuration selection and the same
+3 tuning, 2 confirmation, and 10 final seeds as existing methods.
+
+These background-defined environments have very different bird-label proportions:
+land backgrounds contain 3,498 landbirds and 56 waterbirds; water backgrounds contain
+184 landbirds and 1,057 waterbirds. Risk or gradient-statistic matching can respond to
+class composition as well as background dependence. This makes the experiment a useful
+stress test, not grounds to exclude the methods. Label results as frozen-feature
+adaptations with background-defined environments, and do not infer from underperformance
+alone that a particular theoretical assumption caused the gap. A causal explanation
+would require a separately prespecified sensitivity that changes the suspected mismatch.
+The same interpretation standard applies to GRIT and its pair/subspace assumptions.
+
+Report differences in pair and environment information alongside performance. Any
+future class-balanced-environment sensitivity must be defined separately before running;
+do not silently rebalance the primary method to improve its result. The comparison's
+claim is usefulness under this common feature and compute setting, rather than an
+end-to-end reproduction or a general ranking of algorithm flexibility.
+
 ## Model and checkpoint selection
 
 The only ordinary Waterbirds selector maximizes official validation worst-group
@@ -536,6 +583,12 @@ penalties `10` through `10000` with the anneal point fixed at update 100; IRMv1 
 adding a method never reruns another, while the shared final seeds keep paired
 comparisons valid across trees.
 
+For the pending SD/Fishr/RDM addition, use 80/64/64 candidates respectively, as defined
+in the shared specification. Add `configs/waterbirds/{sd,fishr,rdm}-search.yaml` with
+separate output roots and ordinary validation selection. Run bounded training/validation
+pilots before freezing the full search; report actual candidate counts and runtime.
+The initial addition does not require new test-oracle configuration files.
+
 Milestone 6A implements this ERM/oracle-GRIT grid over explicit prepared manifests. Strict
 planning accepts only the production 4,795/1,199/5,794 Waterbirds-CF inventory, exact
 184/56 oracle relation manifest, reportable official OpenAI CLIP cache, matching
@@ -550,7 +603,8 @@ average, lower-rank, earlier-epoch, and stable-identity ties. A final task requi
 frozen method winner, selects and restores a validation checkpoint, then opens test once in
 the successful run lifecycle. Ten-seed summaries join ERM and GRIT by explicit seed, not
 completion order. Local canonical files and their verified experiment index are
-authoritative. The implementation ran no real grid and reports no Waterbirds result.
+authoritative. Hermetic implementation tests do not establish completion or scientific
+validity of a production search; consult the exact config's canonical server outputs.
 
 Final results report mean, standard deviation, and a 95% t-interval across final seeds.
 Because methods use the same final seeds, method comparisons also report paired
@@ -735,14 +789,12 @@ are not valid ordinary selections and numerical parity is not an exit requiremen
 
 ## Remaining decisions and required evidence
 
-- Acquire canonical Waterbirds, CUB images, CUB masks, and the required official
-  Places365 training backgrounds on the server.
-- Record and verify all available published source hashes and licenses/terms.
-- Execute the implemented versioned construction against acquired server assets and
-  validate its production manifest without claiming byte-level identity with the
-  unavailable historical artifact.
-- Record the server's exact Pillow build alongside the implemented LANCZOS geometry and
-  canonical PNG encoding before any reportable reconstruction is accepted.
+- For each reported server artifact, audit the canonical Waterbirds, CUB images,
+  CUB masks, and official Places365 source identities and recorded hashes.
+- Validate the versioned production construction manifest without claiming byte-level
+  identity with the unavailable historical artifact.
+- Verify the recorded server Pillow build, LANCZOS geometry, and canonical PNG encoding
+  for each reportable reconstruction.
 - Approve the conditional/random sampling algorithm and nearest-neighbor distance/reuse
   policy.
 - Set method-specific search ranges for the estimated-pair variants.
@@ -765,9 +817,10 @@ are not valid ordinary selections and numerical parity is not an exit requiremen
 - [x] GroupDRO groups, sampler, objective, and adversarial step-size search approved
 - [x] Deterministic server-side Waterbirds-CF reconstruction plan approved
 - [x] Minimal retained Places subset and storage plan approved
-- [ ] Source datasets acquired and hashes verified on the experiment server
+- [ ] Source hashes and reconstruction provenance audited for reported server results
 - [x] Waterbirds-CF generator and integrity checks implemented and hermetically tested
 - [x] ERM/oracle-GRIT feature, projection, four-group selection, restoration, and final
       lifecycle implemented and hermetically tested
 - [ ] Conditional and nearest-pair details approved
-- [ ] Later-method search spaces beyond GroupDRO approved
+- [x] V-REx, IRMv1, Fish, LISA, SWAD, and MatchDG search spaces specified
+- [ ] SD, Fishr, and RDM Waterbirds integration and real-data pilots completed

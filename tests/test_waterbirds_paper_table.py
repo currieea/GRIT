@@ -24,7 +24,7 @@ from grit.features.waterbirds import (
     WaterbirdsFinalTestHandle,
 )
 from grit.methods.invariance import environment_balanced_epoch_batches
-from grit.methods.types import IMPLEMENTED_METHODS
+from grit.methods.types import WATERBIRDS_METHODS
 from grit.methods.waterbirds_training import WaterbirdsRestorationReceipt
 from grit.schemas import SeedStage
 from grit.search.outputs import WaterbirdsProductionSummary
@@ -62,7 +62,7 @@ from tests.test_waterbirds_selection import (
 )
 
 FULL_GRID: dict[str, object] = {
-    "methods": list(IMPLEMENTED_METHODS),
+    "methods": list(WATERBIRDS_METHODS),
     "learning_rates": [0.01],
     "weight_decays": [0.0, 0.0001, 0.001],
     "projection_ranks": [2],
@@ -289,8 +289,8 @@ def test_plan_binds_every_method_to_waterbirds_environments_and_groups(
         tmp_path, output_root=tmp_path / "output"
     )
     plan = plan_production_search(config_path)
-    assert plan.methods == IMPLEMENTED_METHODS
-    assert len(plan.candidates) == 3 * len(IMPLEMENTED_METHODS)
+    assert plan.methods == WATERBIRDS_METHODS
+    assert len(plan.candidates) == 3 * len(WATERBIRDS_METHODS)
     for candidate in plan.candidates:
         if candidate.method_id == "grit":
             continue
@@ -333,7 +333,7 @@ def test_plan_binds_every_method_to_waterbirds_environments_and_groups(
 @pytest.mark.parametrize(
     ("selectors", "methods"),
     [
-        (("waterbirds_validation_worst_group",), IMPLEMENTED_METHODS),
+        (("waterbirds_validation_worst_group",), WATERBIRDS_METHODS),
         (("test_oracle",), ("erm", "grit", "fish", "matchdg")),
     ],
     ids=["ordinary", "test_oracle"],
@@ -348,7 +348,7 @@ def test_both_tracks_run_every_method_through_the_lifecycle(
     grid = {
         key: value
         for key, value in FULL_GRID.items()
-        if key.split("_")[0] not in set(IMPLEMENTED_METHODS) - set(methods)
+        if key.split("_")[0] not in set(WATERBIRDS_METHODS) - set(methods)
     }
     grid["methods"] = list(methods)
     config_path, artifact_paths = write_waterbirds_production_config(
@@ -434,6 +434,6 @@ def test_checked_waterbirds_configs_cover_every_method_under_both_tracks(
         assert config.output_root.endswith("-test-oracle") is oracle
         for method in config.search_space.methods:
             seen[(method, "test_oracle" if oracle else "ordinary")] = path.name
-    assert {key[0] for key in seen} == set(IMPLEMENTED_METHODS)
+    assert {key[0] for key in seen} == set(WATERBIRDS_METHODS)
     assert {key[1] for key in seen} == {"ordinary", "test_oracle"}
     assert len(set(seen.values())) == 16
