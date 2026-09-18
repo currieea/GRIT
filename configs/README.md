@@ -102,6 +102,12 @@ track separation. W&B remains optional and mirrors only already-computed measure
 ### Expanded representation matrix
 
 Use `{cmnist,waterbirds}/{erm,rex,irm,fishr}-representation-interventions-search.yaml`.
+For CMNIST held-out validation sensitivities, use
+`cmnist/held-out-e03/{erm,rex,irm,fishr}-representation-interventions-search.yaml`
+or the corresponding `held-out-e04` paths. These preserve the default grids, seeds
+and both ordinary selectors while using `cmnist-none-e03`/`cmnist-none-e04`
+artifacts and separate output roots ending in `-e03`/`-e04`. The top-level CMNIST
+configs use the primary e05 preparation.
 These retain the previous three variants and add `<objective>_representation_consistency`
 and auxiliary `<objective>_two_layer`. `erm`, `rex`, `irm`, and `fishr` select the base;
 `grit` remains ERM plus projection. Historical `*_consistency` IDs and
