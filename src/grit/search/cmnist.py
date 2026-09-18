@@ -20,6 +20,7 @@ from grit.config import (
     CmnistSourceCounts,
     CmnistTestOracleExperimentConfig,
     CmnistTestOracleSelectionConfig,
+    ComposedAlgorithmConfig,
     CpuRuntimeConfig,
     FishAlgorithmConfig,
     FishrAlgorithmConfig,
@@ -55,6 +56,7 @@ from grit.methods.baselines import (
 )
 from grit.methods.checkpoints import restore_checkpoint
 from grit.methods.groupdro import CMNIST_GROUP_COUNT, cmnist_group_ids
+from grit.methods.interventions import ComposedLinearProbeMethod
 from grit.methods.projection import FittedLinearProjection, fit_linear_projection
 from grit.methods.training import (
     GroupDroLinearProbeMethod,
@@ -70,6 +72,7 @@ from grit.methods.training import (
     persist_selected_linear_checkpoint,
     train_linear_probe,
 )
+from grit.methods.types import base_objective, consumes_pairs, pair_intervention
 from grit.results import (
     ArtifactReference,
     CmnistTestOracleDiagnosticResult,
@@ -193,6 +196,7 @@ def confirmation_candidate_ids(
         )
     )
 
+
 def run_cmnist_search(
     plan: SearchPlan,
     limits: ProductionExecutionLimits | None = None,
@@ -212,14 +216,14 @@ def run_cmnist_search(
     )
     pair_manifest = (
         _cmnist_pair_manifest(plan)
-        if {"grit", "matchdg"} & set(plan.methods)
+        if any(consumes_pairs(method) for method in plan.methods)
         else None
     )
     projections: dict[int, FittedLinearProjection] = {}
 
     def runtime_candidate(candidate: SearchCandidate) -> _CmnistRuntimeCandidate:
         projection: FittedLinearProjection | None = None
-        if candidate.method_id == "grit":
+        if pair_intervention(candidate.method_id) == "grit":
             rank = candidate.requested_rank
             if rank is None:
                 raise AssertionError("planned GRIT candidate lacks a rank")
@@ -250,9 +254,7 @@ def run_cmnist_search(
 
     def execute_pre_final(task: SearchRunTask, _run_root: Path) -> CompletedStageRun:
         runtime = runtime_candidate(task.candidate)
-        with task_tracker(
-            plan, task, algorithm=runtime.config.algorithm
-        ) as tracker:
+        with task_tracker(plan, task, algorithm=runtime.config.algorithm) as tracker:
             trained = _train_cmnist_task(cache, runtime, task, tracker)
             decisions = tuple(
                 select_checkpoint(trained.records(selector), selector)
@@ -338,9 +340,7 @@ def run_cmnist_search(
             with task_tracker(
                 plan, task, algorithm=runtime.config.algorithm
             ) as tracker:
-                return _execute_cmnist_final(
-                    task, run_root, tracker, selector, runtime
-                )
+                return _execute_cmnist_final(task, run_root, tracker, selector, runtime)
 
         def _execute_cmnist_final(
             task: SearchRunTask,
@@ -377,8 +377,7 @@ def run_cmnist_search(
                 selected_diagnostic = next(
                     item
                     for item in diagnostics
-                    if item.checkpoint_id
-                    == frozen_checkpoint.checkpoint.checkpoint_id
+                    if item.checkpoint_id == frozen_checkpoint.checkpoint.checkpoint_id
                 )
                 result = CmnistTestOracleDiagnosticResult(
                     schema_version="grit.run-result/v1",
@@ -472,9 +471,7 @@ def run_cmnist_search(
         return _cmnist_summary(plan, finalists, winners, runs)
 
     def persist_summary(summary: CmnistProductionSummary, root: Path) -> None:
-        persist_canonical_artifact(
-            root / "summaries" / "cmnist-summary.json", summary
-        )
+        persist_canonical_artifact(root / "summaries" / "cmnist-summary.json", summary)
         for paired in summary.paired_selectors:
             persist_canonical_artifact(
                 root
@@ -498,6 +495,7 @@ def run_cmnist_search(
     )
     return run_production_lifecycle(plan, limits, hooks)
 
+
 def _cmnist_finalists(
     plan: SearchPlan,
     runs: tuple[CmnistCompletedStageRun, ...],
@@ -515,6 +513,7 @@ def _cmnist_finalists(
         if union is not None:
             persist_canonical_artifact(root / "confirmation-union.json", union)
     return artifacts, unions
+
 
 def _selector_records(
     runs: tuple[CmnistCompletedStageRun, ...],
@@ -536,6 +535,7 @@ def _selector_records(
         else:
             records.extend(run.validation_metrics)
     return tuple(records)
+
 
 def compute_cmnist_finalists(
     plan: SearchPlan,
@@ -561,6 +561,7 @@ def compute_cmnist_finalists(
         )
     return artifacts, unions
 
+
 def _freeze_cmnist_winners(
     plan: SearchPlan,
     finalists: CmnistFinalists,
@@ -570,13 +571,11 @@ def _freeze_cmnist_winners(
     winners = compute_cmnist_winners(plan, finalists, runs)
     for (method, selector), frozen in winners.items():
         persist_canonical_artifact(
-            output_root
-            / "selection"
-            / method
-            / f"{selector.value}-winner.json",
+            output_root / "selection" / method / f"{selector.value}-winner.json",
             frozen,
         )
     return winners
+
 
 def compute_cmnist_winners(
     plan: SearchPlan,
@@ -587,20 +586,17 @@ def compute_cmnist_winners(
     for method in plan.methods:
         for selector in cmnist_selectors(_cmnist_search_config(plan)):
             artifact = finalists[(method, selector)]
-            finalist_ids = {
-                item.candidate_id for item in artifact.ordered_candidates
-            }
+            finalist_ids = {item.candidate_id for item in artifact.ordered_candidates}
             records = tuple(
                 item
                 for item in _selector_records(runs, method, selector)
                 if item.candidate_id in finalist_ids
             )
-            decision = select_confirmed_candidate(
-                records, artifact, plan.seeds.stages
-            )
+            decision = select_confirmed_candidate(records, artifact, plan.seeds.stages)
             frozen = freeze_candidate(decision, artifact, plan.seeds.stages)
             winners[(method, selector)] = frozen
     return winners
+
 
 def materialize_cmnist_candidate_config(
     plan: SearchPlan,
@@ -683,6 +679,7 @@ def materialize_cmnist_candidate_config(
         raise ValueError("planned CMNIST candidate digest cannot be materialized")
     return resolved
 
+
 def _train_cmnist_task(
     cache: CmnistFeatureCache | CmnistTuningFeatureCache,
     runtime: _CmnistRuntimeCandidate,
@@ -722,9 +719,7 @@ def _train_cmnist_task(
                 projection_rank=task.candidate.requested_rank,
             )
             collected.append(record)
-            return {
-                "diagnostic_test_oracle/test_ood_accuracy": float(record.value)
-            }
+            return {"diagnostic_test_oracle/test_ood_accuracy": float(record.value)}
 
         epoch_hook = score_test_ood
     run = train_linear_probe(
@@ -740,11 +735,40 @@ def _train_cmnist_task(
         epoch_hook=epoch_hook,
         tracker=tracker,
     )
-    return CmnistTrainedTask(
-        run, None if diagnostics is None else tuple(diagnostics)
-    )
+    return CmnistTrainedTask(run, None if diagnostics is None else tuple(diagnostics))
+
 
 def _cmnist_method(
+    cache: CmnistFeatureCache | CmnistTuningFeatureCache,
+    runtime: _CmnistRuntimeCandidate,
+    task: SearchRunTask,
+) -> LinearProbeTrainingMethod:
+    algorithm = runtime.config.algorithm
+    if not isinstance(algorithm, ComposedAlgorithmConfig):
+        return _cmnist_base_method(cache, runtime, task)
+    base_runtime = _CmnistRuntimeCandidate(
+        runtime.planned,
+        runtime.config.model_copy(update={"algorithm": algorithm.base_objective}),
+        None,
+    )
+    differences = None
+    if algorithm.pair_intervention == "consistency":
+        if not isinstance(runtime.config.pairs, OraclePairsConfig):
+            raise ValueError("consistency requires training oracle pairs")
+        red, green = cache.pair_tables()
+        count = runtime.config.pairs.pair_count
+        differences = red.features[:count] - green.features[:count]
+    return ComposedLinearProbeMethod(
+        base=_cmnist_base_method(cache, base_runtime, task),
+        method_id=task.candidate.method_id,
+        projection=runtime.projection,
+        projection_rank=task.candidate.requested_rank,
+        pair_differences=differences,
+        consistency_weight=algorithm.consistency_weight or 0.0,
+    )
+
+
+def _cmnist_base_method(
     cache: CmnistFeatureCache | CmnistTuningFeatureCache,
     runtime: _CmnistRuntimeCandidate,
     task: SearchRunTask,
@@ -823,9 +847,7 @@ def _cmnist_method(
             selection_prob=float(algorithm.selection_prob),
         )
     if isinstance(algorithm, SwadAlgorithmConfig):
-        loss_tables = {
-            table.name: table for table in cache.validation_tables()
-        }
+        loss_tables = {table.name: table for table in cache.validation_tables()}
         selected = tuple(loss_tables[name] for name in algorithm.loss_split_names)
         return SwadLinearProbeMethod(
             loss_features=torch.cat([table.features for table in selected], dim=0),
@@ -843,16 +865,20 @@ def _cmnist_method(
         # Pairs are stored in seeded hash order; the first N form the N-pair bank.
         pair_count = pairs.pair_count
         return MatchDgLinearProbeMethod(
-            pair_differences=(
-                red.features[:pair_count] - green.features[:pair_count]
-            ),
+            pair_differences=(red.features[:pair_count] - green.features[:pair_count]),
             latent_dim=int(algorithm.latent_dim),
             penalty_weight=float(algorithm.penalty_weight),
         )
     return OrdinaryLinearProbeMethod(
-        method_id=task.candidate.method_id,
+        method_id=(
+            base_objective(task.candidate.method_id)
+            if "_" in task.candidate.method_id
+            else task.candidate.method_id
+        ),
         projection=runtime.projection,
-        projection_rank=task.candidate.requested_rank,
+        projection_rank=(
+            task.candidate.requested_rank if runtime.projection is not None else None
+        ),
     )
 
 
@@ -895,7 +921,7 @@ def _cmnist_result_artifacts(
                 digest=inputs["pair_manifest"].digest,
             )
         )
-    if task.candidate.method_id == "grit":
+    if pair_intervention(task.candidate.method_id) == "grit":
         projection = runtime.projection
         if projection is None:
             raise AssertionError("GRIT result lacks projection")
@@ -910,12 +936,18 @@ def _cmnist_result_artifacts(
         )
     return tuple(values)
 
+
 def _cmnist_summary(
     plan: SearchPlan,
     finalists: CmnistFinalists,
     winners: CmnistWinners,
     runs: tuple[CmnistCompletedStageRun, ...],
 ) -> CmnistProductionSummary:
+    from grit.methods.types import consumes_pairs
+    from grit.search.outputs import make_cmnist_intervention_comparisons
+
+    matrix = any(method.endswith(("_grit", "_consistency")) for method in plan.methods)
+
     selectors = cmnist_selectors(_cmnist_search_config(plan))
     by_identity = {
         (
@@ -944,15 +976,18 @@ def _cmnist_summary(
                         test_ood_accuracy=value,
                     )
                 )
-            values = tuple(
-                float(item.test_ood_accuracy) for item in observations
-            )
+            values = tuple(float(item.test_ood_accuracy) for item in observations)
             top = finalists[(method, selector)].ordered_candidates
             methods.append(
                 CmnistMethodSelectorSummary(
                     method_id=method,
                     selector=selector,
                     lineage=plan.resolved_config.lineage,
+                    pair_count=(
+                        _cmnist_search_config(plan).pair_count
+                        if matrix and consumes_pairs(method)
+                        else None
+                    ),
                     selected_candidate_id=winners[(method, selector)].candidate_id,
                     finalist_candidate_ids=(
                         top[0].candidate_id,
@@ -1011,13 +1046,14 @@ def _cmnist_summary(
         lineage=plan.resolved_config.lineage,
         selectors=selectors,
         methods=tuple(methods),
+        intervention_comparisons=(
+            make_cmnist_intervention_comparisons(tuple(methods)) if matrix else ()
+        ),
         paired_selectors=tuple(paired),
     )
 
 
-def _mirror_cmnist_summary(
-    plan: SearchPlan, summary: CmnistProductionSummary
-) -> None:
+def _mirror_cmnist_summary(plan: SearchPlan, summary: CmnistProductionSummary) -> None:
     """Mirror the canonical ten-seed summary; the oracle track is labeled as such."""
 
     rows: list[list[TrackingValue]] = [
@@ -1048,6 +1084,27 @@ def _mirror_cmnist_summary(
         ]
         for paired in summary.paired_selectors
     )
+    existing_contrasts = {"grit_minus_erm"}
+    for comparison in summary.intervention_comparisons:
+        contrast = f"{comparison.minuend}_minus_{comparison.subtrahend}"
+        if (
+            contrast in existing_contrasts
+            and comparison.metric_name == "test_ood_accuracy"
+        ):
+            continue
+        rows.append(
+            [
+                contrast,
+                comparison.selector,
+                None,
+                comparison.metric_name,
+                len(comparison.configured_final_seeds),
+                float(comparison.mean),
+                float(comparison.sample_standard_deviation),
+                float(comparison.ci95_lower),
+                float(comparison.ci95_upper),
+            ]
+        )
     log_summary_table(
         plan,
         track="test_oracle" if summary.test_oracle else "ordinary",
@@ -1083,19 +1140,17 @@ def _final_test_observation(run: CmnistCompletedStageRun) -> tuple[str, float]:
         return decision.selected_record_id, float(decision.objective_value)
     raise AssertionError("completed final run lacks its result")
 
+
 def _load_cmnist_cache(
     plan: SearchPlan,
     *,
     tuning_only: bool = False,
 ) -> CmnistFeatureCache | CmnistTuningFeatureCache:
     paths = {
-        item.kind: Path(item.path)
-        for item in plan.resolved_config.input_artifacts
+        item.kind: Path(item.path) for item in plan.resolved_config.input_artifacts
     }
     loader = (
-        load_cmnist_tuning_feature_cache
-        if tuning_only
-        else load_cmnist_feature_cache
+        load_cmnist_tuning_feature_cache if tuning_only else load_cmnist_feature_cache
     )
     cache = loader(
         paths["feature_manifest"].parent,
@@ -1112,6 +1167,7 @@ def _load_cmnist_cache(
         raise ValueError("CMNIST feature manifest changed after planning")
     return cache
 
+
 def _cmnist_pair_manifest(plan: SearchPlan) -> CmnistOraclePairManifest:
     path = next(
         Path(item.path)
@@ -1121,18 +1177,17 @@ def _cmnist_pair_manifest(plan: SearchPlan) -> CmnistOraclePairManifest:
     manifest = CmnistOraclePairManifest.model_validate_json(
         path.read_text(encoding="utf-8")
     )
-    if (
-        manifest.canonical_digest()
-        != plan.resolved_config.lineage.pair_manifest_digest
-    ):
+    if manifest.canonical_digest() != plan.resolved_config.lineage.pair_manifest_digest:
         raise ValueError("CMNIST pair manifest changed after planning")
     return manifest
+
 
 def _cmnist_search_config(plan: SearchPlan) -> CmnistProductionSearchConfig:
     config = plan.resolved_config.config
     if not isinstance(config, CmnistProductionSearchConfig):
         raise TypeError("CMNIST production runner received another dataset")
     return config
+
 
 def cmnist_status_from_plan(plan: SearchPlan) -> ProductionSearchStatus:
     config = _cmnist_search_config(plan)

@@ -83,7 +83,11 @@ class MatchDgAlgorithm(LinearProbeAlgorithm):
         features: torch.Tensor,
         targets: torch.Tensor,
         objective: Callable[[torch.Tensor, torch.Tensor], torch.Tensor],
+        *,
+        consistency_scale: float = 1.0,
     ) -> float:
+        if consistency_scale != 1.0:
+            raise ValueError("MatchDG does not compose prediction consistency")
         prepared = self._prepare(features)
         prepared_targets = targets.detach().cpu().to(torch.int64)
         self._optimizer.zero_grad(set_to_none=True)

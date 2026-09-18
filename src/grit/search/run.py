@@ -15,7 +15,7 @@ from typing import Literal, TypeAlias, cast
 
 from pydantic import Field, StrictInt, StrictStr, model_validator
 
-from grit.methods.types import MethodId
+from grit.methods.types import MethodId, pair_intervention
 from grit.schemas import CmnistSelector, StrictBoundaryModel
 from grit.search.outputs import (
     CmnistPairedSelectorSummary,
@@ -156,7 +156,7 @@ def pilot_candidates(plan: SearchPlan) -> tuple[SearchCandidate, ...]:
                 for candidate in plan.candidates
                 if candidate.method_id == method
                 and (
-                    method != "grit"
+                    pair_intervention(method) != "grit"
                     or (
                         candidate.requested_rank is not None
                         and candidate.requested_rank > 0

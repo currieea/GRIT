@@ -36,6 +36,7 @@ from grit.config import (
     OrdinaryExperimentConfig,
     OrdinarySelectionConfig,
     SeedSets,
+    algorithm_method_id,
 )
 from grit.data.cmnist import (
     PRODUCTION_PARTITION_TARGETS,
@@ -667,7 +668,7 @@ def _train_candidate(
     stage: SeedStage,
     seed: int,
 ) -> TrainedLinearProbeRun:
-    method_id = candidate.config.algorithm.kind
+    method_id = algorithm_method_id(candidate.config.algorithm)
     rank = (
         candidate.config.projection.requested_rank
         if isinstance(candidate.config.projection, LinearProjectionConfig)

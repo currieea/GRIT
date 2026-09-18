@@ -2,7 +2,7 @@
 schema_version: grit.production-search/v1
 dataset: waterbirds_cf
 protocol_id: waterbirds_cf/v1
-experiment_name: waterbirds-cf-matchdg-openai-clip
+experiment_name: waterbirds-cf-matchdg-openai-clip-bias-free-v2
 experiment_variant: primary_unnormalized
 normalization: none
 artifacts:
@@ -26,7 +26,7 @@ selectors: [waterbirds_validation_worst_group]
 pair_count: 240
 batch_size: 256
 max_epochs: 100
-output_root: ${PROJECT_SCRATCH}/outputs/waterbirds-matchdg
+output_root: ${PROJECT_SCRATCH}/outputs/waterbirds-matchdg-bias-free-v2
 runtime:
   device: cpu
   deterministic_algorithms: true

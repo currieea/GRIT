@@ -10,13 +10,246 @@ from typing import Annotated, Literal, TypeAlias
 
 from pydantic import Field, FiniteFloat, StrictInt, StrictStr, model_validator
 
-from grit.methods.types import IMPLEMENTED_METHODS, MethodId
+from grit.methods.types import IMPLEMENTED_METHODS, MethodId, consumes_pairs
 from grit.schemas import ORDINARY_CMNIST_SELECTORS, CmnistSelector, StrictBoundaryModel
 from grit.search.plan import SearchLineage
 from grit.search.waterbirds_contracts import MetricName, WaterbirdsMetricSummary
 from grit.selection.waterbirds import WaterbirdsSelector
 
 NonEmptyStr: TypeAlias = Annotated[StrictStr, Field(min_length=1)]
+
+
+# Canonical contrasts are deliberately within one supervised objective.
+ObjectiveId: TypeAlias = Literal["erm", "rex", "irm", "fishr"]
+ComparisonMetric: TypeAlias = Literal[
+    "test_ood_accuracy",
+    "worst_group_accuracy",
+    "adjusted_average_accuracy",
+    "raw_average_accuracy",
+]
+_OBJECTIVE_VARIANTS: tuple[tuple[ObjectiveId, MethodId, MethodId, MethodId], ...] = (
+    ("erm", "erm", "grit", "erm_consistency"),
+    ("rex", "rex", "rex_grit", "rex_consistency"),
+    ("irm", "irm", "irm_grit", "irm_consistency"),
+    ("fishr", "fishr", "fishr_grit", "fishr_consistency"),
+)
+
+
+class InterventionComparison(StrictBoundaryModel):
+    """A paired contrast; absolute metrics remain in the method summaries."""
+
+    base_objective: ObjectiveId
+    minuend: MethodId
+    subtrahend: MethodId
+    selector: NonEmptyStr
+    lineage: SearchLineage
+    pair_count: Annotated[StrictInt, Field(gt=0)]
+    metric_name: ComparisonMetric
+    configured_final_seeds: Annotated[
+        tuple[StrictInt, ...], Field(min_length=10, max_length=10)
+    ]
+    differences_by_seed: tuple[tuple[StrictInt, FiniteFloat], ...]
+    mean: FiniteFloat
+    sample_standard_deviation: Annotated[FiniteFloat, Field(ge=0.0)]
+    ci95_lower: FiniteFloat
+    ci95_upper: FiniteFloat
+
+    @model_validator(mode="after")
+    def _validate_comparison(self) -> InterventionComparison:
+        allowed = {
+            (objective, left, right)
+            for objective, vanilla, grit, consistency in _OBJECTIVE_VARIANTS
+            for left, right in (
+                (grit, vanilla),
+                (consistency, vanilla),
+                (grit, consistency),
+            )
+        }
+        if (self.base_objective, self.minuend, self.subtrahend) not in allowed:
+            raise ValueError(
+                "comparison must be a within-objective intervention contrast"
+            )
+        if (
+            len(set(self.configured_final_seeds)) != 10
+            or tuple(seed for seed, _ in self.differences_by_seed)
+            != self.configured_final_seeds
+        ):
+            raise ValueError("comparison differences must align by unique final seed")
+        values = tuple(float(value) for _, value in self.differences_by_seed)
+        expected = _difference_statistics(values)
+        if (
+            self.mean,
+            self.sample_standard_deviation,
+            self.ci95_lower,
+            self.ci95_upper,
+        ) != expected:
+            raise ValueError(
+                "comparison uncertainty is inconsistent with seed differences"
+            )
+        return self
+
+
+def _difference_statistics(
+    values: tuple[float, ...],
+) -> tuple[float, float, float, float]:
+    mean = fmean(values)
+    deviation = stdev(values)
+    half_width = 2.2621571627409915 * deviation / math.sqrt(10)
+    return mean, deviation, mean - half_width, mean + half_width
+
+
+def _make_intervention_comparison(
+    objective: ObjectiveId,
+    left: CmnistMethodSelectorSummary | WaterbirdsProductionMethodSummary,
+    right: CmnistMethodSelectorSummary | WaterbirdsProductionMethodSummary,
+    metric: ComparisonMetric,
+    left_values: tuple[tuple[int, float], ...],
+    right_values: tuple[tuple[int, float], ...],
+) -> InterventionComparison:
+    # Feature-manifest identity binds the encoder and cached representation; the
+    # dataset identity and held-out split bind the evaluation construction.
+    if left.lineage != right.lineage or left.selector != right.selector:
+        raise ValueError("paired comparison requires matching lineage and selector")
+    if set(left.configured_final_seeds) != set(right.configured_final_seeds):
+        raise ValueError("paired comparison requires identical final seed identities")
+    pair_counts = {
+        item.pair_count for item in (left, right) if consumes_pairs(item.method_id)
+    }
+    if len(pair_counts) != 1 or None in pair_counts:
+        raise ValueError("paired interventions require identical explicit pair budgets")
+    pair_count = next(iter(pair_counts))
+    assert pair_count is not None
+    left_by_seed, right_by_seed = dict(left_values), dict(right_values)
+    seeds = left.configured_final_seeds
+    if (
+        len(left_values) != len(left_by_seed)
+        or len(right_values) != len(right_by_seed)
+        or set(left_by_seed) != set(seeds)
+        or set(right_by_seed) != set(seeds)
+    ):
+        raise ValueError("paired metric series require unique matching seed identities")
+    differences = tuple(
+        (seed, left_by_seed[seed] - right_by_seed[seed]) for seed in seeds
+    )
+    mean, deviation, lower, upper = _difference_statistics(
+        tuple(value for _, value in differences)
+    )
+    selector = (
+        left.selector.value
+        if isinstance(left.selector, CmnistSelector)
+        else (left.selector)
+    )
+    return InterventionComparison(
+        base_objective=objective,
+        minuend=left.method_id,
+        subtrahend=right.method_id,
+        selector=selector,
+        lineage=left.lineage,
+        pair_count=pair_count,
+        metric_name=metric,
+        configured_final_seeds=seeds,
+        differences_by_seed=differences,
+        mean=mean,
+        sample_standard_deviation=deviation,
+        ci95_lower=lower,
+        ci95_upper=upper,
+    )
+
+
+def make_cmnist_intervention_comparisons(
+    methods: tuple[CmnistMethodSelectorSummary, ...],
+) -> tuple[InterventionComparison, ...]:
+    by_identity = {(item.method_id, item.selector): item for item in methods}
+    if len(by_identity) != len(methods):
+        raise ValueError("comparison method/selector identities must be unique")
+    comparisons: list[InterventionComparison] = []
+    selectors = tuple(dict.fromkeys(item.selector for item in methods))
+    for objective, vanilla, grit, consistency in _OBJECTIVE_VARIANTS:
+        for selector in selectors:
+            for left_id, right_id in (
+                (grit, vanilla),
+                (consistency, vanilla),
+                (grit, consistency),
+            ):
+                left = by_identity.get((left_id, selector))
+                right = by_identity.get((right_id, selector))
+                if left is None or right is None:
+                    continue
+                comparisons.append(
+                    _make_intervention_comparison(
+                        objective,
+                        left,
+                        right,
+                        "test_ood_accuracy",
+                        tuple(
+                            (item.seed, float(item.test_ood_accuracy))
+                            for item in left.final_observations
+                        ),
+                        tuple(
+                            (item.seed, float(item.test_ood_accuracy))
+                            for item in right.final_observations
+                        ),
+                    )
+                )
+    return tuple(comparisons)
+
+
+def make_waterbirds_intervention_comparisons(
+    methods: tuple[WaterbirdsProductionMethodSummary, ...],
+) -> tuple[InterventionComparison, ...]:
+    by_method = {item.method_id: item for item in methods}
+    if len(by_method) != len(methods):
+        raise ValueError("comparison method identities must be unique")
+    comparisons: list[InterventionComparison] = []
+    for objective, vanilla, grit, consistency in _OBJECTIVE_VARIANTS:
+        for left_id, right_id in (
+            (grit, vanilla),
+            (consistency, vanilla),
+            (grit, consistency),
+        ):
+            left, right = by_method.get(left_id), by_method.get(right_id)
+            if left is None or right is None:
+                continue
+            metrics: tuple[
+                tuple[
+                    ComparisonMetric,
+                    tuple[tuple[int, float], ...],
+                    tuple[tuple[int, float], ...],
+                ],
+                ...,
+            ] = (
+                (
+                    "worst_group_accuracy",
+                    left.worst_group_by_seed,
+                    right.worst_group_by_seed,
+                ),
+                (
+                    "adjusted_average_accuracy",
+                    left.adjusted_average_by_seed,
+                    right.adjusted_average_by_seed,
+                ),
+                (
+                    "raw_average_accuracy",
+                    left.raw_average_by_seed,
+                    right.raw_average_by_seed,
+                ),
+            )
+            for metric, left_values, right_values in metrics:
+                comparisons.append(
+                    _make_intervention_comparison(
+                        objective,
+                        left,
+                        right,
+                        metric,
+                        left_values,
+                        right_values,
+                    )
+                )
+    return tuple(comparisons)
+
+
+def _requires_intervention_comparisons(methods: tuple[str, ...]) -> bool:
+    return any(method.endswith(("_grit", "_consistency")) for method in methods)
 
 
 class CmnistAccuracySummary(StrictBoundaryModel):
@@ -60,6 +293,10 @@ class CmnistMethodSelectorSummary(StrictBoundaryModel):
     method_id: MethodId
     selector: CmnistSelector
     lineage: SearchLineage
+    pair_count: Annotated[StrictInt, Field(gt=0)] | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     selected_candidate_id: NonEmptyStr
     finalist_candidate_ids: tuple[NonEmptyStr, NonEmptyStr, NonEmptyStr]
     configured_final_seeds: Annotated[
@@ -152,6 +389,11 @@ class CmnistProductionSummary(StrictBoundaryModel):
     methods: Annotated[tuple[CmnistMethodSelectorSummary, ...], Field(min_length=1)]
     paired_selectors: tuple[CmnistPairedSelectorSummary, ...]
 
+    intervention_comparisons: tuple[InterventionComparison, ...] = Field(
+        default=(),
+        exclude_if=lambda value: not value,
+    )
+
     @property
     def test_oracle(self) -> bool:
         return self.selectors == (CmnistSelector.TEST_ORACLE,)
@@ -166,6 +408,15 @@ class CmnistProductionSummary(StrictBoundaryModel):
                 "CMNIST summaries use both ordinary selectors or only test_oracle"
             )
         observed_methods = tuple(dict.fromkeys(item.method_id for item in self.methods))
+        if self.intervention_comparisons or _requires_intervention_comparisons(
+            observed_methods
+        ):
+            if self.intervention_comparisons != make_cmnist_intervention_comparisons(
+                self.methods
+            ):
+                raise ValueError(
+                    "CMNIST intervention comparisons are incomplete or inconsistent"
+                )
         if tuple(sorted(observed_methods, key=IMPLEMENTED_METHODS.index)) != (
             observed_methods
         ):
@@ -406,6 +657,10 @@ class WaterbirdsProductionMethodSummary(StrictBoundaryModel):
     method_id: MethodId
     selector: WaterbirdsSelector
     lineage: SearchLineage
+    pair_count: Annotated[StrictInt, Field(gt=0)] | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     selected_candidate_id: NonEmptyStr
     finalist_candidate_ids: tuple[NonEmptyStr, NonEmptyStr, NonEmptyStr]
     configured_final_seeds: Annotated[
@@ -487,6 +742,11 @@ class WaterbirdsProductionSummary(StrictBoundaryModel):
     paired_worst_group_by_seed: tuple[tuple[StrictInt, FiniteFloat], ...] | None
     paired_worst_group_summary: WaterbirdsMetricSummary | None
 
+    intervention_comparisons: tuple[InterventionComparison, ...] = Field(
+        default=(),
+        exclude_if=lambda value: not value,
+    )
+
     @property
     def test_oracle(self) -> bool:
         return self.selector == "test_oracle"
@@ -498,6 +758,16 @@ class WaterbirdsProductionSummary(StrictBoundaryModel):
     @model_validator(mode="after")
     def _validate_paired(self) -> WaterbirdsProductionSummary:
         method_ids = tuple(item.method_id for item in self.methods)
+        if self.intervention_comparisons or _requires_intervention_comparisons(
+            method_ids
+        ):
+            if (
+                self.intervention_comparisons
+                != make_waterbirds_intervention_comparisons(self.methods)
+            ):
+                raise ValueError(
+                    "Waterbirds intervention comparisons are incomplete or inconsistent"
+                )
         if len(set(method_ids)) != len(method_ids) or method_ids != tuple(
             sorted(method_ids, key=IMPLEMENTED_METHODS.index)
         ):

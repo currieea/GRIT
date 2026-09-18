@@ -12,8 +12,10 @@ from grit.config import (
     LinearProjectionConfig,
     OrdinaryExperimentConfig,
     RotatedMnistExperimentConfig,
+    algorithm_method_id,
 )
 from grit.methods.checkpoints import RestorationReceipt
+from grit.methods.types import consumes_pairs
 from grit.schemas import CmnistSelector, StrictBoundaryModel
 from grit.selection.cmnist import (
     DiagnosticMetricRecord,
@@ -126,17 +128,15 @@ class OrdinaryRunResult(StrictBoundaryModel):
             raise ValueError("a successful ordinary result requires one final metric")
         if not self.validation_metrics:
             raise ValueError("a successful ordinary result requires validation metrics")
-        if candidate.method_id != self.resolved_config.algorithm.kind:
+        if candidate.method_id != algorithm_method_id(self.resolved_config.algorithm):
             raise ValueError("frozen candidate method does not match result algorithm")
         if candidate.selector is not self.resolved_config.selection.selector:
             raise ValueError("frozen candidate selector does not match result config")
         if candidate.seed_sets != self.resolved_config.seed_sets:
             raise ValueError("frozen candidate seed sets do not match result config")
         expected_rank: int | None = None
-        if self.resolved_config.algorithm.kind == "grit":
+        if isinstance(self.resolved_config.projection, LinearProjectionConfig):
             projection = self.resolved_config.projection
-            if not isinstance(projection, LinearProjectionConfig):
-                raise AssertionError("validated GRIT config requires linear projection")
             expected_rank = projection.requested_rank
         if candidate.decision.projection_rank != expected_rank:
             raise ValueError("candidate rank does not match result projection config")
@@ -288,9 +288,9 @@ class OrdinaryRunResult(StrictBoundaryModel):
             "feature_manifest",
             "selected_linear_checkpoint",
         }
-        if self.resolved_config.algorithm.kind in ("grit", "matchdg"):
+        if consumes_pairs(algorithm_method_id(self.resolved_config.algorithm)):
             required.add("pair_manifest")
-        if self.resolved_config.algorithm.kind == "grit":
+        if isinstance(self.resolved_config.projection, LinearProjectionConfig):
             required.add("projection_diagnostics")
         if set(by_kind) != required:
             raise ValueError("CMNIST result required artifact references are missing")
@@ -350,7 +350,7 @@ class CmnistTestOracleDiagnosticResult(StrictBoundaryModel):
         if not metrics:
             raise ValueError("a successful diagnostic requires at least one metric")
         if any(
-            metric.method_id != self.resolved_config.algorithm.kind
+            metric.method_id != algorithm_method_id(self.resolved_config.algorithm)
             for metric in metrics
         ):
             raise ValueError("diagnostic metric method does not match result algorithm")
@@ -383,7 +383,7 @@ class CmnistTestOracleDiagnosticResult(StrictBoundaryModel):
             raise ValueError(
                 "test-oracle lifecycle selections must be labeled test_oracle"
             )
-        if candidate.method_id != self.resolved_config.algorithm.kind:
+        if candidate.method_id != algorithm_method_id(self.resolved_config.algorithm):
             raise ValueError("frozen candidate method does not match result algorithm")
         if candidate.seed_sets != self.resolved_config.seed_sets:
             raise ValueError("frozen candidate seed sets do not match result config")

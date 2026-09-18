@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Protocol, TypeAlias, cast
 
 from pydantic import Field, StrictStr
 
+from grit.methods.types import base_objective, pair_intervention
 from grit.paths import scratch_root
 from grit.schemas import StrictBoundaryModel
 
@@ -263,9 +264,7 @@ class MirrorRunTracker:
         columns: Sequence[str],
         rows: Sequence[Sequence[TrackingValue]],
     ) -> None:
-        self._guard(
-            "record a table", lambda: self.run.log_table(name, columns, rows)
-        )
+        self._guard("record a table", lambda: self.run.log_table(name, columns, rows))
 
     def finish(self, *, failed: bool = False) -> None:
         # A nonzero exit code is how W&B distinguishes a crashed run from a
@@ -309,6 +308,8 @@ def start_task_tracker(
         **_plan_config(plan),
         **_candidate_config(candidate),
         **_algorithm_config(algorithm),
+        "base_objective": base_objective(candidate.method_id),
+        "pair_intervention": pair_intervention(candidate.method_id),
         "task_id": task.task_id,
         "attempt_id": uuid.uuid4().hex[:12],
         "relative_directory": task.relative_directory,
@@ -528,7 +529,14 @@ def _algorithm_config(
     dumped = cast(dict[str, object], algorithm.model_dump(mode="json"))
     values: dict[str, TrackingValue] = {}
     for name, value in dumped.items():
-        if isinstance(value, list | tuple):
+        if isinstance(value, dict):
+            for nested_name, nested_value in cast(dict[str, object], value).items():
+                values[f"algorithm/{name}/{nested_name}"] = (
+                    ",".join(str(item) for item in cast(list[object], nested_value))
+                    if isinstance(nested_value, list)
+                    else cast(TrackingValue, nested_value)
+                )
+        elif isinstance(value, list | tuple):
             items = cast("list[object] | tuple[object, ...]", value)
             values[f"algorithm/{name}"] = ",".join(str(item) for item in items)
         else:

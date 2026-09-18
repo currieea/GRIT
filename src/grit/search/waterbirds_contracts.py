@@ -19,6 +19,7 @@ from pydantic import (
 from grit.config import (
     PAIR_CONSUMING_ALGORITHMS,
     AlgorithmConfig,
+    ComposedAlgorithmConfig,
     FishAlgorithmConfig,
     FishrAlgorithmConfig,
     GroupDroAlgorithmConfig,
@@ -29,8 +30,9 @@ from grit.config import (
     RexAlgorithmConfig,
     SeedSets,
     SwadAlgorithmConfig,
+    algorithm_method_id,
 )
-from grit.methods.types import METHOD_LABELS, MethodId
+from grit.methods.types import METHOD_LABELS, MethodId, pair_intervention
 from grit.methods.waterbirds_training import WaterbirdsRestorationReceipt
 from grit.results import CodeProvenance, EnvironmentProvenance
 from grit.schemas import StrictBoundaryModel, canonical_digest_value
@@ -79,7 +81,7 @@ class WaterbirdsCandidateConfig(StrictBoundaryModel):
                 "Waterbirds fixture configs must be non-reportable and production "
                 "configs must be reportable"
             )
-        if self.algorithm.kind != self.method_id:
+        if algorithm_method_id(self.algorithm) != self.method_id:
             raise ValueError("Waterbirds candidate algorithm does not match method")
         uses_pairs = isinstance(self.algorithm, PAIR_CONSUMING_ALGORITHMS)
         if uses_pairs != (self.pair_manifest_digest is not None):
@@ -92,13 +94,21 @@ class WaterbirdsCandidateConfig(StrictBoundaryModel):
             self.projection_rank,
             self.relative_singular_value_tolerance,
         )
-        if self.method_id == "grit" and any(v is None for v in projection_fields):
+        if pair_intervention(self.method_id) == "grit" and any(
+            v is None for v in projection_fields
+        ):
             raise ValueError("Waterbirds GRIT config requires oracle projection")
-        if self.method_id != "grit" and any(v is not None for v in projection_fields):
+        if pair_intervention(self.method_id) != "grit" and any(
+            v is not None for v in projection_fields
+        ):
             raise ValueError(
                 f"Waterbirds {self.method_id} config cannot contain a projection"
             )
-        algorithm = self.algorithm
+        algorithm = (
+            self.algorithm.base_objective
+            if isinstance(self.algorithm, ComposedAlgorithmConfig)
+            else self.algorithm
+        )
         if (
             isinstance(algorithm, GroupDroAlgorithmConfig | LisaAlgorithmConfig)
             and algorithm.group_definition != "target_background"
@@ -340,7 +350,7 @@ class _WaterbirdsRunResultBase(StrictBoundaryModel):
         }
         if config.pair_manifest_digest is not None:
             required.add("pair_manifest")
-        if config.method_id == "grit":
+        if pair_intervention(config.method_id) == "grit":
             required.add("projection_diagnostics")
         if set(artifacts_by_kind) != required:
             raise ValueError(
@@ -371,7 +381,7 @@ class _WaterbirdsRunResultBase(StrictBoundaryModel):
                     f"Waterbirds {METHOD_LABELS[config.method_id]} artifact lineage "
                     "is inconsistent"
                 )
-        if config.method_id == "grit":
+        if pair_intervention(config.method_id) == "grit":
             projection = artifacts_by_kind["projection_diagnostics"]
             if (
                 not isinstance(projection, WaterbirdsProjectionArtifactReference)

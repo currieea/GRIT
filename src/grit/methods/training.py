@@ -13,7 +13,7 @@ from typing import Literal, Protocol, TypeAlias, cast
 import numpy as np
 import torch
 from numpy.typing import NDArray
-from pydantic import StrictInt, StrictStr
+from pydantic import Field, StrictInt, StrictStr
 
 from grit.config import LinearProbeTrainingConfig
 from grit.methods.checkpoints import CheckpointStore, StoredCheckpoint
@@ -60,6 +60,8 @@ class LinearProbeAlgorithm:
         model_seed: int,
         projection: FittedLinearProjection | None,
         num_classes: int = 2,
+        pair_differences: torch.Tensor | None = None,
+        consistency_weight: float = 0.0,
     ) -> None:
         if num_classes <= 1:
             raise ValueError("linear probe requires at least two output classes")
@@ -82,7 +84,37 @@ class LinearProbeAlgorithm:
         self._learning_rate = float(config.learning_rate)
         self._weight_decay = float(config.weight_decay)
         self._optimizer = self._new_optimizer()
-        self._projection = projection
+        self._projection_basis = (
+            None
+            if projection is None
+            else projection.basis.detach().cpu().to(torch.float32)
+        )
+        if not math.isfinite(consistency_weight) or consistency_weight < 0.0:
+            raise ValueError("consistency weight must be finite and non-negative")
+        if pair_differences is None and consistency_weight != 0.0:
+            raise ValueError(
+                "prediction consistency requires training-pair differences"
+            )
+        if pair_differences is not None:
+            if (
+                pair_differences.ndim != 2
+                or pair_differences.shape[0] == 0
+                or pair_differences.shape[1] != 512
+                or not bool(torch.isfinite(pair_differences).all())
+            ):
+                raise ValueError(
+                    "pair differences must be a finite non-empty [N, 512] matrix"
+                )
+            if projection is not None:
+                raise ValueError(
+                    "projection and consistency are exclusive interventions"
+                )
+        self._consistency_pair_differences = (
+            None
+            if pair_differences is None
+            else pair_differences.detach().cpu().to(torch.float32).clone()
+        )
+        self._consistency_weight = consistency_weight
 
     def _new_optimizer(self) -> torch.optim.Adam:
         return torch.optim.Adam(
@@ -117,6 +149,8 @@ class LinearProbeAlgorithm:
         features: torch.Tensor,
         targets: torch.Tensor,
         objective: Callable[[torch.Tensor], torch.Tensor],
+        *,
+        consistency_scale: float = 1.0,
     ) -> float:
         """Update from an algorithm-specific reduction of per-example losses."""
 
@@ -132,6 +166,7 @@ class LinearProbeAlgorithm:
             features,
             targets,
             logits_objective,
+            consistency_scale=consistency_scale,
         )
 
     def update_with_logits_objective(
@@ -139,8 +174,14 @@ class LinearProbeAlgorithm:
         features: torch.Tensor,
         targets: torch.Tensor,
         objective: Callable[[torch.Tensor, torch.Tensor], torch.Tensor],
+        *,
+        consistency_scale: float = 1.0,
     ) -> float:
-        """Update from an objective that needs logits and aligned targets."""
+        """Update from logits, then add consistency outside supervised statistics.
+
+        ``consistency_scale`` applies the base objective's complete-loss rescaling;
+        IRMv1 and V-REx pass ``1 / max(1, current_penalty_weight)``.
+        """
 
         self._model.train()
         prepared = self._prepare(features)
@@ -148,6 +189,17 @@ class LinearProbeAlgorithm:
         self._optimizer.zero_grad(set_to_none=True)
         logits = self._model(prepared)
         loss = objective(logits, prepared_targets)
+        if (
+            self._consistency_pair_differences is not None
+            and self._consistency_weight != 0.0
+        ):
+            loss = loss + (
+                consistency_scale
+                * self._consistency_weight
+                * prediction_consistency_penalty(
+                    self._model.weight, self._consistency_pair_differences
+                )
+            )
         if loss.ndim != 0 or not torch.isfinite(loss):
             raise ValueError("linear-probe objective must return one finite scalar")
         backward = cast(CallableWithoutArguments, loss.backward)
@@ -186,6 +238,11 @@ class LinearProbeAlgorithm:
         return LinearProbeState(
             weight=self._model.weight.detach().cpu().clone(),
             bias=self._model.bias.detach().cpu().clone(),
+            projection_basis=(
+                torch.empty((512, 0), dtype=torch.float32)
+                if self._projection_basis is None
+                else self._projection_basis.clone()
+            ),
         )
 
     def restore_inference_state(self, state: LinearProbeState) -> None:
@@ -194,6 +251,23 @@ class LinearProbeAlgorithm:
             or state.bias.shape != self._model.bias.shape
         ):
             raise ValueError("linear checkpoint state has incompatible shapes")
+        if state.projection_basis is not None:
+            basis = state.projection_basis.detach().cpu().to(torch.float32)
+            if (
+                basis.ndim != 2
+                or basis.shape[0] != 512
+                or basis.shape[1] > 512
+                or not bool(torch.isfinite(basis).all())
+            ):
+                raise ValueError("checkpoint projection basis has incompatible shape")
+            if not torch.allclose(
+                basis.T @ basis,
+                torch.eye(int(basis.shape[1]), dtype=torch.float32),
+                atol=1e-4,
+                rtol=1e-4,
+            ):
+                raise ValueError("checkpoint projection basis must be orthonormal")
+            self._projection_basis = basis.clone()
         with torch.no_grad():
             self._model.weight.copy_(state.weight.to(torch.float32))
             self._model.bias.copy_(state.bias.to(torch.float32))
@@ -202,9 +276,23 @@ class LinearProbeAlgorithm:
         prepared = features.detach().cpu().to(torch.float32)
         if prepared.ndim != 2 or int(prepared.shape[1]) != 512:
             raise ValueError("linear probe requires feature shape [N, 512]")
-        if self._projection is not None:
-            prepared = self._projection.transform(prepared)
+        if self._projection_basis is not None:
+            if not bool(torch.isfinite(prepared).all()):
+                raise ValueError("projection inputs must be finite")
+            if self._projection_basis.shape[1]:
+                basis = self._projection_basis
+                prepared = prepared - (prepared @ basis) @ basis.transpose(0, 1)
         return prepared
+
+
+def prediction_consistency_penalty(
+    weight: torch.Tensor, pair_differences: torch.Tensor
+) -> torch.Tensor:
+    """Mean over pairs, sum over output coordinates; classifier bias cancels."""
+
+    if pair_differences.ndim != 2 or pair_differences.shape[0] == 0:
+        raise ValueError("prediction consistency requires a non-empty pair matrix")
+    return (pair_differences @ weight.transpose(0, 1)).square().sum(dim=1).mean()
 
 
 class LinearProbeTrainingMethod(Protocol):
@@ -430,6 +518,7 @@ class RexLinearProbeMethod(LinearProbeMethodDefaults):
                 environment_count=self.environment_count,
                 penalty_weight=penalty_weight,
             ),
+            consistency_scale=1.0 / max(1.0, penalty_weight),
         )
         self._update_count += 1
         return loss
@@ -488,6 +577,7 @@ class IrmLinearProbeMethod(LinearProbeMethodDefaults):
                 environment_count=self.environment_count,
                 penalty_weight=penalty_weight,
             ),
+            consistency_scale=1.0 / max(1.0, penalty_weight),
         )
         self._update_count += 1
         return loss
@@ -589,9 +679,7 @@ def train_linear_probe_epochs(
     if targets.ndim != 1 or int(targets.shape[0]) != int(features.shape[0]):
         raise ValueError("linear probe training targets must align with features")
     torch.use_deterministic_algorithms(True)
-    algorithm = method.build_algorithm(
-        config, model_seed=seed, num_classes=num_classes
-    )
+    algorithm = method.build_algorithm(config, model_seed=seed, num_classes=num_classes)
     generator = torch.Generator(device="cpu").manual_seed(seed)
     store = InMemoryLinearCheckpointStore(store_id=f"memory:{run_id}")
     epoch_losses: list[float] = []
@@ -779,6 +867,9 @@ class PersistedLinearCheckpointManifest(StrictBoundaryModel):
     checkpoint: CheckpointIdentity
     weight: LinearCheckpointFile
     bias: LinearCheckpointFile
+    projection_basis: LinearCheckpointFile | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class _TensorToNumpy(Protocol):
@@ -817,7 +908,17 @@ class PersistedLinearCheckpointStore(CheckpointStore[LinearProbeState]):
         bias = _load_checkpoint_array(self._root, self._manifest.bias)
         return StoredCheckpoint(
             self._manifest.checkpoint,
-            LinearProbeState(weight=weight, bias=bias),
+            LinearProbeState(
+                weight=weight,
+                bias=bias,
+                projection_basis=(
+                    None
+                    if self._manifest.projection_basis is None
+                    else _load_checkpoint_array(
+                        self._root, self._manifest.projection_basis
+                    )
+                ),
+            ),
         )
 
 
@@ -836,6 +937,13 @@ def persist_selected_linear_checkpoint(
         checkpoint=stored.identity,
         weight=weight,
         bias=bias,
+        projection_basis=(
+            None
+            if stored.state.projection_basis is None
+            else _write_checkpoint_array(
+                output_dir, "projection_basis.npy", stored.state.projection_basis
+            )
+        ),
     )
     (output_dir / "manifest.json").write_text(
         manifest.canonical_json() + "\n", encoding="utf-8"

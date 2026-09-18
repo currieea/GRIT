@@ -9,3 +9,6 @@
 - [`history/`](history/): the original staged rewrite plan, architecture notes, contract
   proposal, progress log, legacy-baseline audit, and the first server runbook. Archived
   for context; the README and `AGENTS.md` are the current instructions.
+
+- [`plans/objective-intervention-experiments.md`](plans/objective-intervention-experiments.md):
+  active matrix implementation and validation plan; archive after pilot validation.

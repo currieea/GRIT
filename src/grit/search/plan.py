@@ -9,7 +9,7 @@ import platform
 import re
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Annotated, Literal, Protocol, TypeAlias, cast
 
@@ -31,6 +31,7 @@ from grit.config import (
     CmnistArtifactLineageConfig,
     CmnistDatasetConfig,
     CmnistSourceCounts,
+    ComposedAlgorithmConfig,
     CpuRuntimeConfig,
     DisabledPairsConfig,
     DisabledProjectionConfig,
@@ -83,6 +84,9 @@ from grit.methods.types import (
     IMPLEMENTED_METHODS,
     METHOD_LABELS,
     MethodId,
+    base_objective,
+    consumes_pairs,
+    pair_intervention,
 )
 from grit.paths import REPO_ROOT, expand_config_path
 from grit.results import CodeProvenance, EnvironmentProvenance
@@ -97,6 +101,7 @@ from grit.search.waterbirds_contracts import WaterbirdsCandidateConfig
 
 NonEmptyStr: TypeAlias = Annotated[StrictStr, Field(min_length=1)]
 Normalization: TypeAlias = Literal["none", "l2"]
+
 
 # Defaults used by the checked-in configs and tests. Any grid may be configured.
 APPROVED_LEARNING_RATES: tuple[float, float, float, float] = (
@@ -168,6 +173,9 @@ class SearchSpaceConfig(StrictBoundaryModel):
     methods: Annotated[tuple[MethodId, ...], Field(min_length=1)]
     learning_rates: Annotated[tuple[StrictFloat, ...], Field(min_length=1)]
     weight_decays: Annotated[tuple[StrictFloat, ...], Field(min_length=1)]
+    consistency_weights: tuple[StrictFloat, ...] = Field(
+        default=(), exclude_if=lambda values: not values
+    )
     projection_ranks: tuple[StrictInt, ...] = Field(
         default=(), exclude_if=lambda values: not values
     )
@@ -225,6 +233,17 @@ class SearchSpaceConfig(StrictBoundaryModel):
 
     @model_validator(mode="after")
     def _validate_space(self) -> SearchSpaceConfig:
+        bases = {base_objective(method) for method in self.methods}
+        if any(value < 0 for value in self.consistency_weights):
+            raise ValueError("consistency_weights must be non-negative")
+        if any(pair_intervention(m) == "consistency" for m in self.methods) != bool(
+            self.consistency_weights
+        ):
+            raise ValueError(
+                "consistency_weights required exactly for consistency variants"
+            )
+        if len(set(self.consistency_weights)) != len(self.consistency_weights):
+            raise ValueError("consistency_weights contains duplicate values")
         if len(set(self.methods)) != len(self.methods):
             raise ValueError("production search methods must be unique")
         if tuple(sorted(self.methods, key=IMPLEMENTED_METHODS.index)) != self.methods:
@@ -277,7 +296,7 @@ class SearchSpaceConfig(StrictBoundaryModel):
             ("rdm", "rdm_penalty_weights", self.rdm_penalty_weights),
         )
         for method, name, values in selected_grids:
-            if (method in self.methods) != bool(values):
+            if (method in bases) != bool(values):
                 raise ValueError(
                     f"{name} must be non-empty exactly when {METHOD_LABELS[method]} "
                     "is selected"
@@ -294,7 +313,9 @@ class SearchSpaceConfig(StrictBoundaryModel):
             raise ValueError("rex_penalty_weights must be positive")
         if any(value <= 0 for value in self.irm_penalty_weights):
             raise ValueError("irm_penalty_weights must be positive")
-        if ("grit" in self.methods) != bool(self.projection_ranks):
+        if (any(pair_intervention(m) == "grit" for m in self.methods)) != bool(
+            self.projection_ranks
+        ):
             raise ValueError(
                 "projection_ranks must be non-empty exactly when GRIT is selected"
             )
@@ -303,7 +324,7 @@ class SearchSpaceConfig(StrictBoundaryModel):
                 "groupdro_step_sizes must be non-empty exactly when GroupDRO is "
                 "selected"
             )
-        rex_selected = "rex" in self.methods
+        rex_selected = "rex" in bases
         if rex_selected != bool(self.rex_penalty_weights):
             raise ValueError(
                 "rex_penalty_weights must be non-empty exactly when REx is selected"
@@ -312,7 +333,7 @@ class SearchSpaceConfig(StrictBoundaryModel):
             raise ValueError(
                 "rex_penalty_anneal_updates must be set exactly when REx is selected"
             )
-        irm_selected = "irm" in self.methods
+        irm_selected = "irm" in bases
         if irm_selected != bool(self.irm_penalty_weights):
             raise ValueError(
                 "irm_penalty_weights must be non-empty exactly when IRM is selected"
@@ -334,7 +355,7 @@ class SearchSpaceConfig(StrictBoundaryModel):
             ("rdm", "rdm_variance_weight", self.rdm_variance_weight),
         )
         for method, name, value in fixed_settings:
-            if (method in self.methods) != (value is not None):
+            if (method in bases) != (value is not None):
                 raise ValueError(
                     f"{name} must be set exactly when {METHOD_LABELS[method]} is "
                     "selected"
@@ -470,31 +491,7 @@ def _require_runnable_grid(space: SearchSpaceConfig, pair_count: int) -> None:
 
 
 def _method_setting_count(space: SearchSpaceConfig, method: MethodId) -> int:
-    if method == "erm":
-        return 1
-    if method == "grit":
-        return len(space.projection_ranks)
-    if method == "groupdro":
-        return len(space.groupdro_step_sizes)
-    if method == "rex":
-        return len(space.rex_penalty_weights)
-    if method == "irm":
-        return len(space.irm_penalty_weights)
-    if method == "fish":
-        return len(space.fish_meta_step_sizes)
-    if method == "lisa":
-        return len(space.lisa_selection_probs)
-    if method == "swad":
-        return len(space.swad_tolerance_ratios)
-    if method == "matchdg":
-        return len(space.matchdg_latent_dims) * len(space.matchdg_penalty_weights)
-    if method == "sd":
-        return len(space.sd_penalty_weights)
-    if method == "fishr":
-        return len(space.fishr_penalty_weights)
-    if method == "rdm":
-        return len(space.rdm_penalty_weights)
-    raise AssertionError(f"candidate grid is missing method {method}")
+    return len(_method_settings_grid(space, method))
 
 
 ProductionSearchConfig: TypeAlias = Annotated[
@@ -608,6 +605,7 @@ class ResolvedProductionSearchConfig(StrictBoundaryModel):
 class MethodSettings:
     """Method-specific candidate settings; exactly the fields a method needs are set."""
 
+    consistency_weight: float | None = None
     requested_rank: int | None = None
     groupdro_step_size: float | None = None
     penalty_weight: float | None = None
@@ -623,6 +621,7 @@ class MethodSettings:
 
 
 _SETTING_FIELDS: tuple[str, ...] = (
+    "consistency_weight",
     "requested_rank",
     "groupdro_step_size",
     "penalty_weight",
@@ -646,8 +645,19 @@ REQUIRED_SETTINGS: dict[MethodId, frozenset[str]] = {
     "rdm": frozenset({"penalty_weight"}),
 }
 
+for _method in IMPLEMENTED_METHODS:
+    if "_" in _method:
+        REQUIRED_SETTINGS[_method] = REQUIRED_SETTINGS[base_objective(_method)] | {
+            "requested_rank"
+            if pair_intervention(_method) == "grit"
+            else "consistency_weight"
+        }
+
 
 class SearchCandidate(StrictBoundaryModel):
+    consistency_weight: Annotated[StrictFloat, Field(ge=0.0)] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     candidate_id: NonEmptyStr
     scientific_config_digest: NonEmptyStr
     method_id: MethodId
@@ -738,7 +748,12 @@ class SearchPlan(StrictBoundaryModel):
         if self.seeds != config.seeds:
             raise ValueError("search plan seeds do not match resolved config")
         if self.candidates != _candidate_grid(self.resolved_config):
-            raise ValueError("search plan candidate grid is inconsistent")
+            # Read-only historical inspection remains possible. New planning below
+            # compares against the current grid and cannot resume the old objective.
+            if "matchdg" not in self.methods or self.candidates != _candidate_grid(
+                self.resolved_config, legacy_matchdg=True
+            ):
+                raise ValueError("search plan candidate grid is inconsistent")
         if self.expected_run_counts != _expected_run_counts(config):
             raise ValueError("search plan run counts are inconsistent")
         if self.output_schemas != _expected_output_schemas(config):
@@ -757,6 +772,7 @@ def load_production_search_config(path: Path) -> ProductionSearchConfig:
 
 _FLOAT_FIELDS = frozenset(
     {
+        "consistency_weights",
         "learning_rates",
         "weight_decays",
         "groupdro_step_sizes",
@@ -1046,7 +1062,7 @@ def _expected_output_schemas(
                     schema_version="grit.linear-projection/v2",
                 ),
             )
-            if "grit" in config.search_space.methods
+            if any(pair_intervention(m) == "grit" for m in config.search_space.methods)
             else ()
         ),
         OutputSchemaVersion(
@@ -1125,6 +1141,8 @@ def write_search_plan(
 
 def _candidate_grid(
     resolved: ResolvedProductionSearchConfig,
+    *,
+    legacy_matchdg: bool = False,
 ) -> tuple[SearchCandidate, ...]:
     config = resolved.config
     lineage = resolved.lineage
@@ -1145,6 +1163,7 @@ def _candidate_grid(
                         learning_rate,
                         weight_decay,
                         setting,
+                        legacy_matchdg=legacy_matchdg,
                     )
                     candidate_id = _candidate_id(config.dataset, method, scientific)
                     candidates.append(
@@ -1155,6 +1174,7 @@ def _candidate_grid(
                             learning_rate=learning_rate,
                             weight_decay=weight_decay,
                             requested_rank=setting.requested_rank,
+                            consistency_weight=setting.consistency_weight,
                             groupdro_step_size=setting.groupdro_step_size,
                             penalty_weight=setting.penalty_weight,
                             fish_meta_step_size=setting.fish_meta_step_size,
@@ -1175,6 +1195,23 @@ def _candidate_grid(
 def _method_settings_grid(
     space: SearchSpaceConfig, method: MethodId
 ) -> tuple[MethodSettings, ...]:
+    if "_" in method:
+        base_settings = _method_settings_grid(space, base_objective(method))
+        values = (
+            space.projection_ranks
+            if pair_intervention(method) == "grit"
+            else space.consistency_weights
+        )
+        field_name = (
+            "requested_rank"
+            if pair_intervention(method) == "grit"
+            else "consistency_weight"
+        )
+        return tuple(
+            replace(setting, **{field_name: value})
+            for setting in base_settings
+            for value in sorted(values)
+        )
     if method == "erm":
         return (MethodSettings(),)
     if method == "grit":
@@ -1266,7 +1303,7 @@ def cmnist_candidate_components(
         group_definition="target_color",
         loss_split_names=("val_e01", "val_e02"),
     )
-    if method == "grit":
+    if pair_intervention(method) == "grit":
         rank = setting.requested_rank
         if rank is None:
             raise AssertionError("planned CMNIST GRIT candidate lacks a rank")
@@ -1283,7 +1320,7 @@ def cmnist_candidate_components(
             algorithm,
             lineage.pair_manifest_digest,
         )
-    if method == "matchdg":
+    if consumes_pairs(method):
         return CmnistCandidateComponents(
             oracle_pairs, disabled_projection, algorithm, lineage.pair_manifest_digest
         )
@@ -1310,6 +1347,32 @@ def candidate_algorithm_config(
 
     if setting.present_fields() != REQUIRED_SETTINGS[method]:
         raise AssertionError(f"planned {method} candidate has wrong settings")
+    if "_" in method:
+        base = candidate_algorithm_config(
+            config,
+            base_objective(method),
+            replace(setting, requested_rank=None, consistency_weight=None),
+            environment_names=environment_names,
+            group_definition=group_definition,
+            loss_split_names=loss_split_names,
+        )
+        if not isinstance(
+            base,
+            ErmAlgorithmConfig
+            | RexAlgorithmConfig
+            | IrmAlgorithmConfig
+            | FishrAlgorithmConfig,
+        ):
+            raise AssertionError("unsupported composed base objective")
+        intervention = pair_intervention(method)
+        if intervention == "vanilla":
+            raise AssertionError("composed method needs an intervention")
+        return ComposedAlgorithmConfig(
+            kind="composed",
+            base_objective=base,
+            pair_intervention=intervention,
+            consistency_weight=setting.consistency_weight,
+        )
     if method == "erm":
         return ErmAlgorithmConfig(kind="erm")
     if method == "grit":
@@ -1398,6 +1461,7 @@ def candidate_algorithm_config(
             latent_dim=latent,
             penalty_weight=weight,
             pair_penalty="mean_squared_featurizer_difference",
+            objective_version="bias-free-pair-difference/v2",
         )
     if method in ("sd", "fishr", "rdm"):
         weight = setting.penalty_weight
@@ -1458,6 +1522,16 @@ def waterbirds_candidate_algorithm(
     )
 
 
+def _historical_matchdg_algorithm(
+    algorithm: AlgorithmConfig, *, legacy_matchdg: bool
+) -> AlgorithmConfig:
+    """Reconstruct only the old recorded objective identity, never its training."""
+
+    if legacy_matchdg and isinstance(algorithm, MatchDgAlgorithmConfig):
+        return algorithm.model_copy(update={"objective_version": None})
+    return algorithm
+
+
 def _candidate_scientific_digest(
     config: ProductionSearchConfig,
     lineage: SearchLineage,
@@ -1465,6 +1539,8 @@ def _candidate_scientific_digest(
     learning_rate: float,
     weight_decay: float,
     setting: MethodSettings,
+    *,
+    legacy_matchdg: bool = False,
 ) -> str:
     training = LinearProbeTrainingConfig(
         optimizer="adam",
@@ -1478,7 +1554,9 @@ def _candidate_scientific_digest(
         components = cmnist_candidate_components(config, lineage, method, setting)
         pairs = components.pairs
         projection = components.projection
-        algorithm = components.algorithm
+        algorithm = _historical_matchdg_algorithm(
+            components.algorithm, legacy_matchdg=legacy_matchdg
+        )
         pair_digest = components.pair_manifest_digest
         candidate = OrdinaryExperimentConfig(
             schema_version="grit.experiment/v1",
@@ -1609,12 +1687,12 @@ def _candidate_scientific_digest(
     projection_digest = None
     pair_digest = None
     tolerance: float | None = None
-    if method == "grit":
+    if pair_intervention(method) == "grit":
         if requested_rank is None:
             raise AssertionError("planned Waterbirds GRIT candidate lacks a rank")
         projection_digest = "pending:derived-after-plan"
         tolerance = config.relative_singular_value_tolerance
-    if method in ("grit", "matchdg"):
+    if consumes_pairs(method):
         pair_digest = lineage.pair_manifest_digest
     candidate = WaterbirdsCandidateConfig(
         schema_version="grit.waterbirds-candidate/v3",
@@ -1631,7 +1709,10 @@ def _candidate_scientific_digest(
         projection_diagnostics_digest=projection_digest,
         projection_rank=requested_rank,
         relative_singular_value_tolerance=tolerance,
-        algorithm=waterbirds_candidate_algorithm(config, method, setting),
+        algorithm=_historical_matchdg_algorithm(
+            waterbirds_candidate_algorithm(config, method, setting),
+            legacy_matchdg=legacy_matchdg,
+        ),
         training=training,
         seed_sets=config.seeds.stages,
     )
@@ -1650,7 +1731,7 @@ def _candidate_id(dataset: str, method: MethodId, digest: str) -> str:
 
 def _candidate_order_key(
     candidate: SearchCandidate,
-) -> tuple[int, float, float, int, float, float, float, float, float, int]:
+) -> tuple[int, float, float, int, float, float, float, float, float, float, int]:
     def number(value: float | int | None) -> float:
         return -1.0 if value is None else float(value)
 
@@ -1661,6 +1742,7 @@ def _candidate_order_key(
         -1 if candidate.requested_rank is None else candidate.requested_rank,
         number(candidate.groupdro_step_size),
         number(candidate.penalty_weight),
+        number(candidate.consistency_weight),
         number(candidate.fish_meta_step_size),
         number(candidate.lisa_selection_prob),
         number(candidate.swad_tolerance_ratio),

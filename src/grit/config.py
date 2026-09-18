@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal, TypeAlias
+from typing import Annotated, Literal, TypeAlias, cast
 
 from pydantic import (
     Field,
@@ -16,6 +16,7 @@ from pydantic import (
     model_validator,
 )
 
+from grit.methods.types import MethodId
 from grit.schemas import (
     HELD_OUT_VALIDATION_NAMES,
     IN_DOMAIN_VALIDATION_NAMES,
@@ -257,6 +258,9 @@ class MatchDgAlgorithmConfig(StrictBoundaryModel):
     latent_dim: PositiveInt
     penalty_weight: Annotated[StrictFloat, Field(gt=0.0)]
     pair_penalty: Literal["mean_squared_featurizer_difference"]
+    objective_version: Literal["bias-free-pair-difference/v2"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class SdAlgorithmConfig(StrictBoundaryModel):
@@ -288,6 +292,32 @@ class RdmAlgorithmConfig(StrictBoundaryModel):
     sampling: Literal["environment_balanced_without_replacement"]
 
 
+class ComposedAlgorithmConfig(StrictBoundaryModel):
+    """A direct linear objective with an independent training-pair intervention."""
+
+    kind: Literal["composed"]
+    base_objective: Annotated[
+        ErmAlgorithmConfig
+        | RexAlgorithmConfig
+        | IrmAlgorithmConfig
+        | FishrAlgorithmConfig,
+        Field(discriminator="kind"),
+    ]
+    pair_intervention: Literal["grit", "consistency"]
+    consistency_weight: Annotated[StrictFloat, Field(ge=0.0)] | None = None
+    objective_version: Literal["prediction-pairs/v1"] = "prediction-pairs/v1"
+
+    @model_validator(mode="after")
+    def _validate_intervention(self) -> ComposedAlgorithmConfig:
+        if (self.pair_intervention == "consistency") != (
+            self.consistency_weight is not None
+        ):
+            raise ValueError("only consistency requires consistency_weight")
+        if self.base_objective.kind == "erm" and self.pair_intervention == "grit":
+            raise ValueError("use the existing grit algorithm for ERM plus GRIT")
+        return self
+
+
 AlgorithmConfig: TypeAlias = Annotated[
     ErmAlgorithmConfig
     | GritAlgorithmConfig
@@ -300,12 +330,25 @@ AlgorithmConfig: TypeAlias = Annotated[
     | MatchDgAlgorithmConfig
     | SdAlgorithmConfig
     | FishrAlgorithmConfig
-    | RdmAlgorithmConfig,
+    | RdmAlgorithmConfig
+    | ComposedAlgorithmConfig,
     Field(discriminator="kind"),
 ]
 
 # Methods that consume the clean oracle pair bank; every other method must not bind it.
-PAIR_CONSUMING_ALGORITHMS = (GritAlgorithmConfig, MatchDgAlgorithmConfig)
+PAIR_CONSUMING_ALGORITHMS = (
+    GritAlgorithmConfig,
+    MatchDgAlgorithmConfig,
+    ComposedAlgorithmConfig,
+)
+
+
+def algorithm_method_id(algorithm: AlgorithmConfig) -> MethodId:
+    if isinstance(algorithm, ComposedAlgorithmConfig):
+        return cast(
+            MethodId, f"{algorithm.base_objective.kind}_{algorithm.pair_intervention}"
+        )
+    return algorithm.kind
 
 
 class LinearProbeTrainingConfig(StrictBoundaryModel):
@@ -446,7 +489,20 @@ class _CommonCmnistExperimentConfig(StrictBoundaryModel):
                 raise ValueError("CMNIST SWAD scores its loss on val_e01 and val_e02")
         elif not isinstance(self.pairs, OraclePairsConfig):
             raise ValueError(f"{self.algorithm.kind} requires pairs.kind='oracle'")
-        if isinstance(self.algorithm, GritAlgorithmConfig):
+        base = (
+            self.algorithm.base_objective
+            if isinstance(self.algorithm, ComposedAlgorithmConfig)
+            else self.algorithm
+        )
+        if isinstance(
+            base, RexAlgorithmConfig | IrmAlgorithmConfig | FishrAlgorithmConfig
+        ):
+            if base.environment_names != ("train_e01", "train_e02"):
+                raise ValueError("CMNIST invariant methods use the training sources")
+        if isinstance(self.algorithm, GritAlgorithmConfig) or (
+            isinstance(self.algorithm, ComposedAlgorithmConfig)
+            and self.algorithm.pair_intervention == "grit"
+        ):
             if not isinstance(self.projection, LinearProjectionConfig):
                 raise ValueError(
                     "initial GRIT requires projection.kind='linear_pair_difference'"

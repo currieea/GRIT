@@ -64,8 +64,12 @@ from tests.test_waterbirds_selection import (
     _seed_sets,  # pyright: ignore[reportPrivateUsage]
 )
 
+# Preserve the original standalone regression matrix. Combination lifecycles are
+# exercised separately in test_objective_intervention_lifecycle.py.
+STANDALONE_METHODS = tuple(method for method in WATERBIRDS_METHODS if "_" not in method)
+
 FULL_GRID: dict[str, object] = {
-    "methods": list(WATERBIRDS_METHODS),
+    "methods": list(STANDALONE_METHODS),
     "learning_rates": [0.01],
     "weight_decays": [0.0, 0.0001, 0.001],
     "projection_ranks": [2],
@@ -301,8 +305,8 @@ def test_plan_binds_every_method_to_waterbirds_environments_and_groups(
         tmp_path, output_root=tmp_path / "output"
     )
     plan = plan_production_search(config_path)
-    assert plan.methods == WATERBIRDS_METHODS
-    assert len(plan.candidates) == 3 * len(WATERBIRDS_METHODS)
+    assert plan.methods == STANDALONE_METHODS
+    assert len(plan.candidates) == 3 * len(STANDALONE_METHODS)
     for candidate in plan.candidates:
         if candidate.method_id == "grit":
             continue
@@ -351,7 +355,7 @@ def test_plan_binds_every_method_to_waterbirds_environments_and_groups(
 @pytest.mark.parametrize(
     ("selectors", "methods"),
     [
-        (("waterbirds_validation_worst_group",), WATERBIRDS_METHODS),
+        (("waterbirds_validation_worst_group",), STANDALONE_METHODS),
         (("test_oracle",), ("erm", "grit", "fish", "matchdg")),
     ],
     ids=["ordinary", "test_oracle"],
@@ -457,5 +461,5 @@ def test_checked_waterbirds_configs_cover_every_method(
     assert ordinary == set(WATERBIRDS_METHODS)
     # The checked-in SD, Fishr, and RDM configs select on validation; the protocol
     # adds no diagnostic search files for them.
-    assert oracle_track == set(WATERBIRDS_METHODS) - {"sd", "fishr", "rdm"}
-    assert len(set(seen.values())) == 19
+    assert oracle_track == set(STANDALONE_METHODS) - {"sd", "fishr", "rdm"}
+    assert len(set(seen.values())) == 23

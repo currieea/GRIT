@@ -12,7 +12,11 @@ from typing import cast
 import pytest
 import torch
 
-from grit.config import FishrAlgorithmConfig, LinearProbeTrainingConfig
+from grit.config import (
+    ComposedAlgorithmConfig,
+    FishrAlgorithmConfig,
+    LinearProbeTrainingConfig,
+)
 from grit.features.cmnist import FeatureTable, TableRole
 from grit.methods.training import OrdinaryLinearProbeMethod, train_linear_probe
 from grit.schemas import SeedStage
@@ -60,9 +64,7 @@ class _RecordingRun:
         columns: Sequence[str],
         rows: Sequence[Sequence[TrackingValue]],
     ) -> None:
-        self.tables.append(
-            (name, tuple(columns), tuple(tuple(row) for row in rows))
-        )
+        self.tables.append((name, tuple(columns), tuple(tuple(row) for row in rows)))
 
     def finish(self, exit_code: int | None = None) -> None:
         self.finished.append(exit_code)
@@ -580,3 +582,39 @@ def test_a_failed_attempt_does_not_leave_a_finished_run(tmp_path: Path) -> None:
     ):
         pass
     assert backend.runs[1].finished == [0]
+
+
+def test_composed_tracking_distinguishes_base_and_pair_coefficients(
+    tmp_path: Path,
+) -> None:
+    backend = _RecordingBackend()
+    candidate = _candidate().model_copy(
+        update={
+            "method_id": "fishr_consistency",
+            "penalty_weight": 100.0,
+            "consistency_weight": 0.1,
+        }
+    )
+    task = cast(
+        SearchRunTask,
+        SimpleNamespace(**{**vars(_fake_task()), "candidate": candidate}),
+    )
+    start_task_tracker(
+        _fake_plan(),
+        task,
+        algorithm=ComposedAlgorithmConfig(
+            kind="composed",
+            base_objective=_fishr_algorithm(),
+            pair_intervention="consistency",
+            consistency_weight=0.1,
+        ),
+        settings=_enabled(tmp_path),
+        backend=backend,
+    ).finish()
+    config = cast(dict[str, object], backend.started[0]["config"])
+    assert config["base_objective"] == "fishr"
+    assert config["pair_intervention"] == "consistency"
+    assert config["algorithm/base_objective/penalty_weight"] == 100.0
+    assert config["algorithm/base_objective/penalty_anneal_updates"] == 500
+    assert config["algorithm/consistency_weight"] == 0.1
+    assert config["track"] == "ordinary"

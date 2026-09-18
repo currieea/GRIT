@@ -105,6 +105,28 @@ completion and final metrics. RotatedMNIST still runs ERM and GRIT only. See the
 [config index](configs/README.md) and
 [method definitions](docs/experiments/cmnist.md#additional-baselines-sd-fishr-and-rdm).
 
+
+## Objective/intervention matrix
+
+ERM, V-REx, IRMv1 and Fishr now support vanilla, GRIT projection and direct
+prediction-consistency variants on both CMNIST and Waterbirds-CF. Each combination
+has its own validation-selected winner and paired comparisons. Existing standalone
+experiments remain available, including the separate MatchDG-style representation
+penalty. Corrected MatchDG configs use new `*-bias-free-v2` output roots.
+
+Start with the ERM pilots, then V-REx, IRMv1 and Fishr:
+
+```bash
+uv run scripts/run_search.py configs/cmnist/erm-interventions-search.yaml --pilot
+uv run scripts/run_search.py configs/waterbirds/erm-interventions-search.yaml --pilot
+```
+
+See the [config index](configs/README.md#objectiveintervention-experiments) for all
+pilot commands, explicit candidate budgets and migration details. The matrix grids are
+provisional: review real-data pilots before launching full searches. Implementation and
+outstanding validation are tracked in the
+[working plan](docs/plans/objective-intervention-experiments.md).
+
 ## RotatedMNIST
 
 The first RotatedMNIST slice uses disjoint MNIST source partitions, 0- and 45-degree
@@ -185,8 +207,9 @@ and continue; they cannot change a candidate, a checkpoint, a metric, or a resul
 Copy a config, edit it, and pass the copy to `run_search.py`. Paths accept absolute
 values and `${ANY_ENV_VAR}`. The learning-rate, weight-decay, and rank grids, the epoch
 count, and `pair_count` are all ordinary settings; a quick check might use two learning
-rates, three ranks, and five epochs. `pair_count` may be any prefix of the prepared pair
-bank, so prepare once with `--pair-count 512` for the pair-budget sensitivity.
+rates, three ranks, and five epochs. For CMNIST and RotatedMNIST, `pair_count` may be
+any prefix of the prepared pair bank, so prepare once with `--pair-count 512` for the
+pair-budget sensitivity. Waterbirds uses its full canonical 240-pair bank.
 Preparation seeds must match the config; the defaults (`--construction-seed 1729`,
 `--pair-seed 2718`) match the checked-in configs. Use a separate prepared root and
 config for the L2-normalized sensitivity.

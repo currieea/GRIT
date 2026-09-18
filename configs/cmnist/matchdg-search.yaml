@@ -2,7 +2,7 @@
 schema_version: grit.production-search/v1
 dataset: cmnist
 protocol_id: cmnist/v1
-experiment_name: cmnist-matchdg-openai-clip
+experiment_name: cmnist-matchdg-openai-clip-bias-free-v2
 experiment_variant: primary_unnormalized
 normalization: none
 artifacts:
@@ -26,7 +26,7 @@ selectors: [primary_robust, secondary_source]
 pair_count: 256
 batch_size: 256
 max_epochs: 40
-output_root: ${PROJECT_SCRATCH}/outputs/cmnist-matchdg
+output_root: ${PROJECT_SCRATCH}/outputs/cmnist-matchdg-bias-free-v2
 runtime:
   device: cpu
   deterministic_algorithms: true

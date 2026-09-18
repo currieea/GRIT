@@ -29,7 +29,7 @@ from grit.features.waterbirds import (
     WaterbirdsFinalTestView,
     WaterbirdsTestOracleView,
 )
-from grit.methods.types import MethodId
+from grit.methods.types import MethodId, pair_intervention
 from grit.schemas import SeedStage, StrictBoundaryModel
 from grit.selection.cmnist import CheckpointIdentity
 
@@ -119,9 +119,12 @@ class _WaterbirdsMetricIdentity(_WaterbirdsArtifactLineage):
             raise ValueError("Waterbirds adjusted-average accuracy is inconsistent")
         if float(self.raw_average_accuracy) != expected_raw:
             raise ValueError("Waterbirds raw-average accuracy is inconsistent")
-        if self.method_id != "grit" and self.projection_rank is not None:
+        if (
+            pair_intervention(self.method_id) != "grit"
+            and self.projection_rank is not None
+        ):
             raise ValueError("only Waterbirds GRIT metrics carry a projection rank")
-        if self.method_id == "grit" and self.projection_rank is None:
+        if pair_intervention(self.method_id) == "grit" and self.projection_rank is None:
             raise ValueError("Waterbirds GRIT metrics require a projection rank")
         return self
 

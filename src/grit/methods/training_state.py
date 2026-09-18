@@ -11,3 +11,6 @@ import torch
 class LinearProbeState:
     weight: torch.Tensor
     bias: torch.Tensor
+    # None means a historical state whose caller supplies the fitted projection.
+    # Modern vanilla predictors embed an empty basis, explicitly clearing projection.
+    projection_basis: torch.Tensor | None = None

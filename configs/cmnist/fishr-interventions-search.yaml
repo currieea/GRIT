@@ -1,9 +1,8 @@
-# Test-oracle track of matchdg-search.yaml: selection on test_ood, reported only as the
-# paper's "oracle validation" envelope. Same seeds and grid, separate output tree.
+# Provisional objective/intervention grid: review validation pilots before full search.
 schema_version: grit.production-search/v1
 dataset: cmnist
 protocol_id: cmnist/v1
-experiment_name: cmnist-matchdg-openai-clip-bias-free-v2-test-oracle
+experiment_name: cmnist-fishr-interventions-v1
 experiment_variant: primary_unnormalized
 normalization: none
 artifacts:
@@ -18,16 +17,19 @@ seeds:
     confirmation: [2101, 2102]
     final: [3101, 3102, 3103, 3104, 3105, 3106, 3107, 3108, 3109, 3110]
 search_space:
-  methods: [matchdg]
+  methods: [fishr, fishr_grit, fishr_consistency]
   learning_rates: [1e-4, 3e-4, 1e-3, 3e-3]
   weight_decays: [0.0, 1e-5, 1e-4, 1e-3]
-  matchdg_latent_dims: [8, 16, 32]
-  matchdg_penalty_weights: [0.1, 1.0, 10.0, 100.0]
-selectors: [test_oracle]
+  projection_ranks: [2, 8, 16, 24]
+  consistency_weights: [0.01, 0.1, 1.0, 10.0]
+  fishr_penalty_weights: [10.0, 100.0, 1000.0, 10000.0]
+  fishr_penalty_anneal_updates: 1500
+  fishr_ema: 0.95
+selectors: [primary_robust, secondary_source]
 pair_count: 256
 batch_size: 256
 max_epochs: 40
-output_root: ${PROJECT_SCRATCH}/outputs/cmnist-matchdg-bias-free-v2-test-oracle
+output_root: ${PROJECT_SCRATCH}/outputs/cmnist-fishr-interventions-v1
 runtime:
   device: cpu
   deterministic_algorithms: true

@@ -217,7 +217,7 @@ Rules:
 - Validation and test sources are forbidden.
 - Sources are sampled without replacement for a fixed pair seed.
 - Both endpoints share the same source ID, digit, clean label, and noisy target.
-- Pair endpoints are available to projection estimation only; they do not become
+- Pair endpoints are available to projection estimation and pair penalties only; they do not become
   additional supervised classifier-training examples.
 - Pair provenance records the source ID, endpoint colors, construction parameters, and
   artifact hashes.
@@ -782,7 +782,8 @@ the corresponding supervised objective under identical sampling and optimizer st
 Zero penalties are numerical controls, not extra production candidates. Exercise the
 new methods through each dataset's lifecycle with small synthetic caches, checking
 validation selection, checkpoint restoration, and no pair/test access during training.
-Keep inference checkpoints as linear weights and bias: training-only EMA state must not
+Keep inference checkpoints as linear weights, bias, and any fitted projection basis:
+training-only EMA state must not
 change during evaluation. If using existing interrupted-run recovery, recreate all
 training state on restart rather than introducing partial-resume infrastructure.
 Run `uv run ruff check .`, `uv run basedpyright`, and `uv run pytest`.
@@ -962,3 +963,52 @@ Primary references:
 - [x] Reporting uncertainty method approved
 - [x] Deterministic partition algorithm approved (`cmnist-stratified-hash-v1`)
 - [ ] Estimated-pair definitions approved
+
+## Objective and pair-intervention matrix
+
+Status: implemented and verified through synthetic search, selection, restoration and
+reporting on both datasets. Real-data training/validation pilots remain outstanding.
+
+The frozen-feature linear-head experiment crosses ERM, V-REx (`rex`), IRMv1
+(`irm`), and Fishr with vanilla, GRIT, and prediction consistency. Each combination
+has independent validation-selected hyperparameters and winners; GroupDRO remains a
+standalone baseline. Existing standalone and diagnostic test-oracle tracks retain their
+protocols. Interventions change auxiliary pair access only, not supervised sampling,
+environments, optimizer, or validation access.
+
+GRIT removes the selected right-singular subspace of uncentered training-pair
+differences and applies the same projection in training, validation, and test.
+Prediction consistency uses the identical ordered training-pair bank and budget,
+retains raw features, and adds `lambda * C(W)`, where
+`C(W) = mean_i sum_k (W delta_i)_k^2`. The affine bias cancels. Evaluate the full
+pair bank each update, starting with the first update, including Fishr warm-up.
+All variants use the same direct linear head initialization and parameterization.
+For IRMv1/V-REx with annealed base weight `a`, the complete objective is
+`(risk + a * base_penalty + lambda * C) / max(1,a)`. Fishr uses
+`risk + a * supervised_gradient_variance_penalty + lambda * C`; its statistics use
+projected features for GRIT and supervised cross-entropy only for consistency.
+Preserve its EMA, warm-up, and Adam reset.
+
+The retained MatchDG-style representation-consistency baseline trains a linear
+featurizer and classifier and penalizes `mean_i ||A delta_i||^2`, excluding featurizer
+bias. It is not a reproduction of the full published MatchDG algorithm. Corrected
+MatchDG runs and the matrix use fresh output roots; targeted objective versioning
+prevents reuse of pre-correction tasks without invalidating unrelated experiments.
+
+Search optimizer and base penalties jointly with rank or consistency strength. Zero
+rank/strength are sanity controls, not default production settings. Matrix grids are
+provisional pending real-data pilots; retain tuning, confirmation, final seeds and all
+dataset selectors. Report absolute metrics and GRIT-minus-vanilla,
+consistency-minus-vanilla, and GRIT-minus-consistency within each objective using
+explicit final-seed joins and 95% t intervals. Require compatible dataset,
+representation, selector, and pair-bank identity and budget. Never mix ordinary and
+test-oracle tracks.
+
+The checked-in provisional matrix uses the legacy 16 optimizer settings and four
+base-penalty settings where applicable, ranks `[2, 8, 16, 24]`, and prediction
+consistency strengths `[0.01, 0.1, 1, 10]`. This yields 144 ERM-row candidates and
+576 each for V-REx, IRMv1 and Fishr. These ranges await real-data validation pilots;
+full searches must not precede their review. See the [config index](../../configs/README.md#objectiveintervention-experiments)
+for seed budgets, commands and fresh output roots. Historical standalone grids remain
+unchanged. Projection-bearing selected checkpoints persist the basis with the head;
+no pair bank is needed to restore their predictions.

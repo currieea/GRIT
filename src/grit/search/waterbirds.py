@@ -17,6 +17,7 @@ from typing import Literal, cast
 import torch
 
 from grit.config import (
+    ComposedAlgorithmConfig,
     FishAlgorithmConfig,
     FishrAlgorithmConfig,
     GroupDroAlgorithmConfig,
@@ -54,6 +55,7 @@ from grit.methods.baselines import (
     SwadLinearProbeMethod,
     bind_risk_matching_method,
 )
+from grit.methods.interventions import ComposedLinearProbeMethod
 from grit.methods.projection import FittedLinearProjection
 from grit.methods.training import (
     GroupDroLinearProbeMethod,
@@ -65,6 +67,7 @@ from grit.methods.training import (
     RexLinearProbeMethod,
     persist_selected_linear_checkpoint,
 )
+from grit.methods.types import base_objective, consumes_pairs, pair_intervention
 from grit.methods.waterbirds_training import (
     DiagnosticEpochHook,
     TrainedWaterbirdsRun,
@@ -201,7 +204,7 @@ def run_waterbirds_production_search(
     def runtime_candidate(candidate: SearchCandidate) -> _RuntimeCandidate:
         projection: FittedLinearProjection | None = None
         differences: torch.Tensor | None = None
-        if candidate.method_id == "grit":
+        if pair_intervention(candidate.method_id) == "grit":
             rank = candidate.requested_rank
             if rank is None:
                 raise AssertionError("planned Waterbirds GRIT candidate lacks a rank")
@@ -220,7 +223,7 @@ def run_waterbirds_production_search(
                     projection.diagnostics,
                 )
                 projections[rank] = projection
-        elif candidate.method_id == "matchdg":
+        elif consumes_pairs(candidate.method_id):
             differences = pair_bank.get("land_minus_water")
             if differences is None:
                 land, water = waterbirds_oracle_pair_features(cache, pairs)
@@ -233,9 +236,7 @@ def run_waterbirds_production_search(
 
     def execute_pre_final(task: SearchRunTask, _run_root: Path) -> CompletedStageRun:
         runtime = runtime_candidate(task.candidate)
-        with task_tracker(
-            plan, task, algorithm=runtime.config.algorithm
-        ) as tracker:
+        with task_tracker(plan, task, algorithm=runtime.config.algorithm) as tracker:
             trained = _train_task(cache, weights, runtime, task, tracker)
             decision = select_waterbirds_checkpoint(
                 trained.selector_records(selector), selector
@@ -560,14 +561,12 @@ def materialize_waterbirds_candidate_config(
     if weights is None:
         raise ValueError("Waterbirds plan lacks adjusted-weight lineage")
     pair_digest = (
-        lineage.pair_manifest_digest
-        if candidate.method_id in ("grit", "matchdg")
-        else None
+        lineage.pair_manifest_digest if consumes_pairs(candidate.method_id) else None
     )
     projection_digest = None
     rank = None
     tolerance = None
-    if candidate.method_id == "grit":
+    if pair_intervention(candidate.method_id) == "grit":
         if projection is None or candidate.requested_rank is None:
             raise ValueError("Waterbirds GRIT candidate lacks fitted projection")
         projection_digest = projection.diagnostics.canonical_digest()
@@ -659,6 +658,30 @@ def _waterbirds_method(
     runtime: _RuntimeCandidate,
     task: SearchRunTask,
 ) -> LinearProbeTrainingMethod:
+    algorithm = runtime.config.algorithm
+    if not isinstance(algorithm, ComposedAlgorithmConfig):
+        return _waterbirds_base_method(cache, runtime, task)
+    base_runtime = _RuntimeCandidate(
+        runtime.planned,
+        runtime.config.model_copy(update={"algorithm": algorithm.base_objective}),
+        None,
+        None,
+    )
+    return ComposedLinearProbeMethod(
+        base=_waterbirds_base_method(cache, base_runtime, task),
+        method_id=task.candidate.method_id,
+        projection=runtime.projection,
+        projection_rank=task.candidate.requested_rank,
+        pair_differences=runtime.pair_differences,
+        consistency_weight=algorithm.consistency_weight or 0.0,
+    )
+
+
+def _waterbirds_base_method(
+    cache: WaterbirdsFeatureCache | WaterbirdsTuningFeatureCache,
+    runtime: _RuntimeCandidate,
+    task: SearchRunTask,
+) -> LinearProbeTrainingMethod:
     """Bind one planned candidate's algorithm config to the shared trainer.
 
     Backgrounds and groups are read through the cache's method-definition accessors;
@@ -739,9 +762,15 @@ def _waterbirds_method(
             penalty_weight=float(algorithm.penalty_weight),
         )
     return OrdinaryLinearProbeMethod(
-        method_id=task.candidate.method_id,
+        method_id=(
+            base_objective(task.candidate.method_id)
+            if "_" in task.candidate.method_id
+            else task.candidate.method_id
+        ),
         projection=runtime.projection,
-        projection_rank=task.candidate.requested_rank,
+        projection_rank=(
+            task.candidate.requested_rank if runtime.projection is not None else None
+        ),
     )
 
 
@@ -790,7 +819,7 @@ def _result_artifacts(
                 dataset_manifest_digest=config.dataset_manifest_digest,
             )
         )
-    if task.candidate.method_id == "grit":
+    if pair_intervention(task.candidate.method_id) == "grit":
         projection = runtime.projection
         if projection is None or config.pair_manifest_digest is None:
             raise AssertionError("Waterbirds GRIT artifact lineage disappeared")
@@ -817,6 +846,11 @@ def _summary(
     winners: WaterbirdsWinners,
     runs: tuple[WaterbirdsCompletedStageRun, ...],
 ) -> WaterbirdsProductionSummary:
+    from grit.methods.types import consumes_pairs
+    from grit.search.outputs import make_waterbirds_intervention_comparisons
+
+    matrix = any(method.endswith(("_grit", "_consistency")) for method in plan.methods)
+
     selector = waterbirds_selector(_search_config(plan))
     by_identity = {(run.task.candidate.method_id, run.task.seed): run for run in runs}
     methods: list[WaterbirdsProductionMethodSummary] = []
@@ -841,6 +875,11 @@ def _summary(
                 method_id=method,
                 selector=selector,
                 lineage=plan.resolved_config.lineage,
+                pair_count=(
+                    _search_config(plan).pair_count
+                    if matrix and consumes_pairs(method)
+                    else None
+                ),
                 selected_candidate_id=winners[method].candidate_id,
                 finalist_candidate_ids=(
                     top[0].candidate_id,
@@ -885,6 +924,9 @@ def _summary(
         lineage=plan.resolved_config.lineage,
         selector=selector,
         methods=tuple(methods),
+        intervention_comparisons=(
+            make_waterbirds_intervention_comparisons(tuple(methods)) if matrix else ()
+        ),
         paired_worst_group_by_seed=paired,
         paired_worst_group_summary=paired_summary,
     )
@@ -942,6 +984,27 @@ def _mirror_waterbirds_summary(
                 float(paired.sample_standard_deviation),
                 float(paired.ci95_lower),
                 float(paired.ci95_upper),
+            ]
+        )
+    existing_contrasts = {"grit_minus_erm"}
+    for comparison in summary.intervention_comparisons:
+        contrast = f"{comparison.minuend}_minus_{comparison.subtrahend}"
+        if (
+            contrast in existing_contrasts
+            and comparison.metric_name == "worst_group_accuracy"
+        ):
+            continue
+        rows.append(
+            [
+                contrast,
+                comparison.selector,
+                None,
+                comparison.metric_name,
+                len(comparison.configured_final_seeds),
+                float(comparison.mean),
+                float(comparison.sample_standard_deviation),
+                float(comparison.ci95_lower),
+                float(comparison.ci95_upper),
             ]
         )
     log_summary_table(
