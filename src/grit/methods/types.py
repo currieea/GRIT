@@ -56,7 +56,7 @@ METHOD_LABELS: Final[dict[MethodId, str]] = {
     "fish": "Fish",
     "lisa": "LISA",
     "swad": "SWAD",
-    "matchdg": "MatchDG",
+    "matchdg": "MatchDG-style representation consistency",
     "sd": "SD",
     "fishr": "Fishr",
     "rdm": "RDM",
