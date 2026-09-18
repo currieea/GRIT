@@ -17,7 +17,6 @@ from pydantic import (
 )
 
 from grit.config import (
-    PAIR_CONSUMING_ALGORITHMS,
     AlgorithmConfig,
     ComposedAlgorithmConfig,
     FishAlgorithmConfig,
@@ -32,7 +31,12 @@ from grit.config import (
     SwadAlgorithmConfig,
     algorithm_method_id,
 )
-from grit.methods.types import METHOD_LABELS, MethodId, pair_intervention
+from grit.methods.types import (
+    METHOD_LABELS,
+    MethodId,
+    consumes_pairs,
+    pair_intervention,
+)
 from grit.methods.waterbirds_training import WaterbirdsRestorationReceipt
 from grit.results import CodeProvenance, EnvironmentProvenance
 from grit.schemas import StrictBoundaryModel, canonical_digest_value
@@ -83,7 +87,7 @@ class WaterbirdsCandidateConfig(StrictBoundaryModel):
             )
         if algorithm_method_id(self.algorithm) != self.method_id:
             raise ValueError("Waterbirds candidate algorithm does not match method")
-        uses_pairs = isinstance(self.algorithm, PAIR_CONSUMING_ALGORITHMS)
+        uses_pairs = consumes_pairs(algorithm_method_id(self.algorithm))
         if uses_pairs != (self.pair_manifest_digest is not None):
             raise ValueError(
                 f"Waterbirds {self.method_id} must bind oracle pairs exactly when "

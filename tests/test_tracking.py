@@ -584,15 +584,21 @@ def test_a_failed_attempt_does_not_leave_a_finished_run(tmp_path: Path) -> None:
     assert backend.runs[1].finished == [0]
 
 
+@pytest.mark.parametrize("representation", [False, True])
 def test_composed_tracking_distinguishes_base_and_pair_coefficients(
     tmp_path: Path,
+    representation: bool,
 ) -> None:
     backend = _RecordingBackend()
     candidate = _candidate().model_copy(
         update={
-            "method_id": "fishr_consistency",
+            "method_id": "fishr_representation_consistency"
+            if representation
+            else "fishr_consistency",
             "penalty_weight": 100.0,
-            "consistency_weight": 0.1,
+            "consistency_weight": None if representation else 0.1,
+            "representation_consistency_weight": 0.2 if representation else None,
+            "representation_latent_dim": 32 if representation else None,
         }
     )
     task = cast(
@@ -605,16 +611,67 @@ def test_composed_tracking_distinguishes_base_and_pair_coefficients(
         algorithm=ComposedAlgorithmConfig(
             kind="composed",
             base_objective=_fishr_algorithm(),
-            pair_intervention="consistency",
-            consistency_weight=0.1,
+            pair_intervention="representation_consistency"
+            if representation
+            else "consistency",
+            consistency_weight=None if representation else 0.1,
+            representation_consistency_weight=0.2 if representation else None,
+            latent_dim=32 if representation else None,
+            objective_version="factorized-pairs/v1"
+            if representation
+            else "prediction-pairs/v1",
         ),
         settings=_enabled(tmp_path),
         backend=backend,
     ).finish()
     config = cast(dict[str, object], backend.started[0]["config"])
     assert config["base_objective"] == "fishr"
-    assert config["pair_intervention"] == "consistency"
+    assert config["pair_intervention"] == (
+        "representation_consistency" if representation else "consistency"
+    )
     assert config["algorithm/base_objective/penalty_weight"] == 100.0
     assert config["algorithm/base_objective/penalty_anneal_updates"] == 500
-    assert config["algorithm/consistency_weight"] == 0.1
+    assert config["algorithm/consistency_weight"] == (None if representation else 0.1)
+    if representation:
+        assert config["algorithm/representation_consistency_weight"] == 0.2
+        assert config["algorithm/latent_dim"] == 32
     assert config["track"] == "ordinary"
+
+
+def test_representation_diagnostics_mirror_computed_training_values(
+    tmp_path: Path,
+) -> None:
+    from grit.methods.interventions import ComposedLinearProbeMethod
+
+    training, validation = _tables()
+    backend = _RecordingBackend()
+    tracker = start_task_tracker(
+        _fake_plan(),
+        _fake_task(),
+        settings=_enabled(tmp_path),
+        backend=backend,
+    )
+    run = train_linear_probe(
+        training,
+        validation,
+        _training_config(),
+        run_id="run:representation",
+        candidate_id="candidate:representation",
+        scientific_config_digest="sha256:representation",
+        seed_stage=SeedStage.TUNING,
+        seed=301,
+        method=ComposedLinearProbeMethod(
+            OrdinaryLinearProbeMethod("erm", None, None),
+            "erm_representation_consistency",
+            pair_differences=training[0].features[:4] - training[1].features[:4],
+            representation_consistency_weight=0.1,
+            latent_dim=4,
+        ),
+        tracker=tracker,
+    )
+    tracker.finish()
+    for entry, epoch in zip(backend.runs[0].logged, (1, 2, 3), strict=True):
+        values = run.algorithm.diagnostic_history[epoch]
+        assert len(values) == 4
+        assert all(entry[name] == value for name, value in values.items())
+        assert not any("test" in name for name in entry)

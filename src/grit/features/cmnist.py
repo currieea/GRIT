@@ -508,8 +508,8 @@ class CmnistFeatureCache:
     val_e02: FeatureTable
     val_held_out: FeatureTable
     _test_ood: FeatureTable
-    oracle_pair_red: FeatureTable
-    oracle_pair_green: FeatureTable
+    oracle_pair_red: FeatureTable | None
+    oracle_pair_green: FeatureTable | None
     manifest: CmnistFeatureCacheManifest
     root: Path
 
@@ -520,6 +520,8 @@ class CmnistFeatureCache:
         return self.val_e01, self.val_e02, self.val_held_out
 
     def pair_tables(self) -> tuple[FeatureTable, FeatureTable]:
+        if self.oracle_pair_red is None or self.oracle_pair_green is None:
+            raise ValueError("this cache was opened without pair access")
         return self.oracle_pair_red, self.oracle_pair_green
 
     def issue_final_handle(
@@ -613,8 +615,8 @@ class CmnistTuningFeatureCache:
     val_e01: FeatureTable
     val_e02: FeatureTable
     val_held_out: FeatureTable
-    oracle_pair_red: FeatureTable
-    oracle_pair_green: FeatureTable
+    oracle_pair_red: FeatureTable | None
+    oracle_pair_green: FeatureTable | None
     manifest: CmnistFeatureCacheManifest
     root: Path
 
@@ -625,6 +627,8 @@ class CmnistTuningFeatureCache:
         return self.val_e01, self.val_e02, self.val_held_out
 
     def pair_tables(self) -> tuple[FeatureTable, FeatureTable]:
+        if self.oracle_pair_red is None or self.oracle_pair_green is None:
+            raise ValueError("this cache was opened without pair access")
         return self.oracle_pair_red, self.oracle_pair_green
 
 
@@ -839,6 +843,7 @@ def load_cmnist_feature_cache(
     expected_source_manifest_digest: str | None = None,
     expected_pair_manifest_digest: str | None = None,
     expected_normalization: Normalization | None = None,
+    include_pairs: bool = True,
 ) -> CmnistFeatureCache:
     """Load a verified CMNIST cache and fail helpfully on absent/mixed artifacts."""
 
@@ -848,7 +853,11 @@ def load_cmnist_feature_cache(
         expected_pair_manifest_digest=expected_pair_manifest_digest,
         expected_normalization=expected_normalization,
     )
-    loaded = tuple(_load_feature_table(root, table) for table in manifest.tables)
+    loaded = tuple(
+        _load_feature_table(root, table)
+        for table in manifest.tables
+        if include_pairs or table.role != "pair_projection"
+    )
     return CmnistFeatureCache(
         train_e01=loaded[0],
         train_e02=loaded[1],
@@ -856,8 +865,8 @@ def load_cmnist_feature_cache(
         val_e02=loaded[3],
         val_held_out=loaded[4],
         _test_ood=loaded[5],
-        oracle_pair_red=loaded[6],
-        oracle_pair_green=loaded[7],
+        oracle_pair_red=loaded[6] if include_pairs else None,
+        oracle_pair_green=loaded[7] if include_pairs else None,
         manifest=manifest,
         root=root,
     )
@@ -869,6 +878,7 @@ def load_cmnist_tuning_feature_cache(
     expected_source_manifest_digest: str | None = None,
     expected_pair_manifest_digest: str | None = None,
     expected_normalization: Normalization | None = None,
+    include_pairs: bool = True,
 ) -> CmnistTuningFeatureCache:
     """Load only training, validation, and pair tables for bounded tuning."""
 
@@ -882,6 +892,7 @@ def load_cmnist_tuning_feature_cache(
         _load_feature_table(root, table)
         for table in manifest.tables
         if table.role != "final_test"
+        and (include_pairs or table.role != "pair_projection")
     )
     return CmnistTuningFeatureCache(
         train_e01=selected[0],
@@ -889,8 +900,8 @@ def load_cmnist_tuning_feature_cache(
         val_e01=selected[2],
         val_e02=selected[3],
         val_held_out=selected[4],
-        oracle_pair_red=selected[5],
-        oracle_pair_green=selected[6],
+        oracle_pair_red=selected[5] if include_pairs else None,
+        oracle_pair_green=selected[6] if include_pairs else None,
         manifest=manifest,
         root=root,
     )

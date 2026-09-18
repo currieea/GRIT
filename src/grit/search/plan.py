@@ -176,6 +176,12 @@ class SearchSpaceConfig(StrictBoundaryModel):
     consistency_weights: tuple[StrictFloat, ...] = Field(
         default=(), exclude_if=lambda values: not values
     )
+    representation_consistency_weights: tuple[StrictFloat, ...] = Field(
+        default=(), exclude_if=lambda values: not values
+    )
+    representation_latent_dims: tuple[StrictInt, ...] = Field(
+        default=(), exclude_if=lambda values: not values
+    )
     projection_ranks: tuple[StrictInt, ...] = Field(
         default=(), exclude_if=lambda values: not values
     )
@@ -234,6 +240,31 @@ class SearchSpaceConfig(StrictBoundaryModel):
     @model_validator(mode="after")
     def _validate_space(self) -> SearchSpaceConfig:
         bases = {base_objective(method) for method in self.methods}
+        interventions = {pair_intervention(method) for method in self.methods}
+        if ("representation_consistency" in interventions) != bool(
+            self.representation_consistency_weights
+        ):
+            raise ValueError(
+                "representation_consistency_weights required exactly "
+                "for representation variants"
+            )
+        if bool(interventions & {"representation_consistency", "two_layer"}) != bool(
+            self.representation_latent_dims
+        ):
+            raise ValueError(
+                "representation_latent_dims required exactly for factorized variants"
+            )
+        for name, values in (
+            (
+                "representation_consistency_weights",
+                self.representation_consistency_weights,
+            ),
+            ("representation_latent_dims", self.representation_latent_dims),
+        ):
+            if len(set(values)) != len(values) or any(value < 0 for value in values):
+                raise ValueError(f"{name} requires unique non-negative values")
+        if 0 in self.representation_latent_dims:
+            raise ValueError("representation latent dimensions must be positive")
         if any(value < 0 for value in self.consistency_weights):
             raise ValueError("consistency_weights must be non-negative")
         if any(pair_intervention(m) == "consistency" for m in self.methods) != bool(
@@ -605,6 +636,8 @@ class ResolvedProductionSearchConfig(StrictBoundaryModel):
 class MethodSettings:
     """Method-specific candidate settings; exactly the fields a method needs are set."""
 
+    representation_consistency_weight: float | None = None
+    representation_latent_dim: int | None = None
     consistency_weight: float | None = None
     requested_rank: int | None = None
     groupdro_step_size: float | None = None
@@ -622,6 +655,8 @@ class MethodSettings:
 
 _SETTING_FIELDS: tuple[str, ...] = (
     "consistency_weight",
+    "representation_consistency_weight",
+    "representation_latent_dim",
     "requested_rank",
     "groupdro_step_size",
     "penalty_weight",
@@ -647,14 +682,31 @@ REQUIRED_SETTINGS: dict[MethodId, frozenset[str]] = {
 
 for _method in IMPLEMENTED_METHODS:
     if "_" in _method:
-        REQUIRED_SETTINGS[_method] = REQUIRED_SETTINGS[base_objective(_method)] | {
-            "requested_rank"
-            if pair_intervention(_method) == "grit"
-            else "consistency_weight"
+        _intervention_settings = {
+            "grit": {"requested_rank"},
+            "consistency": {"consistency_weight"},
+            "representation_consistency": {
+                "representation_consistency_weight",
+                "representation_latent_dim",
+            },
+            "two_layer": {
+                "representation_consistency_weight",
+                "representation_latent_dim",
+            },
         }
+        REQUIRED_SETTINGS[_method] = (
+            REQUIRED_SETTINGS[base_objective(_method)]
+            | _intervention_settings[pair_intervention(_method)]
+        )
 
 
 class SearchCandidate(StrictBoundaryModel):
+    representation_consistency_weight: Annotated[StrictFloat, Field(ge=0.0)] | None = (
+        Field(default=None, exclude_if=lambda value: value is None)
+    )
+    representation_latent_dim: Annotated[StrictInt, Field(gt=0)] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     consistency_weight: Annotated[StrictFloat, Field(ge=0.0)] | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
@@ -688,6 +740,11 @@ class SearchCandidate(StrictBoundaryModel):
 
     @model_validator(mode="after")
     def _validate_method_settings(self) -> SearchCandidate:
+        if (
+            pair_intervention(self.method_id) == "two_layer"
+            and self.representation_consistency_weight != 0.0
+        ):
+            raise ValueError("two_layer control requires zero representation strength")
         expected = REQUIRED_SETTINGS[self.method_id]
         if self.settings().present_fields() != expected:
             raise ValueError(
@@ -773,6 +830,7 @@ def load_production_search_config(path: Path) -> ProductionSearchConfig:
 _FLOAT_FIELDS = frozenset(
     {
         "consistency_weights",
+        "representation_consistency_weights",
         "learning_rates",
         "weight_decays",
         "groupdro_step_sizes",
@@ -1175,6 +1233,8 @@ def _candidate_grid(
                             weight_decay=weight_decay,
                             requested_rank=setting.requested_rank,
                             consistency_weight=setting.consistency_weight,
+                            representation_consistency_weight=setting.representation_consistency_weight,
+                            representation_latent_dim=setting.representation_latent_dim,
                             groupdro_step_size=setting.groupdro_step_size,
                             penalty_weight=setting.penalty_weight,
                             fish_meta_step_size=setting.fish_meta_step_size,
@@ -1197,6 +1257,22 @@ def _method_settings_grid(
 ) -> tuple[MethodSettings, ...]:
     if "_" in method:
         base_settings = _method_settings_grid(space, base_objective(method))
+        if pair_intervention(method) in ("representation_consistency", "two_layer"):
+            strengths = (
+                space.representation_consistency_weights
+                if pair_intervention(method) == "representation_consistency"
+                else (0.0,)
+            )
+            return tuple(
+                replace(
+                    setting,
+                    representation_consistency_weight=float(strength),
+                    representation_latent_dim=int(width),
+                )
+                for setting in base_settings
+                for width in sorted(space.representation_latent_dims)
+                for strength in sorted(strengths)
+            )
         values = (
             space.projection_ranks
             if pair_intervention(method) == "grit"
@@ -1351,7 +1427,13 @@ def candidate_algorithm_config(
         base = candidate_algorithm_config(
             config,
             base_objective(method),
-            replace(setting, requested_rank=None, consistency_weight=None),
+            replace(
+                setting,
+                requested_rank=None,
+                consistency_weight=None,
+                representation_consistency_weight=None,
+                representation_latent_dim=None,
+            ),
             environment_names=environment_names,
             group_definition=group_definition,
             loss_split_names=loss_split_names,
@@ -1372,6 +1454,13 @@ def candidate_algorithm_config(
             base_objective=base,
             pair_intervention=intervention,
             consistency_weight=setting.consistency_weight,
+            representation_consistency_weight=setting.representation_consistency_weight,
+            latent_dim=setting.representation_latent_dim,
+            objective_version=(
+                "factorized-pairs/v1"
+                if setting.representation_latent_dim is not None
+                else "prediction-pairs/v1"
+            ),
         )
     if method == "erm":
         return ErmAlgorithmConfig(kind="erm")
@@ -1731,7 +1820,7 @@ def _candidate_id(dataset: str, method: MethodId, digest: str) -> str:
 
 def _candidate_order_key(
     candidate: SearchCandidate,
-) -> tuple[int, float, float, int, float, float, float, float, float, float, int]:
+) -> tuple[float, ...]:
     def number(value: float | int | None) -> float:
         return -1.0 if value is None else float(value)
 
@@ -1743,6 +1832,8 @@ def _candidate_order_key(
         number(candidate.groupdro_step_size),
         number(candidate.penalty_weight),
         number(candidate.consistency_weight),
+        number(candidate.representation_consistency_weight),
+        number(candidate.representation_latent_dim),
         number(candidate.fish_meta_step_size),
         number(candidate.lisa_selection_prob),
         number(candidate.swad_tolerance_ratio),

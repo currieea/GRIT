@@ -966,49 +966,72 @@ Primary references:
 
 ## Objective and pair-intervention matrix
 
-Status: implemented and verified through synthetic search, selection, restoration and
-reporting on both datasets. Real-data training/validation pilots remain outstanding.
+Status: expanded implementation and synthetic lifecycle verification complete. Real-data
+validation pilots remain required before freezing grids or launching production searches.
 
-The frozen-feature linear-head experiment crosses ERM, V-REx (`rex`), IRMv1
-(`irm`), and Fishr with vanilla, GRIT, and prediction consistency. Each combination
-has independent validation-selected hyperparameters and winners; GroupDRO remains a
-standalone baseline. Existing standalone and diagnostic test-oracle tracks retain their
-protocols. Interventions change auxiliary pair access only, not supervised sampling,
-environments, optimizer, or validation access.
+Cross ERM, V-REx (`rex`), IRMv1 (`irm`), and Fishr with vanilla, prediction
+consistency, representation consistency, and GRIT on frozen CLIP features. Preserve
+standalone methods, diagnostic test-oracle tracks, supervised sampling and selectors.
+GroupDRO combinations and other datasets are outside this extension.
 
-GRIT removes the selected right-singular subspace of uncentered training-pair
-differences and applies the same projection in training, validation, and test.
-Prediction consistency uses the identical ordered training-pair bank and budget,
-retains raw features, and adds `lambda * C(W)`, where
-`C(W) = mean_i sum_k (W delta_i)_k^2`. The affine bias cancels. Evaluate the full
-pair bank each update, starting with the first update, including Fishr warm-up.
-All variants use the same direct linear head initialization and parameterization.
-For IRMv1/V-REx with annealed base weight `a`, the complete objective is
-`(risk + a * base_penalty + lambda * C) / max(1,a)`. Fishr uses
-`risk + a * supervised_gradient_variance_penalty + lambda * C`; its statistics use
-projected features for GRIT and supervised cross-entropy only for consistency.
-Preserve its EMA, warm-up, and Adam reset.
+Vanilla uses the existing direct affine classifier. GRIT fits the existing uncentered
+training-pair projector and applies it throughout training and inference. Prediction
+consistency keeps the direct classifier and adds
+`lambda_pred * mean_i sum_k (W delta_i)_k^2`, where `delta = z - z_prime`.
+Historical `*_consistency` IDs and `consistency_weights` remain prediction consistency.
 
-The retained MatchDG-style representation-consistency baseline trains a linear
-featurizer and classifier and penalizes `mean_i ||A delta_i||^2`, excluding featurizer
-bias. It is not a reproduction of the full published MatchDG algorithm. Corrected
-MatchDG runs and the matrix use fresh output roots; targeted objective versioning
-prevents reuse of pre-correction tasks without invalidating unrelated experiments.
+Representation consistency (`<objective>_representation_consistency`) uses two affine
+layers, `h(z) = A z + a`, `logits = B h(z) + b`, without a nonlinearity. Train both
+layers using the base objective on final logits plus
+`lambda_rep * mean_i ||A delta_i||^2`. The representation bias cancels. Use the
+identical ordered training-pair identities and budgets as prediction consistency and
+GRIT (256 CMNIST; all 240 Waterbirds pairs). Evaluate the whole bank at every update,
+including warm-up. CLIP remains frozen. Strength zero is supported.
 
-Search optimizer and base penalties jointly with rank or consistency strength. Zero
-rank/strength are sanity controls, not default production settings. Matrix grids are
-provisional pending real-data pilots; retain tuning, confirmation, final seeds and all
-dataset selectors. Report absolute metrics and GRIT-minus-vanilla,
-consistency-minus-vanilla, and GRIT-minus-consistency within each objective using
-explicit final-seed joins and 95% t intervals. Require compatible dataset,
-representation, selector, and pair-bank identity and budget. Never mix ordinary and
-test-oracle tracks.
+An auxiliary `<objective>_two_layer` control uses the identical factorized predictor,
+latent width, initialization, batching and Adam settings, with zero pair penalty and
+no pair access or pair lineage. It gets its own validation-selected winner. It is an
+architecture control alongside the main matrix, not a prerequisite study.
 
-The checked-in provisional matrix uses the legacy 16 optimizer settings and four
-base-penalty settings where applicable, ranks `[2, 8, 16, 24]`, and prediction
-consistency strengths `[0.01, 0.1, 1, 10]`. This yields 144 ERM-row candidates and
-576 each for V-REx, IRMv1 and Fishr. These ranges await real-data validation pilots;
-full searches must not precede their review. See the [config index](../../configs/README.md#objectiveintervention-experiments)
-for seed budgets, commands and fresh output roots. Historical standalone grids remain
-unchanged. Projection-bearing selected checkpoints persist the basis with the head;
-no pair bank is needed to restore their predictions.
+For IRMv1/V-REx with current base coefficient `alpha`, scale the entire objective:
+`(risk + alpha * base_penalty + lambda * pair_penalty) / max(1, alpha)`.
+Prediction and representation coefficients are separate from base coefficients and
+have independently configured grids. Fishr uses supervised per-example gradients of
+its final classifier: `grad_B = (p - one_hot(y)) h(z)^T`, `grad_b = p - one_hot(y)`.
+Keep the learned representation's graph so the variance penalty also trains A; do
+not include pair penalties in gradient statistics. Preserve the EMA, 1,500-update
+warm-up, and Adam reset over both trainable layers. GRIT Fishr uses projected inputs.
+
+Reuse corrected MatchDG through a compatibility wrapper, retaining its ERM objective,
+positive strengths, initialization and width search `[8, 16, 32]`. This is a
+MatchDG-style representation penalty, not the full published MatchDG algorithm.
+New representation/control candidates use `factorized-pairs/v1`; historical objective
+versions and candidate IDs remain unchanged where scientific behavior is unchanged.
+Expanded configurations use fresh `*-representation-v1` output roots, preserving old
+configuration files and output trees.
+
+Selected factorized checkpoints retain both affine layers as well as the collapsed
+inference map `W = BA`, `bias = Ba + b`. A collapsed-only checkpoint is inference-only
+and must not resume factorized updates. Checkpoints do not promise exact optimizer,
+batch-order or Fishr EMA resumption; interrupted search tasks restart as before.
+
+Use existing weight decay on both layers. Record layer weight norms, unweighted
+representation-pair discrepancy and paired-logit discrepancy at saved epochs and in
+W&B. The transformation `(A,a,B) -> (cA,ca,B/c)` preserves logits while reducing the
+representation penalty by `c^2`; a smaller representation discrepancy alone does not
+establish predictive invariance. Inspect these diagnostics during pilots without
+adding normalization or redesigning the method.
+
+Search optimizer/base hyperparameters jointly with each intervention's strength or
+rank. Initial expanded configs fix latent width at 32 (provisional), with separate
+representation strengths `[0.01, 0.1, 1, 10]`. Keep the legacy optimizer/base grids,
+prediction strengths and bounded ranks `[2, 8, 16, 24]`. Including the auxiliary control
+this gives 224 ERM candidates and 896 each for V-REx, IRMv1 and Fishr per dataset.
+Each variant has independent validation selection and shared explicit final seeds.
+
+Preserve the existing three within-objective comparisons and add representation minus
+vanilla, GRIT minus representation, representation minus prediction, and representation
+minus two-layer control. Join explicit seeds, check dataset/feature/selector lineage
+and pair identity/budget where applicable, and report 95% t intervals. Never combine
+ordinary and diagnostic tracks. Review validation-only pilots and penalty scales before
+full searches. Commands and budgets are in the [config index](../../configs/README.md#objectiveintervention-experiments).

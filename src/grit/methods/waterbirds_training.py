@@ -143,6 +143,7 @@ def train_waterbirds_linear_probe(
         # `train_objective` carries each method's own penalties; it is not a
         # cross-method cross-entropy.
         values = {"train_objective": train_objective}
+        values.update(algorithm.training_diagnostics())
         values.update(
             {
                 f"validation/{name}": value

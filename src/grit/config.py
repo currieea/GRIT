@@ -16,7 +16,7 @@ from pydantic import (
     model_validator,
 )
 
-from grit.methods.types import MethodId
+from grit.methods.types import MethodId, consumes_pairs
 from grit.schemas import (
     HELD_OUT_VALIDATION_NAMES,
     IN_DOMAIN_VALIDATION_NAMES,
@@ -293,7 +293,7 @@ class RdmAlgorithmConfig(StrictBoundaryModel):
 
 
 class ComposedAlgorithmConfig(StrictBoundaryModel):
-    """A direct linear objective with an independent training-pair intervention."""
+    """A supervised objective with an independent predictor/intervention choice."""
 
     kind: Literal["composed"]
     base_objective: Annotated[
@@ -303,9 +303,19 @@ class ComposedAlgorithmConfig(StrictBoundaryModel):
         | FishrAlgorithmConfig,
         Field(discriminator="kind"),
     ]
-    pair_intervention: Literal["grit", "consistency"]
+    pair_intervention: Literal[
+        "grit", "consistency", "representation_consistency", "two_layer"
+    ]
     consistency_weight: Annotated[StrictFloat, Field(ge=0.0)] | None = None
-    objective_version: Literal["prediction-pairs/v1"] = "prediction-pairs/v1"
+    representation_consistency_weight: Annotated[StrictFloat, Field(ge=0.0)] | None = (
+        Field(default=None, exclude_if=lambda value: value is None)
+    )
+    latent_dim: PositiveInt | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    objective_version: Literal["prediction-pairs/v1", "factorized-pairs/v1"] = (
+        "prediction-pairs/v1"
+    )
 
     @model_validator(mode="after")
     def _validate_intervention(self) -> ComposedAlgorithmConfig:
@@ -313,6 +323,26 @@ class ComposedAlgorithmConfig(StrictBoundaryModel):
             self.consistency_weight is not None
         ):
             raise ValueError("only consistency requires consistency_weight")
+        factorized = self.pair_intervention in (
+            "representation_consistency",
+            "two_layer",
+        )
+        if factorized != (self.latent_dim is not None):
+            raise ValueError("only factorized predictors require latent_dim")
+        if factorized != (self.representation_consistency_weight is not None):
+            raise ValueError(
+                "factorized predictors require representation_consistency_weight"
+            )
+        if (
+            self.pair_intervention == "two_layer"
+            and self.representation_consistency_weight != 0.0
+        ):
+            raise ValueError("two_layer control requires zero representation strength")
+        expected_version = (
+            "factorized-pairs/v1" if factorized else "prediction-pairs/v1"
+        )
+        if self.objective_version != expected_version:
+            raise ValueError("objective version does not match intervention")
         if self.base_objective.kind == "erm" and self.pair_intervention == "grit":
             raise ValueError("use the existing grit algorithm for ERM plus GRIT")
         return self
@@ -334,13 +364,6 @@ AlgorithmConfig: TypeAlias = Annotated[
     | ComposedAlgorithmConfig,
     Field(discriminator="kind"),
 ]
-
-# Methods that consume the clean oracle pair bank; every other method must not bind it.
-PAIR_CONSUMING_ALGORITHMS = (
-    GritAlgorithmConfig,
-    MatchDgAlgorithmConfig,
-    ComposedAlgorithmConfig,
-)
 
 
 def algorithm_method_id(algorithm: AlgorithmConfig) -> MethodId:
@@ -461,7 +484,7 @@ class _CommonCmnistExperimentConfig(StrictBoundaryModel):
 
     @model_validator(mode="after")
     def _validate_algorithm_components(self) -> _CommonCmnistExperimentConfig:
-        uses_pairs = isinstance(self.algorithm, PAIR_CONSUMING_ALGORITHMS)
+        uses_pairs = consumes_pairs(algorithm_method_id(self.algorithm))
         if not uses_pairs:
             if not isinstance(self.pairs, DisabledPairsConfig):
                 raise ValueError(

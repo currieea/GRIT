@@ -14,7 +14,6 @@ from grit.config import (
     OPENAI_CLIP_PREPROCESSING_ID,
     OPENAI_CLIP_REVISION,
     OPENAI_CLIP_WEIGHTS_IDENTITY,
-    PAIR_CONSUMING_ALGORITHMS,
     CmnistArtifactLineageConfig,
     CmnistDatasetConfig,
     CmnistSourceCounts,
@@ -37,6 +36,7 @@ from grit.config import (
     RexAlgorithmConfig,
     SdAlgorithmConfig,
     SwadAlgorithmConfig,
+    algorithm_method_id,
 )
 from grit.data.cmnist import CmnistOraclePairManifest
 from grit.features.cmnist import (
@@ -70,6 +70,7 @@ from grit.methods.training import (
     TrainedLinearProbeRun,
     evaluate_accuracy,
     persist_selected_linear_checkpoint,
+    persist_training_diagnostics,
     train_linear_probe,
 )
 from grit.methods.types import base_objective, consumes_pairs, pair_intervention
@@ -252,10 +253,11 @@ def run_cmnist_search(
         resolved = materialize_cmnist_candidate_config(plan, candidate, selectors[0])
         return _CmnistRuntimeCandidate(candidate, resolved, projection)
 
-    def execute_pre_final(task: SearchRunTask, _run_root: Path) -> CompletedStageRun:
+    def execute_pre_final(task: SearchRunTask, run_root: Path) -> CompletedStageRun:
         runtime = runtime_candidate(task.candidate)
         with task_tracker(plan, task, algorithm=runtime.config.algorithm) as tracker:
             trained = _train_cmnist_task(cache, runtime, task, tracker)
+            persist_training_diagnostics(trained.run.algorithm, run_root)
             decisions = tuple(
                 select_checkpoint(trained.records(selector), selector)
                 for selector in selectors
@@ -351,6 +353,7 @@ def run_cmnist_search(
         ) -> CompletedStageRun:
             frozen = winners[(task.candidate.method_id, selector)]
             trained = _train_cmnist_task(full_cache, runtime, task, tracker)
+            persist_training_diagnostics(trained.run.algorithm, run_root)
             decision = select_checkpoint(trained.records(selector), selector)
             tracker.record_selection(checkpoint_decision_values(decision))
             frozen_checkpoint = freeze_final_checkpoint(decision, frozen)
@@ -752,7 +755,7 @@ def _cmnist_method(
         None,
     )
     differences = None
-    if algorithm.pair_intervention == "consistency":
+    if algorithm.pair_intervention in ("consistency", "representation_consistency"):
         if not isinstance(runtime.config.pairs, OraclePairsConfig):
             raise ValueError("consistency requires training oracle pairs")
         red, green = cache.pair_tables()
@@ -765,6 +768,9 @@ def _cmnist_method(
         projection_rank=task.candidate.requested_rank,
         pair_differences=differences,
         consistency_weight=algorithm.consistency_weight or 0.0,
+        representation_consistency_weight=algorithm.representation_consistency_weight
+        or 0.0,
+        latent_dim=algorithm.latent_dim,
     )
 
 
@@ -912,7 +918,7 @@ def _cmnist_result_artifacts(
             digest=checkpoint_manifest_digest,
         ),
     ]
-    if isinstance(runtime.config.algorithm, PAIR_CONSUMING_ALGORITHMS):
+    if consumes_pairs(algorithm_method_id(runtime.config.algorithm)):
         values.append(
             ArtifactReference(
                 artifact_id="cmnist-oracle-pair-manifest",
@@ -1158,6 +1164,7 @@ def _load_cmnist_cache(
             plan.resolved_config.lineage.dataset_manifest_digest
         ),
         expected_pair_manifest_digest=plan.resolved_config.lineage.pair_manifest_digest,
+        include_pairs=any(consumes_pairs(method) for method in plan.methods),
         expected_normalization=plan.normalization,
     )
     if (

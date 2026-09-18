@@ -44,6 +44,9 @@ five configs. Waterbirds requires its full canonical 240-pair bank.
 
 ## Objective/intervention experiments
 
+The original three-variant configs below remain unchanged. For the expanded matrix
+use the representation configs described next.
+
 `{cmnist,waterbirds}/{erm,rex,irm,fishr}-interventions-search.yaml` each run one
 objective's vanilla, GRIT and prediction-consistency variants, with independent winners.
 `rex` is V-REx; `grit` retains its original meaning of ERM plus GRIT. New method IDs
@@ -95,6 +98,111 @@ To preview a verified plan without training, add `--dry-run`. Full searches use 
 same command without `--pilot`, only after review. Summaries include absolute metrics
 and all three within-objective contrasts, preserving CMNIST selector and diagnostic
 track separation. W&B remains optional and mirrors only already-computed measurements.
+
+### Expanded representation matrix
+
+Use `{cmnist,waterbirds}/{erm,rex,irm,fishr}-representation-interventions-search.yaml`.
+These retain the previous three variants and add `<objective>_representation_consistency`
+and auxiliary `<objective>_two_layer`. `erm`, `rex`, `irm`, and `fishr` select the base;
+`grit` remains ERM plus projection. Historical `*_consistency` IDs and
+`consistency_weights` still mean prediction consistency.
+
+The independent `representation_consistency_weights: [0.01, 0.1, 1.0, 10.0]` grid
+is crossed with optimizer and base-objective settings. `representation_latent_dims: [32]`
+fixes the initial width provisionally for both representation and control. The control
+always sets representation strength to zero and receives no pair differences, pair
+access or candidate pair lineage. A representation-consistency candidate with strength
+zero still identifies its pair bank; its updates match the control at identical settings.
+Representation candidates use `representation_consistency_weight` and
+`representation_latent_dim`; resolved composed algorithms record `latent_dim`, separate
+base/representation coefficients, and `objective_version: factorized-pairs/v1`.
+Prediction/GRIT/standalone candidate identities are preserved. MatchDG keeps its separate
+`[8, 16, 32]` width search and current corrected objective.
+
+| Objective row, per dataset | Vanilla | GRIT | Prediction | Representation | Two-layer control | Tuning tasks (3 seeds) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| ERM | 16 | 64 | 64 | 64 | 16 | 672 |
+| V-REx | 64 | 256 | 256 | 256 | 64 | 2,688 |
+| IRMv1 | 64 | 256 | 256 | 256 | 64 | 2,688 |
+| Fishr | 64 | 256 | 256 | 256 | 64 | 2,688 |
+
+Per dataset this is 2,912 candidates and 8,736 tuning tasks. Each row additionally
+confirms top three per variant with two seeds: 30–60 tasks for CMNIST's two-selector
+union, 30 for Waterbirds. Final counts are 100 per CMNIST row and 50 per Waterbirds row.
+Every variant has its own winner. Summaries retain all previous comparisons and add
+representation minus vanilla, GRIT minus representation, representation minus prediction,
+and representation minus two-layer control, with explicit seed joins and compatible
+lineage/pair budgets.
+
+All expanded configs use fresh `*-interventions-representation-v1` output roots. Do not
+point an expanded config at an existing three-variant or standalone output directory.
+Historical results and existing configs require no migration. New factorized selected
+checkpoints store both layers plus a collapsed inference map. A fresh direct
+`LinearProbeAlgorithm` can restore their predictions; factorized optimization requires
+both layers. These are selected checkpoints, not exact optimizer/EMA resume snapshots.
+Search task restart behavior is unchanged.
+
+On a prepared server, run these bounded training/validation pilots in order:
+
+```bash
+scratch-project
+for objective in erm rex irm fishr; do
+  for dataset in cmnist waterbirds; do
+    config=configs/$dataset/$objective-representation-interventions-search.yaml
+    uv run scripts/run_search.py "$config" --pilot
+    uv run scripts/search_status.py "$config"
+  done
+done
+```
+
+Each pilot executes one full schedule for each of five variants on the first tuning
+seed; it never evaluates ordinary test. Keep the full 40 CMNIST / 100 Waterbirds epochs:
+Fishr runs 7,840 / 2,800 updates and crosses its 1,500-update warm-up. If artifacts are
+absent, prepare them first using the README commands; Waterbirds preparation needs the
+released images, CUB masks and Places sources. No additional feature extraction is needed
+for this extension. `--only fishr_representation_consistency --pilot`, for example,
+restricts execution to the selected variant through the existing CLI.
+
+Every factorized task saves `representation-diagnostics.json` with epoch-keyed layer
+weight norms and (for pair-consuming variants) unweighted representation and logit pair
+discrepancies. These values also appear in W&B when enabled; the selected checkpoint
+manifest retains its diagnostics. Inspect validation scores, finite objectives, runtime,
+and trajectories after warm-up. Shrinking A with growing B can reduce the representation
+penalty without improving logit invariance. Coefficients with equal numbers need not have
+equal effects across prediction, representation, or rescaled base objectives.
+
+If the execution pilots leave scale unclear, this exact bounded follow-up evaluates all
+four representation strengths at the pilot's optimizer/base settings and first tuning
+seed, reusing the already completed pilot. It remains validation-only:
+
+```bash
+uv run python - <<'PY'
+from pathlib import Path
+from grit.search.run import (
+    ProductionExecutionLimits, plan_production_search, run_production_search,
+)
+for objective in ("erm", "rex", "irm", "fishr"):
+    for dataset in ("cmnist", "waterbirds"):
+        path = Path(f"configs/{dataset}/{objective}-representation-interventions-search.yaml")
+        plan = plan_production_search(path)
+        method = f"{objective}_representation_consistency"
+        candidates = [c for c in plan.candidates if c.method_id == method]
+        first = candidates[0]
+        fields = ("learning_rate", "weight_decay", "penalty_weight", "representation_latent_dim")
+        chosen = tuple(c.candidate_id for c in candidates
+                       if all(getattr(c, f) == getattr(first, f) for f in fields))
+        run_production_search(path, ProductionExecutionLimits(
+            stop_after="tuning", candidate_ids=chosen,
+            tuning_seed=plan.seeds.stages.tuning[0], max_new_runs=len(chosen),
+        ))
+PY
+```
+
+Do not launch the full matrix until these pilots are reviewed. Width and strength ranges
+remain provisional; this extension introduces no representation normalization. The shared
+search artifact inventory still verifies prepared manifests even for pair-free objectives;
+the two-layer control itself requires no pair data and control-only CMNIST execution does
+not load pair feature arrays.
 
 ### MatchDG migration
 

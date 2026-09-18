@@ -516,3 +516,27 @@ def test_official_clip_cuda_adapter_uses_cuda_and_returns_cpu_features(
     assert runtime.compute_capability is not None
     assert runtime.tf32_enabled is False
     assert runtime.mixed_precision is False
+
+
+def test_pair_free_cache_loading_needs_no_pair_feature_files(tmp_path: Path) -> None:
+    construction, pairs = _construction_and_pairs()
+    root = tmp_path / "features"
+    manifest = prepare_cmnist_feature_cache(
+        construction,
+        pairs,
+        DeterministicFakeEncoder(),
+        root,
+        normalization="none",
+    )
+    for table in manifest.tables:
+        if table.role == "pair_projection":
+            for file in table.files:
+                (root / file.relative_path).unlink()
+    for loader in (load_cmnist_feature_cache, load_cmnist_tuning_feature_cache):
+        cache = loader(root, include_pairs=False)
+        assert sum(table.features.shape[0] for table in cache.training_tables()) == 40
+        assert all(table.features.shape[0] == 10 for table in cache.validation_tables())
+        with pytest.raises(ValueError, match="without pair access"):
+            cache.pair_tables()
+        with pytest.raises(FeatureCacheValidationError):
+            loader(root)

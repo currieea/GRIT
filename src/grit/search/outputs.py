@@ -27,11 +27,41 @@ ComparisonMetric: TypeAlias = Literal[
     "adjusted_average_accuracy",
     "raw_average_accuracy",
 ]
-_OBJECTIVE_VARIANTS: tuple[tuple[ObjectiveId, MethodId, MethodId, MethodId], ...] = (
-    ("erm", "erm", "grit", "erm_consistency"),
-    ("rex", "rex", "rex_grit", "rex_consistency"),
-    ("irm", "irm", "irm_grit", "irm_consistency"),
-    ("fishr", "fishr", "fishr_grit", "fishr_consistency"),
+_OBJECTIVE_VARIANTS: tuple[
+    tuple[ObjectiveId, MethodId, MethodId, MethodId, MethodId, MethodId], ...
+] = (
+    (
+        "erm",
+        "erm",
+        "grit",
+        "erm_consistency",
+        "erm_representation_consistency",
+        "erm_two_layer",
+    ),
+    (
+        "rex",
+        "rex",
+        "rex_grit",
+        "rex_consistency",
+        "rex_representation_consistency",
+        "rex_two_layer",
+    ),
+    (
+        "irm",
+        "irm",
+        "irm_grit",
+        "irm_consistency",
+        "irm_representation_consistency",
+        "irm_two_layer",
+    ),
+    (
+        "fishr",
+        "fishr",
+        "fishr_grit",
+        "fishr_consistency",
+        "fishr_representation_consistency",
+        "fishr_two_layer",
+    ),
 )
 
 
@@ -58,11 +88,22 @@ class InterventionComparison(StrictBoundaryModel):
     def _validate_comparison(self) -> InterventionComparison:
         allowed = {
             (objective, left, right)
-            for objective, vanilla, grit, consistency in _OBJECTIVE_VARIANTS
+            for (
+                objective,
+                vanilla,
+                grit,
+                consistency,
+                representation,
+                control,
+            ) in _OBJECTIVE_VARIANTS
             for left, right in (
                 (grit, vanilla),
                 (consistency, vanilla),
                 (grit, consistency),
+                (representation, vanilla),
+                (grit, representation),
+                (representation, consistency),
+                (representation, control),
             )
         }
         if (self.base_objective, self.minuend, self.subtrahend) not in allowed:
@@ -164,12 +205,23 @@ def make_cmnist_intervention_comparisons(
         raise ValueError("comparison method/selector identities must be unique")
     comparisons: list[InterventionComparison] = []
     selectors = tuple(dict.fromkeys(item.selector for item in methods))
-    for objective, vanilla, grit, consistency in _OBJECTIVE_VARIANTS:
+    for (
+        objective,
+        vanilla,
+        grit,
+        consistency,
+        representation,
+        control,
+    ) in _OBJECTIVE_VARIANTS:
         for selector in selectors:
             for left_id, right_id in (
                 (grit, vanilla),
                 (consistency, vanilla),
                 (grit, consistency),
+                (representation, vanilla),
+                (grit, representation),
+                (representation, consistency),
+                (representation, control),
             ):
                 left = by_identity.get((left_id, selector))
                 right = by_identity.get((right_id, selector))
@@ -201,11 +253,22 @@ def make_waterbirds_intervention_comparisons(
     if len(by_method) != len(methods):
         raise ValueError("comparison method identities must be unique")
     comparisons: list[InterventionComparison] = []
-    for objective, vanilla, grit, consistency in _OBJECTIVE_VARIANTS:
+    for (
+        objective,
+        vanilla,
+        grit,
+        consistency,
+        representation,
+        control,
+    ) in _OBJECTIVE_VARIANTS:
         for left_id, right_id in (
             (grit, vanilla),
             (consistency, vanilla),
             (grit, consistency),
+            (representation, vanilla),
+            (grit, representation),
+            (representation, consistency),
+            (representation, control),
         ):
             left, right = by_method.get(left_id), by_method.get(right_id)
             if left is None or right is None:

@@ -66,6 +66,7 @@ from grit.methods.training import (
     PersistedLinearCheckpointStore,
     RexLinearProbeMethod,
     persist_selected_linear_checkpoint,
+    persist_training_diagnostics,
 )
 from grit.methods.types import base_objective, consumes_pairs, pair_intervention
 from grit.methods.waterbirds_training import (
@@ -188,7 +189,11 @@ def run_waterbirds_production_search(
     selector = waterbirds_selector(config)
     output_root = Path(plan.resolved_config.output_root)
     dataset = _dataset_manifest(plan)
-    pairs = WaterbirdsOraclePairSet(manifest=_pair_manifest(plan))
+    pairs = (
+        WaterbirdsOraclePairSet(manifest=_pair_manifest(plan))
+        if any(consumes_pairs(method) for method in plan.methods)
+        else None
+    )
     # The test-oracle track scores every epoch on the test split, so it always
     # needs the full cache; the ordinary track can tune from the redacted one.
     tuning_only = limits is not None and limits.stop_after == "tuning"
@@ -204,7 +209,10 @@ def run_waterbirds_production_search(
     def runtime_candidate(candidate: SearchCandidate) -> _RuntimeCandidate:
         projection: FittedLinearProjection | None = None
         differences: torch.Tensor | None = None
+        if consumes_pairs(candidate.method_id) and pairs is None:
+            raise AssertionError("pair-consuming candidate requires training pairs")
         if pair_intervention(candidate.method_id) == "grit":
+            assert pairs is not None
             rank = candidate.requested_rank
             if rank is None:
                 raise AssertionError("planned Waterbirds GRIT candidate lacks a rank")
@@ -224,6 +232,7 @@ def run_waterbirds_production_search(
                 )
                 projections[rank] = projection
         elif consumes_pairs(candidate.method_id):
+            assert pairs is not None
             differences = pair_bank.get("land_minus_water")
             if differences is None:
                 land, water = waterbirds_oracle_pair_features(cache, pairs)
@@ -234,10 +243,11 @@ def run_waterbirds_production_search(
         )
         return _RuntimeCandidate(candidate, resolved, projection, differences)
 
-    def execute_pre_final(task: SearchRunTask, _run_root: Path) -> CompletedStageRun:
+    def execute_pre_final(task: SearchRunTask, run_root: Path) -> CompletedStageRun:
         runtime = runtime_candidate(task.candidate)
         with task_tracker(plan, task, algorithm=runtime.config.algorithm) as tracker:
             trained = _train_task(cache, weights, runtime, task, tracker)
+            persist_training_diagnostics(trained.algorithm, run_root)
             decision = select_waterbirds_checkpoint(
                 trained.selector_records(selector), selector
             )
@@ -318,6 +328,7 @@ def run_waterbirds_production_search(
         ) -> CompletedStageRun:
             frozen = winners[task.candidate.method_id]
             trained = _train_task(full_cache, weights, runtime, task, tracker)
+            persist_training_diagnostics(trained.algorithm, run_root)
             decision = select_waterbirds_checkpoint(
                 trained.selector_records(selector), selector
             )
@@ -674,6 +685,9 @@ def _waterbirds_method(
         projection_rank=task.candidate.requested_rank,
         pair_differences=runtime.pair_differences,
         consistency_weight=algorithm.consistency_weight or 0.0,
+        representation_consistency_weight=algorithm.representation_consistency_weight
+        or 0.0,
+        latent_dim=algorithm.latent_dim,
     )
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -115,6 +116,7 @@ class LinearProbeAlgorithm:
             else pair_differences.detach().cpu().to(torch.float32).clone()
         )
         self._consistency_weight = consistency_weight
+        self.diagnostic_history: dict[int, dict[str, float]] = {}
 
     def _new_optimizer(self) -> torch.optim.Adam:
         return torch.optim.Adam(
@@ -233,6 +235,9 @@ class LinearProbeAlgorithm:
                 return float(loss.item())
         finally:
             self._model.train(was_training)
+
+    def training_diagnostics(self) -> dict[str, float]:
+        return {}
 
     def capture_inference_state(self) -> LinearProbeState:
         return LinearProbeState(
@@ -706,6 +711,9 @@ def train_linear_probe_epochs(
         )
         # Methods such as SWAD checkpoint a state other than the live parameters;
         # validate exactly what was stored, then hand the live state back.
+        diagnostics = algorithm.training_diagnostics()
+        if diagnostics:
+            algorithm.diagnostic_history[epoch] = diagnostics
         state = method.checkpoint_state(algorithm)
         store.save(identity, state)
         live = algorithm.capture_inference_state()
@@ -775,6 +783,7 @@ def train_linear_probe(
         # `train_objective` is not comparable across methods: every penalty is already
         # inside it, so it is never labeled cross-entropy.
         values = {"train_objective": train_objective}
+        values.update(algorithm.training_diagnostics())
         values.update(
             {
                 f"validation/{record.split_name}_accuracy": float(record.value)
@@ -870,6 +879,12 @@ class PersistedLinearCheckpointManifest(StrictBoundaryModel):
     projection_basis: LinearCheckpointFile | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    factor_parameters: dict[str, LinearCheckpointFile] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    diagnostics: dict[str, float] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class _TensorToNumpy(Protocol):
@@ -911,6 +926,15 @@ class PersistedLinearCheckpointStore(CheckpointStore[LinearProbeState]):
             LinearProbeState(
                 weight=weight,
                 bias=bias,
+                factor_parameters=(
+                    None
+                    if self._manifest.factor_parameters is None
+                    else {
+                        name: _load_checkpoint_array(self._root, file)
+                        for name, file in self._manifest.factor_parameters.items()
+                    }
+                ),
+                diagnostics=self._manifest.diagnostics,
                 projection_basis=(
                     None
                     if self._manifest.projection_basis is None
@@ -919,6 +943,18 @@ class PersistedLinearCheckpointStore(CheckpointStore[LinearProbeState]):
                     )
                 ),
             ),
+        )
+
+
+def persist_training_diagnostics(
+    algorithm: LinearProbeAlgorithm, run_root: Path
+) -> None:
+    """Keep pilot scaling evidence even when the optional tracking mirror is off."""
+    if algorithm.diagnostic_history:
+        (run_root / "representation-diagnostics.json").write_text(
+            json.dumps(algorithm.diagnostic_history, sort_keys=True, allow_nan=False)
+            + "\n",
+            encoding="utf-8",
         )
 
 
@@ -937,6 +973,15 @@ def persist_selected_linear_checkpoint(
         checkpoint=stored.identity,
         weight=weight,
         bias=bias,
+        factor_parameters=(
+            None
+            if stored.state.factor_parameters is None
+            else {
+                name: _write_checkpoint_array(output_dir, f"{name}.npy", tensor)
+                for name, tensor in stored.state.factor_parameters.items()
+            }
+        ),
+        diagnostics=stored.state.diagnostics,
         projection_basis=(
             None
             if stored.state.projection_basis is None

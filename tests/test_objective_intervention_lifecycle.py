@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections import Counter
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 import pytest
 import torch
@@ -83,14 +83,28 @@ def _forbid_access(*_args: object, **_kwargs: object) -> None:
 
 @pytest.mark.parametrize("dataset", ["cmnist", "waterbirds"])
 @pytest.mark.parametrize("objective", ["erm", "rex", "irm", "fishr"])
+@pytest.mark.parametrize("factorized", [False, True])
 def test_matrix_row_runs_selection_restoration_and_reporting(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     dataset: Dataset,
     objective: Objective,
+    factorized: bool,
 ) -> None:
     output_root = tmp_path / "output"
     space = _space(objective)
+    methods: tuple[MethodId, ...] = tuple(method for method in ROWS[objective])
+    if factorized:
+        methods = (
+            *methods,
+            cast(MethodId, f"{objective}_representation_consistency"),
+            cast(MethodId, f"{objective}_two_layer"),
+        )
+        space.update(
+            methods=list(methods),
+            representation_consistency_weights=[0.1],
+            representation_latent_dims=[4],
+        )
     if dataset == "cmnist":
         config_path, _ = write_cmnist_production_config(
             tmp_path,
@@ -128,7 +142,6 @@ def test_matrix_row_runs_selection_restoration_and_reporting(
                 WaterbirdsFeatureCache, "training_environment_ids", _forbid_access
             )
 
-    methods = ROWS[objective]
     assert Counter(candidate.method_id for candidate in plan.candidates) == {
         method: 3 for method in methods
     }
@@ -140,7 +153,7 @@ def test_matrix_row_runs_selection_restoration_and_reporting(
             config_path, ProductionExecutionLimits(stop_after="tuning")
         )
     assert isinstance(status, ProductionSearchStatus)
-    assert status.tuning_complete == status.tuning_expected == 27
+    assert status.tuning_complete == status.tuning_expected == 9 * len(methods)
     assert status.final_complete == 0
     assert not tuple(output_root.rglob("final-result.json"))
 
@@ -156,9 +169,31 @@ def test_matrix_row_runs_selection_restoration_and_reporting(
         (methods[2], methods[0]),
         (methods[1], methods[2]),
     }
+    if factorized:
+        expected_contrasts.update(
+            {
+                (methods[3], methods[0]),
+                (methods[1], methods[3]),
+                (methods[3], methods[2]),
+                (methods[3], methods[4]),
+            }
+        )
+        diagnostic_paths = tuple(output_root.rglob("representation-diagnostics.json"))
+        assert diagnostic_paths
+        for diagnostic_path in diagnostic_paths:
+            history = json.loads(diagnostic_path.read_text())
+            assert history
+            for values in history.values():
+                assert values["representation/weight_norm"] > 0.0
+                assert values["classifier/weight_norm"] > 0.0
+                assert ("pairs/representation_discrepancy" in values) == (
+                    "two_layer" not in str(diagnostic_path)
+                )
     comparisons = summary.intervention_comparisons
     assert {(c.minuend, c.subtrahend) for c in comparisons} == expected_contrasts
-    assert len(comparisons) == 3 * (2 if dataset == "cmnist" else 3)
+    assert len(comparisons) == len(expected_contrasts) * (
+        2 if dataset == "cmnist" else 3
+    )
     for comparison in comparisons:
         assert comparison.base_objective == objective
         assert tuple(seed for seed, _ in comparison.differences_by_seed) == (
@@ -167,8 +202,8 @@ def test_matrix_row_runs_selection_restoration_and_reporting(
         assert comparison.ci95_lower <= comparison.mean <= comparison.ci95_upper
     status = production_search_status(config_path)
     assert status.phase == "complete"
-    assert status.frozen_winner_count == 3 * selector_count
-    assert status.final_complete == 3 * selector_count * 10
+    assert status.frozen_winner_count == len(methods) * selector_count
+    assert status.final_complete == len(methods) * selector_count * 10
     for method in methods:
         assert len(
             tuple((output_root / "selection" / method).glob("*winner.json"))
@@ -215,6 +250,9 @@ def test_matrix_row_runs_selection_restoration_and_reporting(
             pair_digests.add(pair_digest)
         store = PersistedLinearCheckpointStore(path.parent / "selected-checkpoint")
         stored = store.load(store.store_id.removeprefix("linear-checkpoint:"))
+        assert (stored.state.factor_parameters is not None) == (
+            pair_intervention(method) in ("representation_consistency", "two_layer")
+        )
         basis = stored.state.projection_basis
         assert basis is not None
         assert basis.shape == (
@@ -364,3 +402,101 @@ def test_composed_irm_diagnostic_lifecycle_stays_explicitly_test_oracle(
             metric.metric_kind == "diagnostic_test_oracle"
             for metric in result.diagnostic_metrics
         )
+
+
+@pytest.mark.parametrize("objective", ["erm", "rex", "irm", "fishr"])
+def test_representation_grid_keeps_strengths_width_and_base_independent(
+    tmp_path: Path,
+    objective: Objective,
+) -> None:
+    space = _space(objective)
+    representation = cast(MethodId, f"{objective}_representation_consistency")
+    control = cast(MethodId, f"{objective}_two_layer")
+    space.update(
+        methods=[*ROWS[objective], representation, control],
+        representation_consistency_weights=[0.0, 0.2],
+        representation_latent_dims=[4, 8],
+    )
+    if objective != "erm":
+        space[f"{objective}_penalty_weights"] = [1.0, 10.0]
+    path, _ = write_cmnist_production_config(
+        tmp_path,
+        output_root=tmp_path / "output",
+        overrides={"search_space": space},
+    )
+    plan = plan_production_search(path)
+    reps = [c for c in plan.candidates if c.method_id == representation]
+    controls = [c for c in plan.candidates if c.method_id == control]
+    base_weights = (None,) if objective == "erm" else (1.0, 10.0)
+    assert {
+        (
+            c.penalty_weight,
+            c.representation_consistency_weight,
+            c.representation_latent_dim,
+        )
+        for c in reps
+    } == {
+        (base, strength, width)
+        for base in base_weights
+        for strength in (0.0, 0.2)
+        for width in (4, 8)
+    }
+    assert all(c.consistency_weight is None for c in (*reps, *controls))
+    assert all(c.representation_consistency_weight == 0.0 for c in controls)
+    assert {c.representation_latent_dim for c in controls} == {4, 8}
+    assert {c.candidate_id for c in reps}.isdisjoint(c.candidate_id for c in controls)
+
+
+@pytest.mark.parametrize("dataset", ["cmnist", "waterbirds"])
+@pytest.mark.parametrize("objective", ["erm", "rex", "irm", "fishr"])
+def test_two_layer_only_tuning_never_requests_pairs_or_test(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    dataset: Dataset,
+    objective: Objective,
+) -> None:
+    control = cast(MethodId, f"{objective}_two_layer")
+    space = _space(objective)
+    space.update(methods=[control], representation_latent_dims=[4])
+    del space["consistency_weights"]
+    del space["projection_ranks"]
+    if dataset == "cmnist":
+        path, _ = write_cmnist_production_config(
+            tmp_path,
+            output_root=tmp_path / "output",
+            overrides={"search_space": space, "batch_size": 8, "max_epochs": 2},
+        )
+        plan = plan_production_search(path)
+        cache = fake_cache(plan)
+        monkeypatch.setattr(CmnistFeatureCache, "pair_tables", _forbid_access)
+        monkeypatch.setattr("grit.search.cmnist._cmnist_pair_manifest", _forbid_access)
+        loader = "grit.search.cmnist._load_cmnist_cache"
+    else:
+        path, artifacts = write_waterbirds_production_config(
+            tmp_path,
+            output_root=tmp_path / "output",
+            search_space=space,
+            max_epochs=1,
+        )
+        plan = plan_production_search(path)
+        cache = waterbirds_fake_cache(plan, artifacts[1])
+        monkeypatch.setattr("grit.search.waterbirds._pair_manifest", _forbid_access)
+        monkeypatch.setattr(
+            "grit.search.waterbirds.waterbirds_oracle_pair_features", _forbid_access
+        )
+        loader = "grit.search.waterbirds._load_cache"
+
+    def load_control_cache(_plan: SearchPlan, *, tuning_only: bool = False):
+        assert tuning_only
+        return cache
+
+    monkeypatch.setattr(loader, load_control_cache)
+    monkeypatch.setattr(type(cache), "issue_final_handle", _forbid_access)
+    monkeypatch.setattr(type(cache), "open_test_oracle_table", _forbid_access)
+    status = run_production_search(
+        path,
+        ProductionExecutionLimits(stop_after="tuning", max_new_runs=1),
+    )
+    assert isinstance(status, ProductionSearchStatus)
+    assert status.tuning_complete == 1
+    assert status.final_complete == 0

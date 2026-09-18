@@ -108,18 +108,25 @@ completion and final metrics. RotatedMNIST still runs ERM and GRIT only. See the
 
 ## Objective/intervention matrix
 
-ERM, V-REx, IRMv1 and Fishr now support vanilla, GRIT projection and direct
-prediction-consistency variants on both CMNIST and Waterbirds-CF. Each combination
+ERM, V-REx, IRMv1 and Fishr support vanilla, GRIT projection, prediction consistency
+and representation consistency on both CMNIST and Waterbirds-CF, plus an auxiliary
+two-layer control without pair access. Each combination
 has its own validation-selected winner and paired comparisons. Existing standalone
 experiments remain available, including the separate MatchDG-style representation
-penalty. Corrected MatchDG configs use new `*-bias-free-v2` output roots.
+penalty and all existing prediction/GRIT configs. Corrected MatchDG configs use new `*-bias-free-v2` output roots.
 
 Start with the ERM pilots, then V-REx, IRMv1 and Fishr:
 
 ```bash
-uv run scripts/run_search.py configs/cmnist/erm-interventions-search.yaml --pilot
-uv run scripts/run_search.py configs/waterbirds/erm-interventions-search.yaml --pilot
+uv run scripts/run_search.py configs/cmnist/erm-representation-interventions-search.yaml --pilot
+uv run scripts/run_search.py configs/waterbirds/erm-representation-interventions-search.yaml --pilot
 ```
+
+The new variants use `<objective>_representation_consistency` and
+`<objective>_two_layer`; historical `*_consistency` still means prediction consistency.
+Expanded configs use fresh output roots and provisional latent width 32. Local
+`representation-diagnostics.json` files and optional W&B metrics record layer norms
+and representation/logit pair discrepancies.
 
 See the [config index](configs/README.md#objectiveintervention-experiments) for all
 pilot commands, explicit candidate budgets and migration details. The matrix grids are

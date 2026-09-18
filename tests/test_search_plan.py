@@ -2087,7 +2087,10 @@ def test_cmnist_real_plan_pilot_runs_two_canonical_tuning_tasks_only(
         assert isinstance(completed, CmnistCompletedStageRun)
         run = cast(
             TrainedLinearProbeRun,
-            SimpleNamespace(validation_metrics=completed.validation_metrics),
+            SimpleNamespace(
+                validation_metrics=completed.validation_metrics,
+                algorithm=SimpleNamespace(diagnostic_history={}),
+            ),
         )
         return CmnistTrainedTask(run, None)
 
@@ -2213,6 +2216,7 @@ def test_waterbirds_real_plan_pilot_uses_same_bounded_lifecycle(
         completed = _waterbirds_stage_run(task, weights)
         return SimpleNamespace(
             validation_metrics=completed.validation_metrics,
+            algorithm=SimpleNamespace(diagnostic_history={}),
             diagnostic_metrics=None,
             selector_records=lambda _selector: completed.validation_metrics,  # pyright: ignore[reportUnknownLambdaType]
         )
