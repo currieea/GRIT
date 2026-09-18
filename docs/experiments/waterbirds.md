@@ -8,9 +8,12 @@ Waterbirds artifacts and searches on Jujube, with results still under audit. Thi
 protocol does not certify server completion; check the exact config's canonical output
 using `scripts/search_status.py`.
 
-**SD, Fishr, and RDM are now bound for Waterbirds under the ordinary validation
-track, with synthetic verification only; real-data training/validation pilots on the
-ECN servers remain outstanding before their initial grids are frozen for production.**
+**SD, Fishr, and RDM are implemented for Waterbirds under the ordinary validation
+track, with synthetic verification and real-data runs reported by the experimenter
+as behaving as expected (September 2026).** Full-search completion and the final
+reported metrics are determined from each config's canonical outputs. Before freezing
+the initial grids, verify that the Fishr/RDM pilots crossed the 1,500-update warm-up
+boundary.
 
 ## Purpose
 
@@ -833,4 +836,5 @@ are not valid ordinary selections and numerical parity is not an exit requiremen
 - [x] V-REx, IRMv1, Fish, LISA, SWAD, and MatchDG search spaces specified
 - [x] SD, Fishr, and RDM Waterbirds bindings, configurations, and synthetic
       verification implemented
-- [ ] SD, Fishr, and RDM real-data Waterbirds pilots run and initial grids frozen
+- [x] SD, Fishr, and RDM real-data Waterbirds runs reported as behaving as expected
+- [ ] Fishr/RDM pilot warm-up coverage verified and initial grids frozen

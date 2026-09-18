@@ -18,8 +18,10 @@
   two training environments (`train_e01`/`train_e02` for CMNIST, land/water backgrounds
   for Waterbirds). Fishr and RDM use a 1,500-update warm-up; a shortened run must leave
   at least one update after warm-up or it is rejected when the method binds to the
-  cache. Real-data validation pilots are still required on both datasets before
-  freezing these initial grids for production searches.
+  cache. The experimenter reports that real-data Waterbirds runs behaved as expected;
+  verify Fishr/RDM pilot warm-up coverage before freezing the initial grids. CMNIST
+  real-data validation pilots remain outstanding. Use each config's canonical outputs
+  to establish full-search completion and final metrics.
 - `cmnist/*-test-oracle.yaml` and `waterbirds/*-test-oracle.yaml`: the same grids and
   seeds selected on the test split (`selectors: [test_oracle]`), the paper's "oracle
   validation" columns. Each writes a separate `*-test-oracle` output tree; every result

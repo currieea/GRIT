@@ -6,7 +6,9 @@ labeled test-oracle track. Conditional and nearest-neighbor pair definitions are
 open.**
 
 **SD, Fishr, and RDM are implemented and synthetically verified for CMNIST and
-Waterbirds; real-data training/validation pilots remain outstanding for both.**
+Waterbirds. Real-data CMNIST training/validation pilots remain outstanding; the
+experimenter reports that the Waterbirds runs behaved as expected.** See the
+[Waterbirds protocol](waterbirds.md) for that dataset's verification status.
 RotatedMNIST integration for these three is deferred; its search configuration admits
 only ERM and GRIT.
 
@@ -812,8 +814,8 @@ mirror the search, but local structured results define selection semantics.
 
 The production lifecycle implements the ERM/oracle-GRIT grid and independent
 GroupDRO, V-REx, IRMv1, Fish, LISA, SWAD, MatchDG, SD, Fishr, and RDM grids locally.
-The SD/Fishr/RDM grids remain initial choices pending real-data pilots. The production schema
-requires explicit dataset, feature-cache, and 256-pair manifest paths; the canonical
+The CMNIST SD/Fishr/RDM grids remain initial choices pending real-data pilots. The
+production schema requires explicit dataset, feature-cache, and 256-pair manifest paths; the canonical
 production inventory; pinned official OpenAI CLIP identity; one matching normalization;
 and explicit construction, pair, 3 tuning, 2 confirmation, and 10 final seeds. Planning
 emits all 384 ordered candidates (16 ERM and 368 GRIT) and expected stage counts without
@@ -833,7 +835,8 @@ persist and restore that checkpoint, and only then open `test_ood`. Canonical st
 selection artifacts, ten-seed summaries, per-seed paired differences, and the verified
 experiment index are local authority. Implementation tests establish pipeline behavior,
 not production completion or scientific performance. Check each server output tree
-with `scripts/search_status.py`; the SD/Fishr/RDM real-data pilots remain outstanding.
+with `scripts/search_status.py`; the CMNIST SD/Fishr/RDM real-data pilots remain
+outstanding.
 
 Final results report mean, standard deviation, and a 95% t-interval across final seeds.
 Because methods use the same final seeds, comparisons also report paired per-seed

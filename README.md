@@ -97,9 +97,11 @@ unless the config and output are explicitly labeled `test-oracle`; see
 
 SD, Fishr, and RDM are also implemented for CMNIST and Waterbirds, with separate
 validation-search configs under `configs/cmnist/` and `configs/waterbirds/`. They reuse
-the already prepared features and have synthetic verification; real-data pilots remain
-outstanding for both datasets. Fishr/RDM runs must extend beyond their configured
-warm-up. RotatedMNIST still runs ERM and GRIT only. See the
+the already prepared features and have synthetic verification. The experimenter reports
+that real-data Waterbirds runs behaved as expected; CMNIST real-data pilots remain
+outstanding. Fishr/RDM pilots must extend beyond their configured warm-up before the
+initial grids are frozen. Check each config's canonical outputs for full-search
+completion and final metrics. RotatedMNIST still runs ERM and GRIT only. See the
 [config index](configs/README.md) and
 [method definitions](docs/experiments/cmnist.md#additional-baselines-sd-fishr-and-rdm).
 
