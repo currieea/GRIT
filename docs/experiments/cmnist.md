@@ -614,12 +614,20 @@ The inherited "MatchDG" row is a matching penalty on frozen features rather than
 published contrastive algorithm; it is kept under that name for comparability with
 the paper. The model is a linear featurizer $\phi(x)=W_1x+b_1$ to a latent dimension
 followed by a linear classifier. Training minimizes the mean cross-entropy plus
-$\lambda\,\frac{1}{n}\sum_i\lVert\phi(z_i^{\text{red}}-z_i^{\text{green}})\rVert^2$
+$\lambda\,\frac{1}{n}\sum_i\lVert\phi(z_i^{\text{red}})-\phi(z_i^{\text{green}})\rVert^2$
 over the same $n = 256$ clean oracle pairs as the primary GRIT result; the inherited
 code used every training source, so this is the pair-budgeted form. Because both
 layers are linear, the composed map is a linear probe, and checkpoints store that
 composition. The latent dimension grid is `8`, `16`, and `32` and the penalty grid is
 `0.1`, `1`, `10`, and `100`, a subset of the inherited 8-by-5 launcher grid.
+
+The affine bias cancels in each representation difference, so the pair penalty is
+$\frac{1}{n}\sum_i\lVert W_1(z_i^{\text{red}}-z_i^{\text{green}})\rVert^2$.
+Keep both layers' biases in prediction and retain the existing optimizer weight decay.
+This corrects the inherited $\phi(z_i^{\text{red}}-z_i^{\text{green}})$ objective,
+whose bias can absorb the mean pair difference without making paired representations
+equal. Results from that objective are historical results; corrected results require
+a fresh validation search with selection frozen before test evaluation.
 
 ## Additional baselines: SD, Fishr, and RDM
 

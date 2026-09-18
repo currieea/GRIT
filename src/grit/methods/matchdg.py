@@ -1,4 +1,4 @@
-"""The inherited MatchDG-style pair-difference penalty on a linear featurizer."""
+"""MatchDG-style matching of paired representations on a linear featurizer."""
 
 from __future__ import annotations
 
@@ -39,9 +39,11 @@ class MatchDgAlgorithm(LinearProbeAlgorithm):
         if penalty_weight <= 0.0 or not math.isfinite(penalty_weight):
             raise ValueError("MatchDG penalty weight must be positive and finite")
         differences = pair_differences.detach().cpu().to(torch.float32)
-        if differences.ndim != 2 or int(differences.shape[0]) == 0 or int(
-            differences.shape[1]
-        ) != 512:
+        if (
+            differences.ndim != 2
+            or int(differences.shape[0]) == 0
+            or int(differences.shape[1]) != 512
+        ):
             raise ValueError("MatchDG pair differences must have shape [pairs, 512]")
         self._pair_differences = differences
         self._penalty_weight = float(penalty_weight)
@@ -69,9 +71,12 @@ class MatchDgAlgorithm(LinearProbeAlgorithm):
         self._recompose()
 
     def pair_penalty(self) -> torch.Tensor:
-        """Mean squared featurizer output over the pair differences."""
+        """Mean squared representation difference; the affine bias cancels."""
 
-        return self._featurizer(self._pair_differences).pow(2).sum(dim=1).mean()
+        response = torch.nn.functional.linear(
+            self._pair_differences, self._featurizer.weight, bias=None
+        )
+        return response.pow(2).sum(dim=1).mean()
 
     def update_with_logits_objective(
         self,

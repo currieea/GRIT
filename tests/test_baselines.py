@@ -302,6 +302,34 @@ def test_swad_method_checkpoints_live_weights_until_the_valley_starts() -> None:
     assert not method.dead
 
 
+def test_matchdg_pair_penalty_matches_representations_and_excludes_bias() -> None:
+    generator = torch.Generator().manual_seed(11)
+    left = torch.randn((8, 512), generator=generator)
+    right = torch.randn((8, 512), generator=generator)
+    algorithm = MatchDgAlgorithm(
+        _config(),
+        model_seed=5,
+        latent_dim=4,
+        pair_differences=left - right,
+        penalty_weight=1.0,
+    )
+    featurizer = algorithm._featurizer  # pyright: ignore[reportPrivateUsage]
+    with torch.no_grad():
+        featurizer.bias.fill_(3.0)
+    expected = (featurizer(left) - featurizer(right)).square().sum(dim=1).mean()
+    penalty = algorithm.pair_penalty()
+    torch.testing.assert_close(penalty, expected)
+    weight_gradient, bias_gradient = torch.autograd.grad(
+        penalty, (featurizer.weight, featurizer.bias), allow_unused=True
+    )
+    assert weight_gradient is not None
+    assert torch.count_nonzero(weight_gradient) > 0
+    assert bias_gradient is None
+    with torch.no_grad():
+        featurizer.bias.fill_(-7.0)
+    torch.testing.assert_close(algorithm.pair_penalty(), penalty, rtol=0, atol=0)
+
+
 def test_matchdg_composition_mirrors_factors_and_penalty_shrinks_pair_response() -> (
     None
 ):

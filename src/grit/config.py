@@ -251,7 +251,7 @@ class SwadAlgorithmConfig(StrictBoundaryModel):
 
 
 class MatchDgAlgorithmConfig(StrictBoundaryModel):
-    """Inherited pair-difference penalty on a linear featurizer (not contrastive)."""
+    """Pairwise representation-difference penalty (not contrastive)."""
 
     kind: Literal["matchdg"]
     latent_dim: PositiveInt

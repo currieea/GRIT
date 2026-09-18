@@ -464,7 +464,10 @@ to:
   validation split, evaluated every 100 optimizer updates. With 19 ERM updates per epoch
   this yields 19 segments over 100 epochs.
 - **Pairs (MatchDG-style).** The penalty averages over the same 240 clean `land - water`
-  oracle differences that fit the GRIT projection.
+  oracle differences that fit the GRIT projection. Apply the featurizer weight without
+  its bias to these differences, equivalently subtract the two affine representations,
+  as specified in the [shared MatchDG protocol](cmnist.md#matchdg-style-pair-penalty).
+  The correction and requirement to rerun validation selection there also apply here.
 
 Nothing else changes: the optimizer grid, batch size, epochs, seeds, checkpoint rule,
 and selectors are those of this document.
