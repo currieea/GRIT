@@ -26,6 +26,10 @@ build/
 dist/
 *.egg-info/
 
+# local experiment artifacts
+nohup.out
+reproduction_results/
+
 # Jupyter
 .ipynb_checkpoints/
 
