@@ -145,6 +145,41 @@ output tree has not been initialized; it does not invalidate results stored unde
 different config. See `docs/experiments/waterbirds.md` for the construction, protocol,
 and reporting boundary.
 
+## Optional W&B tracking
+
+Tracking is off unless `WANDB_PROJECT` is set, and it never participates in scientific
+identity: the settings are environment variables only, so they stay out of the YAML
+configs and their hashes, and enabling tracking does not invalidate a search that is
+already partly complete.
+
+```bash
+export WANDB_PROJECT=grit           # enables the mirror
+export WANDB_ENTITY=<account-or-team>
+export WANDB_MODE=offline           # or online (default), or disabled
+uv run scripts/run_search.py configs/cmnist/production-search.yaml
+```
+
+Run files land under `$PROJECT_SCRATCH/wandb`, outside the canonical output tree that
+`experiment-index.json` hashes. One W&B run is created per executed task attempt:
+grouped by experiment name and plan digest, named by method, candidate, stage, and seed,
+with job type `tuning`, `confirmation`, `final`, or `summary`. Each run's config carries
+the resolved hyperparameters (including the settings a candidate holds fixed, such as
+Fishr's EMA and warm-up or RDM's variance weight), the seed, the selector, the input
+artifact digests, and two commits: `git_revision` is the code that executed the task and
+`plan_git_revision` the code that wrote the plan, which differ when a search is resumed
+after a change. Each epoch logs `train_objective` (each method's own objective, not a
+comparable cross-entropy) and the validation metrics the run already computed. At task
+completion the selected checkpoint is recorded, final tasks add their test metric, and a
+completed search mirrors its ten-seed summary as a table. The `track` field labels every
+run of a test-oracle search, including its tuning and confirmation runs, whose tasks
+carry no selector of their own; oracle test metrics stay under
+`diagnostic_test_oracle/`.
+
+Tasks that are reused from a previous run are not re-tracked, and `--dry-run` and
+`search_status.py` create no runs. A task that raises marks its run failed rather than
+finished, so a crashed search is not mistaken for a complete one. Tracking failures warn
+and continue; they cannot change a candidate, a checkpoint, a metric, or a result.
+
 ## Custom paths and grids
 
 Copy a config, edit it, and pass the copy to `run_search.py`. Paths accept absolute
@@ -165,6 +200,9 @@ uv run pytest
 uv run scripts/smoke.py cmnist        # hermetic end-to-end with a fake encoder
 uv run scripts/smoke.py waterbirds
 ```
+
+`WANDB_MODE=offline` with a `WANDB_PROJECT` is the cheapest way to check the mirror
+without an account; `tests/test_tracking.py` covers it.
 
 Start with `AGENTS.md` and the relevant file under `docs/experiments/` before changing
 experimental behavior.

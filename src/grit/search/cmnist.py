@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
@@ -79,6 +80,7 @@ from grit.schemas import ORDINARY_CMNIST_SELECTORS, CmnistSelector, SeedStage
 from grit.search.lifecycle import (
     ProductionLifecycleHooks,
     ProductionStatusHooks,
+    checkpoint_decision_values,
     production_lifecycle_status,
     run_production_lifecycle,
 )
@@ -125,6 +127,13 @@ from grit.selection.cmnist import (
     select_checkpoint,
     select_confirmed_candidate,
     select_test_oracle,
+)
+from grit.tracking import (
+    RunTracker,
+    TrackingValue,
+    final_values,
+    log_summary_table,
+    task_tracker,
 )
 
 CmnistCandidateConfig = OrdinaryExperimentConfig | CmnistTestOracleExperimentConfig
@@ -241,23 +250,28 @@ def run_cmnist_search(
 
     def execute_pre_final(task: SearchRunTask, _run_root: Path) -> CompletedStageRun:
         runtime = runtime_candidate(task.candidate)
-        trained = _train_cmnist_task(cache, runtime, task)
-        decisions = tuple(
-            select_checkpoint(trained.records(selector), selector)
-            for selector in selectors
-        )
-        return CmnistCompletedStageRun(
-            schema_version="grit.cmnist-search-stage-run/v1",
-            dataset="cmnist",
-            status="complete",
-            task=task,
-            lineage=plan.resolved_config.lineage,
-            code=current_code_provenance(),
-            environment=current_environment_provenance(),
-            validation_metrics=trained.run.validation_metrics,
-            diagnostic_metrics=trained.diagnostic_metrics,
-            checkpoint_decisions=decisions,
-        )
+        with task_tracker(
+            plan, task, algorithm=runtime.config.algorithm
+        ) as tracker:
+            trained = _train_cmnist_task(cache, runtime, task, tracker)
+            decisions = tuple(
+                select_checkpoint(trained.records(selector), selector)
+                for selector in selectors
+            )
+            for decision in decisions:
+                tracker.record_selection(checkpoint_decision_values(decision))
+            return CmnistCompletedStageRun(
+                schema_version="grit.cmnist-search-stage-run/v1",
+                dataset="cmnist",
+                status="complete",
+                task=task,
+                lineage=plan.resolved_config.lineage,
+                code=current_code_provenance(),
+                environment=current_environment_provenance(),
+                validation_metrics=trained.run.validation_metrics,
+                diagnostic_metrics=trained.diagnostic_metrics,
+                checkpoint_decisions=decisions,
+            )
 
     candidates_by_id = {item.candidate_id: item for item in plan.candidates}
 
@@ -315,15 +329,30 @@ def run_cmnist_search(
 
         def execute_final(task: SearchRunTask, run_root: Path) -> CompletedStageRun:
             selector = CmnistSelector(task.selector)
-            frozen = winners[(task.candidate.method_id, selector)]
-            runtime = runtime_candidate(task.candidate)
+            initial = runtime_candidate(task.candidate)
             runtime = _CmnistRuntimeCandidate(
-                runtime.planned,
+                initial.planned,
                 materialize_cmnist_candidate_config(plan, task.candidate, selector),
-                runtime.projection,
+                initial.projection,
             )
-            trained = _train_cmnist_task(full_cache, runtime, task)
+            with task_tracker(
+                plan, task, algorithm=runtime.config.algorithm
+            ) as tracker:
+                return _execute_cmnist_final(
+                    task, run_root, tracker, selector, runtime
+                )
+
+        def _execute_cmnist_final(
+            task: SearchRunTask,
+            run_root: Path,
+            tracker: RunTracker,
+            selector: CmnistSelector,
+            runtime: _CmnistRuntimeCandidate,
+        ) -> CompletedStageRun:
+            frozen = winners[(task.candidate.method_id, selector)]
+            trained = _train_cmnist_task(full_cache, runtime, task, tracker)
             decision = select_checkpoint(trained.records(selector), selector)
+            tracker.record_selection(checkpoint_decision_values(decision))
             frozen_checkpoint = freeze_final_checkpoint(decision, frozen)
             run = trained.run
             selected = run.store.load(frozen_checkpoint.checkpoint.checkpoint_id)
@@ -345,6 +374,12 @@ def run_cmnist_search(
                 diagnostics = trained.diagnostic_metrics
                 if diagnostics is None:
                     raise AssertionError("test-oracle final run lacks test_ood records")
+                selected_diagnostic = next(
+                    item
+                    for item in diagnostics
+                    if item.checkpoint_id
+                    == frozen_checkpoint.checkpoint.checkpoint_id
+                )
                 result = CmnistTestOracleDiagnosticResult(
                     schema_version="grit.run-result/v1",
                     result_kind="cmnist_test_oracle_diagnostic",
@@ -361,6 +396,13 @@ def run_cmnist_search(
                     test_oracle_checkpoint_selection=frozen_checkpoint,
                     restoration=restoration,
                     artifacts=artifacts,
+                )
+                tracker.record_selection(
+                    final_values(
+                        selector.value,
+                        {"test_ood_accuracy": float(selected_diagnostic.value)},
+                        diagnostic=True,
+                    )
                 )
             else:
                 handle = full_cache.issue_final_handle(
@@ -393,6 +435,12 @@ def run_cmnist_search(
                     restoration=restoration,
                     final_test_metrics=(final_metric,),
                     artifacts=artifacts,
+                )
+                tracker.record_selection(
+                    final_values(
+                        selector.value,
+                        {"test_ood_accuracy": float(final_metric.value)},
+                    )
                 )
             persist_canonical_artifact(run_root / "final-result.json", result)
             completed = CmnistCompletedStageRun(
@@ -434,6 +482,7 @@ def run_cmnist_search(
                 / f"cmnist-{paired.selector.value}-paired-differences.json",
                 paired,
             )
+        _mirror_cmnist_summary(plan, summary)
 
     hooks = ProductionLifecycleHooks(
         coerce_runs=coerce_runs,
@@ -638,6 +687,7 @@ def _train_cmnist_task(
     cache: CmnistFeatureCache | CmnistTuningFeatureCache,
     runtime: _CmnistRuntimeCandidate,
     task: SearchRunTask,
+    tracker: RunTracker | None = None,
 ) -> CmnistTrainedTask:
     training_tables = cache.training_tables()
     method = _cmnist_method(cache, runtime, task)
@@ -653,26 +703,28 @@ def _train_cmnist_task(
 
         def score_test_ood(
             algorithm: LinearProbeAlgorithm, identity: CheckpointIdentity
-        ) -> None:
-            collected.append(
-                DiagnosticMetricRecord(
-                    record_id=f"metric:{run_id}:{identity.checkpoint_id}:test_ood",
-                    run_id=run_id,
-                    candidate_id=task.candidate.candidate_id,
-                    method_id=task.candidate.method_id,
-                    scientific_config_digest=task.candidate.scientific_config_digest,
-                    checkpoint_id=identity.checkpoint_id,
-                    epoch=identity.epoch,
-                    seed=task.seed,
-                    value=evaluate_accuracy(algorithm, test_table),
-                    sample_count=len(test_table.source_ids),
-                    metric_kind="diagnostic_test_oracle",
-                    seed_stage=task.stage,
-                    split_name="test_ood",
-                    metric_name="accuracy",
-                    projection_rank=task.candidate.requested_rank,
-                )
+        ) -> Mapping[str, float]:
+            record = DiagnosticMetricRecord(
+                record_id=f"metric:{run_id}:{identity.checkpoint_id}:test_ood",
+                run_id=run_id,
+                candidate_id=task.candidate.candidate_id,
+                method_id=task.candidate.method_id,
+                scientific_config_digest=task.candidate.scientific_config_digest,
+                checkpoint_id=identity.checkpoint_id,
+                epoch=identity.epoch,
+                seed=task.seed,
+                value=evaluate_accuracy(algorithm, test_table),
+                sample_count=len(test_table.source_ids),
+                metric_kind="diagnostic_test_oracle",
+                seed_stage=task.stage,
+                split_name="test_ood",
+                metric_name="accuracy",
+                projection_rank=task.candidate.requested_rank,
             )
+            collected.append(record)
+            return {
+                "diagnostic_test_oracle/test_ood_accuracy": float(record.value)
+            }
 
         epoch_hook = score_test_ood
     run = train_linear_probe(
@@ -686,6 +738,7 @@ def _train_cmnist_task(
         seed=task.seed,
         method=method,
         epoch_hook=epoch_hook,
+        tracker=tracker,
     )
     return CmnistTrainedTask(
         run, None if diagnostics is None else tuple(diagnostics)
@@ -959,6 +1012,58 @@ def _cmnist_summary(
         selectors=selectors,
         methods=tuple(methods),
         paired_selectors=tuple(paired),
+    )
+
+
+def _mirror_cmnist_summary(
+    plan: SearchPlan, summary: CmnistProductionSummary
+) -> None:
+    """Mirror the canonical ten-seed summary; the oracle track is labeled as such."""
+
+    rows: list[list[TrackingValue]] = [
+        [
+            item.method_id,
+            item.selector.value,
+            item.selected_candidate_id,
+            item.accuracy_summary.metric_name,
+            item.accuracy_summary.seed_count,
+            float(item.accuracy_summary.mean),
+            float(item.accuracy_summary.sample_standard_deviation),
+            float(item.accuracy_summary.ci95_lower),
+            float(item.accuracy_summary.ci95_upper),
+        ]
+        for item in summary.methods
+    ]
+    rows.extend(
+        [
+            "grit_minus_erm",
+            paired.selector.value,
+            None,
+            paired.difference_summary.metric_name,
+            paired.difference_summary.seed_count,
+            float(paired.difference_summary.mean),
+            float(paired.difference_summary.sample_standard_deviation),
+            float(paired.difference_summary.ci95_lower),
+            float(paired.difference_summary.ci95_upper),
+        ]
+        for paired in summary.paired_selectors
+    )
+    log_summary_table(
+        plan,
+        track="test_oracle" if summary.test_oracle else "ordinary",
+        table_name="cmnist_final_summary",
+        columns=(
+            "method",
+            "selector",
+            "candidate_id",
+            "metric",
+            "seed_count",
+            "mean",
+            "sd",
+            "ci95_lower",
+            "ci95_upper",
+        ),
+        rows=rows,
     )
 
 

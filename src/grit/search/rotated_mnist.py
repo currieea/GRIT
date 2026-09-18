@@ -50,6 +50,7 @@ from grit.schemas import CmnistSelector, SeedStage
 from grit.search.lifecycle import (
     ProductionLifecycleHooks,
     ProductionStatusHooks,
+    checkpoint_decision_values,
     production_lifecycle_status,
     run_production_lifecycle,
 )
@@ -91,6 +92,13 @@ from grit.selection.cmnist import (
     make_tuning_finalists,
     select_checkpoint,
     select_confirmed_candidate,
+)
+from grit.tracking import (
+    RunTracker,
+    TrackingValue,
+    final_values,
+    log_summary_table,
+    task_tracker,
 )
 
 
@@ -150,25 +158,31 @@ def run_rotated_mnist_search(
         return _RuntimeCandidate(candidate, resolved, projection)
 
     def execute_pre_final(task: SearchRunTask, _run_root: Path) -> CompletedStageRun:
-        trained = _train_task(cache, runtime_candidate(task.candidate), task)
-        decisions = tuple(
-            select_checkpoint(trained.validation_metrics, selector)
-            for selector in (
-                CmnistSelector.PRIMARY_ROBUST,
-                CmnistSelector.SECONDARY_SOURCE,
+        runtime = runtime_candidate(task.candidate)
+        with task_tracker(
+            plan, task, algorithm=runtime.config.algorithm
+        ) as tracker:
+            trained = _train_task(cache, runtime, task, tracker)
+            decisions = tuple(
+                select_checkpoint(trained.validation_metrics, selector)
+                for selector in (
+                    CmnistSelector.PRIMARY_ROBUST,
+                    CmnistSelector.SECONDARY_SOURCE,
+                )
             )
-        )
-        return CmnistCompletedStageRun(
-            schema_version="grit.rotated-mnist-search-stage-run/v1",
-            dataset="rotated_mnist",
-            status="complete",
-            task=task,
-            lineage=plan.resolved_config.lineage,
-            code=current_code_provenance(),
-            environment=current_environment_provenance(),
-            validation_metrics=trained.validation_metrics,
-            checkpoint_decisions=decisions,
-        )
+            for decision in decisions:
+                tracker.record_selection(checkpoint_decision_values(decision))
+            return CmnistCompletedStageRun(
+                schema_version="grit.rotated-mnist-search-stage-run/v1",
+                dataset="rotated_mnist",
+                status="complete",
+                task=task,
+                lineage=plan.resolved_config.lineage,
+                code=current_code_provenance(),
+                environment=current_environment_provenance(),
+                validation_metrics=trained.validation_metrics,
+                checkpoint_decisions=decisions,
+            )
 
     candidates_by_id = {
         candidate.candidate_id: candidate for candidate in plan.candidates
@@ -221,7 +235,6 @@ def run_rotated_mnist_search(
 
         def execute_final(task: SearchRunTask, run_root: Path) -> CompletedStageRun:
             selector = CmnistSelector(task.selector)
-            winner = winners[(task.candidate.method_id, selector)]
             initial = runtime_candidate(task.candidate)
             runtime = _RuntimeCandidate(
                 initial.planned,
@@ -230,8 +243,24 @@ def run_rotated_mnist_search(
                 ),
                 initial.projection,
             )
-            trained = _train_task(full_cache, runtime, task)
+            with task_tracker(
+                plan, task, algorithm=runtime.config.algorithm
+            ) as tracker:
+                return execute_final_tracked(
+                    task, run_root, tracker, selector, runtime
+                )
+
+        def execute_final_tracked(
+            task: SearchRunTask,
+            run_root: Path,
+            tracker: RunTracker,
+            selector: CmnistSelector,
+            runtime: _RuntimeCandidate,
+        ) -> CompletedStageRun:
+            winner = winners[(task.candidate.method_id, selector)]
+            trained = _train_task(full_cache, runtime, task, tracker)
             decision = select_checkpoint(trained.validation_metrics, selector)
+            tracker.record_selection(checkpoint_decision_values(decision))
             frozen_checkpoint = freeze_final_checkpoint(decision, winner)
             selected = trained.store.load(frozen_checkpoint.checkpoint.checkpoint_id)
             checkpoint_root = run_root / "selected-checkpoint"
@@ -255,6 +284,12 @@ def run_rotated_mnist_search(
                 record_id=f"metric:{trained.run_id}:test_r90",
                 value=evaluate_accuracy(trained.algorithm, final_table),
                 sample_count=len(final_table.source_ids),
+            )
+            tracker.record_selection(
+                final_values(
+                    selector.value,
+                    {"test_r90_accuracy": float(final_metric.value)},
+                )
             )
             result = OrdinaryRunResult(
                 schema_version="grit.run-result/v1",
@@ -335,6 +370,7 @@ def run_rotated_mnist_search(
                 / f"rotated-mnist-{paired.selector.value}-paired-differences.json",
                 paired,
             )
+        _mirror_rotated_mnist_summary(plan, summary)
 
     hooks = ProductionLifecycleHooks(
         coerce_runs=_coerce_runs,
@@ -349,6 +385,58 @@ def run_rotated_mnist_search(
         status=lambda: rotated_mnist_status_from_plan(plan),
     )
     return run_production_lifecycle(plan, limits, hooks)
+
+
+def _mirror_rotated_mnist_summary(
+    plan: SearchPlan, summary: RotatedMnistProductionSummary
+) -> None:
+    """Mirror the canonical ten-seed RotatedMNIST summary."""
+
+    rows: list[list[TrackingValue]] = [
+        [
+            item.method_id,
+            item.selector.value,
+            item.selected_candidate_id,
+            item.accuracy_summary.metric_name,
+            item.accuracy_summary.seed_count,
+            float(item.accuracy_summary.mean),
+            float(item.accuracy_summary.sample_standard_deviation),
+            float(item.accuracy_summary.ci95_lower),
+            float(item.accuracy_summary.ci95_upper),
+        ]
+        for item in summary.methods
+    ]
+    rows.extend(
+        [
+            "grit_minus_erm",
+            paired.selector.value,
+            None,
+            paired.difference_summary.metric_name,
+            paired.difference_summary.seed_count,
+            float(paired.difference_summary.mean),
+            float(paired.difference_summary.sample_standard_deviation),
+            float(paired.difference_summary.ci95_lower),
+            float(paired.difference_summary.ci95_upper),
+        ]
+        for paired in summary.paired_selectors
+    )
+    log_summary_table(
+        plan,
+        track="ordinary",
+        table_name="rotated_mnist_final_summary",
+        columns=(
+            "method",
+            "selector",
+            "candidate_id",
+            "metric",
+            "seed_count",
+            "mean",
+            "sd",
+            "ci95_lower",
+            "ci95_upper",
+        ),
+        rows=rows,
+    )
 
 
 def compute_rotated_mnist_finalists(
@@ -501,6 +589,7 @@ def _train_task(
     cache: RotatedMnistFeatureCache | RotatedMnistTuningFeatureCache,
     runtime: _RuntimeCandidate,
     task: SearchRunTask,
+    tracker: RunTracker | None = None,
 ) -> TrainedLinearProbeRun:
     method = OrdinaryLinearProbeMethod(
         method_id=task.candidate.method_id,
@@ -518,6 +607,7 @@ def _train_task(
         seed=task.seed,
         method=method,
         num_classes=10,
+        tracker=tracker,
     )
 
 

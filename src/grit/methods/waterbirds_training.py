@@ -28,11 +28,13 @@ from grit.selection.cmnist import CheckpointIdentity
 from grit.selection.waterbirds import (
     FrozenWaterbirdsCheckpoint,
     WaterbirdsDiagnosticMetricRecord,
+    WaterbirdsMetricRecord,
     WaterbirdsSelector,
     WaterbirdsSelectorRecord,
     WaterbirdsValidationMetricRecord,
     compute_waterbirds_validation_metric,
 )
+from grit.tracking import RunTracker
 
 WaterbirdsMethod: TypeAlias = MethodId
 
@@ -86,11 +88,12 @@ def train_waterbirds_linear_probe(
     seed: int,
     method: LinearProbeTrainingMethod,
     diagnostic_hook: DiagnosticEpochHook | None = None,
+    tracker: RunTracker | None = None,
 ) -> TrainedWaterbirdsRun:
     """Run trainer-owned epochs and emit one four-group validation record each.
 
     `diagnostic_hook` is the test-oracle track's per-epoch test scoring; ordinary runs
-    never pass one.
+    never pass one. `tracker` only mirrors measurements that were computed anyway.
     """
 
     if training.dataset_manifest_digest != validation.dataset_manifest_digest:
@@ -110,28 +113,50 @@ def train_waterbirds_linear_probe(
     )
 
     def validate_epoch(
-        algorithm: LinearProbeAlgorithm, identity: CheckpointIdentity
+        algorithm: LinearProbeAlgorithm,
+        identity: CheckpointIdentity,
+        train_objective: float,
     ) -> None:
+        diagnostic: WaterbirdsDiagnosticMetricRecord | None = None
         if diagnostics is not None and diagnostic_hook is not None:
-            diagnostics.append(diagnostic_hook(algorithm, identity))
+            diagnostic = diagnostic_hook(algorithm, identity)
+            diagnostics.append(diagnostic)
         predictions = algorithm.predict(validation.features)
-        metrics.append(
-            compute_waterbirds_validation_metric(
-                validation,
-                predictions,
-                adjusted_weights=adjusted_weights,
-                record_id=f"metric:{identity.checkpoint_id}:validation",
-                run_id=run_id,
-                candidate_id=candidate_id,
-                method_id=method.method_id,
-                scientific_config_digest=scientific_config_digest,
-                checkpoint_id=identity.checkpoint_id,
-                epoch=identity.epoch,
-                seed_stage=seed_stage,
-                seed=seed,
-                projection_rank=method.projection_rank,
-            )
+        record = compute_waterbirds_validation_metric(
+            validation,
+            predictions,
+            adjusted_weights=adjusted_weights,
+            record_id=f"metric:{identity.checkpoint_id}:validation",
+            run_id=run_id,
+            candidate_id=candidate_id,
+            method_id=method.method_id,
+            scientific_config_digest=scientific_config_digest,
+            checkpoint_id=identity.checkpoint_id,
+            epoch=identity.epoch,
+            seed_stage=seed_stage,
+            seed=seed,
+            projection_rank=method.projection_rank,
         )
+        metrics.append(record)
+        if tracker is None:
+            return
+        # `train_objective` carries each method's own penalties; it is not a
+        # cross-method cross-entropy.
+        values = {"train_objective": train_objective}
+        values.update(
+            {
+                f"validation/{name}": value
+                for name, value in waterbirds_metric_values(record).items()
+            }
+        )
+        if diagnostic is not None:
+            values.update(
+                {
+                    f"diagnostic_test_oracle/{name}": value
+                    for name, value in waterbirds_metric_values(diagnostic).items()
+                }
+            )
+        tracker.log_epoch(identity.epoch, values)
 
     core = train_linear_probe_epochs(
         training.features,
@@ -157,6 +182,23 @@ def train_waterbirds_linear_probe(
         algorithm=core.algorithm,
         epoch_losses=core.epoch_losses,
     )
+
+
+def waterbirds_metric_values(record: WaterbirdsMetricRecord) -> dict[str, float]:
+    """The four-group shape every Waterbirds mirror reports."""
+
+    values = {
+        "worst_group_accuracy": float(record.worst_group_accuracy),
+        "adjusted_average_accuracy": float(record.adjusted_average_accuracy),
+        "raw_average_accuracy": float(record.raw_average_accuracy),
+    }
+    values.update(
+        {
+            f"group_{group.group_id}_accuracy": float(group.accuracy)
+            for group in record.groups
+        }
+    )
+    return values
 
 
 def restore_waterbirds_checkpoint(

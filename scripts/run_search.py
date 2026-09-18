@@ -5,6 +5,8 @@
 
 Completed tasks in the output directory are reused, so interrupting and rerunning
 is safe. --pilot runs one tuning task for each configured method and stops.
+
+Setting WANDB_PROJECT mirrors every executed task to W&B; see the README.
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ from grit.search.run import (
     production_search_status,
     run_production_search,
 )
+from grit.tracking import tracking_settings_from_environment
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -48,6 +51,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"output {plan.resolved_config.output_root}",
         file=sys.stderr,
     )
+    tracking = tracking_settings_from_environment()
+    if tracking.enabled:
+        print(
+            f"tracking: W&B project {tracking.project} ({tracking.mode}), "
+            f"files under {tracking.directory}",
+            file=sys.stderr,
+        )
     if args.dry_run:
         print(production_search_status(config).canonical_json())
         return 0

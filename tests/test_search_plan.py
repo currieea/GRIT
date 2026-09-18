@@ -2077,7 +2077,10 @@ def test_cmnist_real_plan_pilot_runs_two_canonical_tuning_tasks_only(
     train_calls: list[str] = []
 
     def fake_train(
-        _cache: object, _runtime: object, task: SearchRunTask
+        _cache: object,
+        _runtime: object,
+        task: SearchRunTask,
+        _tracker: object = None,
     ) -> CmnistTrainedTask:
         train_calls.append(task.task_id)
         completed = _cmnist_executor(plan, [])(task, tmp_path)
@@ -2204,6 +2207,7 @@ def test_waterbirds_real_plan_pilot_uses_same_bounded_lifecycle(
         _weights: object,
         _runtime: object,
         task: SearchRunTask,
+        _tracker: object = None,
     ) -> SimpleNamespace:
         train_calls.append(task.task_id)
         completed = _waterbirds_stage_run(task, weights)

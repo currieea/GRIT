@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
-from typing import Literal, Protocol, cast
+from typing import Literal, Protocol, TypeAlias, cast
 
 import numpy as np
 import torch
@@ -36,8 +36,18 @@ from grit.selection.cmnist import (
     ValidationMetricRecord,
     ValidationSplitName,
 )
+from grit.tracking import RunTracker
 
 __all__ = ["LinearProbeState"]
+
+# The epoch callbacks. ``EpochValidation`` receives the stored state, its identity, and
+# the epoch's mean training objective; ``EpochHook`` may return extra metrics to mirror.
+EpochValidation: TypeAlias = Callable[
+    ["LinearProbeAlgorithm", CheckpointIdentity, float], None
+]
+EpochHook: TypeAlias = Callable[
+    ["LinearProbeAlgorithm", CheckpointIdentity], Mapping[str, float] | None
+]
 
 
 class LinearProbeAlgorithm:
@@ -563,10 +573,14 @@ def train_linear_probe_epochs(
     scientific_config_digest: str,
     seed: int,
     method: LinearProbeTrainingMethod,
-    validate_epoch: Callable[[LinearProbeAlgorithm, CheckpointIdentity], None],
+    validate_epoch: EpochValidation,
     num_classes: int = 2,
 ) -> TrainedLinearProbeCore:
-    """Train one method and hand each saved epoch to dataset-specific validation."""
+    """Train one method and hand each saved epoch to dataset-specific validation.
+
+    ``validate_epoch`` also receives the epoch's mean training objective so a caller
+    can mirror it without recomputing anything.
+    """
 
     features = train_features.detach().cpu().to(torch.float32)
     targets = train_targets.detach().cpu().to(torch.int64)
@@ -593,7 +607,8 @@ def train_linear_probe_epochs(
         batch_losses = tuple(
             method.update(algorithm, features, targets, rows) for rows in row_batches
         )
-        epoch_losses.append(sum(batch_losses) / len(batch_losses))
+        train_objective = sum(batch_losses) / len(batch_losses)
+        epoch_losses.append(train_objective)
         identity = CheckpointIdentity(
             checkpoint_id=f"checkpoint:{run_id}:epoch:{epoch}",
             candidate_id=candidate_id,
@@ -607,7 +622,7 @@ def train_linear_probe_epochs(
         store.save(identity, state)
         live = algorithm.capture_inference_state()
         algorithm.restore_inference_state(state)
-        validate_epoch(algorithm, identity)
+        validate_epoch(algorithm, identity, train_objective)
         algorithm.restore_inference_state(live)
     return TrainedLinearProbeCore(
         store=store,
@@ -628,13 +643,15 @@ def train_linear_probe(
     seed: int,
     method: LinearProbeTrainingMethod,
     num_classes: int = 2,
-    epoch_hook: Callable[[LinearProbeAlgorithm, CheckpointIdentity], None]
-    | None = None,
+    epoch_hook: EpochHook | None = None,
+    tracker: RunTracker | None = None,
 ) -> TrainedLinearProbeRun:
     """Run trainer-owned epoch/batch iteration and emit validation every epoch.
 
     ``epoch_hook`` runs after each epoch's validation records are captured; the
-    test-oracle track uses it to score ``test_ood`` at every saved checkpoint.
+    test-oracle track uses it to score ``test_ood`` at every saved checkpoint and
+    returns those values for the optional tracking mirror. ``tracker`` only mirrors
+    measurements that were computed anyway.
     """
 
     train_features = torch.cat([table.features for table in training_tables], dim=0).to(
@@ -646,25 +663,39 @@ def train_linear_probe(
     metrics: list[ValidationMetricRecord] = []
 
     def validate_epoch(
-        algorithm: LinearProbeAlgorithm, identity: CheckpointIdentity
+        algorithm: LinearProbeAlgorithm,
+        identity: CheckpointIdentity,
+        train_objective: float,
     ) -> None:
-        metrics.extend(
-            _validation_metrics(
-                algorithm,
-                validation_tables,
-                run_id=run_id,
-                candidate_id=candidate_id,
-                method_id=method.method_id,
-                scientific_config_digest=scientific_config_digest,
-                seed_stage=seed_stage,
-                seed=seed,
-                checkpoint_id=identity.checkpoint_id,
-                epoch=identity.epoch,
-                projection_rank=method.projection_rank,
-            )
+        records = _validation_metrics(
+            algorithm,
+            validation_tables,
+            run_id=run_id,
+            candidate_id=candidate_id,
+            method_id=method.method_id,
+            scientific_config_digest=scientific_config_digest,
+            seed_stage=seed_stage,
+            seed=seed,
+            checkpoint_id=identity.checkpoint_id,
+            epoch=identity.epoch,
+            projection_rank=method.projection_rank,
         )
-        if epoch_hook is not None:
-            epoch_hook(algorithm, identity)
+        metrics.extend(records)
+        extra = None if epoch_hook is None else epoch_hook(algorithm, identity)
+        if tracker is None:
+            return
+        # `train_objective` is not comparable across methods: every penalty is already
+        # inside it, so it is never labeled cross-entropy.
+        values = {"train_objective": train_objective}
+        values.update(
+            {
+                f"validation/{record.split_name}_accuracy": float(record.value)
+                for record in records
+            }
+        )
+        if extra is not None:
+            values.update(extra)
+        tracker.log_epoch(identity.epoch, values)
 
     core = train_linear_probe_epochs(
         train_features,

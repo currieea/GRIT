@@ -746,6 +746,15 @@ resolved configuration and selected checkpoint.
 The same artifact configuration and seeds must reproduce the same records, pairs,
 features, search ordering, and selection result.
 
+Tracking mirrors are optional and carry no scientific authority. The canonical local
+records under `output_root` remain the only reportable evidence. A mirror may transmit
+only measurements a run already computed: per-epoch training objective and the four-group
+validation metrics in the ordinary track, and, in the separately labeled test-oracle
+track, its per-epoch test diagnostics under an explicitly diagnostic name. A mirror is
+configured by environment variables only, never by an experiment config, so it cannot
+change a configuration digest, and a mirror failure cannot change or complete a result.
+See the README for the operational settings.
+
 ## Required leakage and integrity tests
 
 - Released train, validation, and test source IDs are mutually disjoint.

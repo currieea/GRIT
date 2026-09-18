@@ -23,6 +23,25 @@ from grit.search.scheduler import (
     StageExecutor,
     make_search_task,
 )
+from grit.selection.cmnist import CheckpointSelectionDecision
+from grit.tracking import TrackingValue, selection_values
+
+
+def checkpoint_decision_values(
+    decision: CheckpointSelectionDecision,
+) -> dict[str, TrackingValue]:
+    """Mirror one accuracy-selector decision; CMNIST and RotatedMNIST share it."""
+
+    return selection_values(
+        decision.selector.value,
+        epoch=decision.checkpoint.epoch,
+        checkpoint_id=decision.checkpoint.checkpoint_id,
+        metrics={
+            "objective_value": float(decision.objective_value),
+            "mean_accuracy": float(decision.mean_accuracy),
+        },
+    )
+
 
 StageRunT = TypeVar("StageRunT", bound=StrictBoundaryModel)
 FinalistsT = TypeVar("FinalistsT")

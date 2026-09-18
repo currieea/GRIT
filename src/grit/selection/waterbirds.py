@@ -149,6 +149,10 @@ class WaterbirdsDiagnosticMetricRecord(_WaterbirdsMetricIdentity):
 WaterbirdsSelectorRecord: TypeAlias = (
     WaterbirdsValidationMetricRecord | WaterbirdsDiagnosticMetricRecord
 )
+# Any four-group record, including the gated final one.
+WaterbirdsMetricRecord: TypeAlias = (
+    WaterbirdsSelectorRecord | WaterbirdsFinalTestMetricRecord
+)
 
 
 class WaterbirdsCheckpointSelection(_WaterbirdsArtifactLineage):

@@ -71,6 +71,7 @@ from grit.methods.waterbirds_training import (
     WaterbirdsMethod,
     restore_waterbirds_checkpoint,
     train_waterbirds_linear_probe,
+    waterbirds_metric_values,
 )
 from grit.schemas import SeedStage
 from grit.search.lifecycle import (
@@ -122,6 +123,7 @@ from grit.selection.cmnist import CheckpointIdentity
 from grit.selection.waterbirds import (
     ORDINARY_WATERBIRDS_SELECTOR,
     FrozenWaterbirdsCandidate,
+    WaterbirdsCheckpointSelection,
     WaterbirdsSelector,
     WaterbirdsSelectorRecord,
     WaterbirdsTuningFinalists,
@@ -132,6 +134,14 @@ from grit.selection.waterbirds import (
     make_waterbirds_tuning_finalists,
     select_confirmed_waterbirds_candidate,
     select_waterbirds_checkpoint,
+)
+from grit.tracking import (
+    RunTracker,
+    TrackingValue,
+    final_values,
+    log_summary_table,
+    selection_values,
+    task_tracker,
 )
 
 WATERBIRDS_GROUP_COUNT = 4
@@ -223,22 +233,26 @@ def run_waterbirds_production_search(
 
     def execute_pre_final(task: SearchRunTask, _run_root: Path) -> CompletedStageRun:
         runtime = runtime_candidate(task.candidate)
-        trained = _train_task(cache, weights, runtime, task)
-        decision = select_waterbirds_checkpoint(
-            trained.selector_records(selector), selector
-        )
-        return WaterbirdsCompletedStageRun(
-            schema_version="grit.waterbirds-search-stage-run/v1",
-            dataset="waterbirds_cf",
-            status="complete",
-            task=task,
-            lineage=plan.resolved_config.lineage,
-            code=current_code_provenance(),
-            environment=current_environment_provenance(),
-            validation_metrics=trained.validation_metrics,
-            diagnostic_metrics=trained.diagnostic_metrics,
-            checkpoint_decision=decision,
-        )
+        with task_tracker(
+            plan, task, algorithm=runtime.config.algorithm
+        ) as tracker:
+            trained = _train_task(cache, weights, runtime, task, tracker)
+            decision = select_waterbirds_checkpoint(
+                trained.selector_records(selector), selector
+            )
+            tracker.record_selection(_waterbirds_selection_values(decision))
+            return WaterbirdsCompletedStageRun(
+                schema_version="grit.waterbirds-search-stage-run/v1",
+                dataset="waterbirds_cf",
+                status="complete",
+                task=task,
+                lineage=plan.resolved_config.lineage,
+                code=current_code_provenance(),
+                environment=current_environment_provenance(),
+                validation_metrics=trained.validation_metrics,
+                diagnostic_metrics=trained.diagnostic_metrics,
+                checkpoint_decision=decision,
+            )
 
     candidates_by_id = {item.candidate_id: item for item in plan.candidates}
 
@@ -289,12 +303,24 @@ def run_waterbirds_production_search(
         full_cache = cache
 
         def execute_final(task: SearchRunTask, run_root: Path) -> CompletedStageRun:
-            frozen = winners[task.candidate.method_id]
             runtime = runtime_candidate(task.candidate)
-            trained = _train_task(full_cache, weights, runtime, task)
+            with task_tracker(
+                plan, task, algorithm=runtime.config.algorithm
+            ) as tracker:
+                return execute_final_tracked(task, run_root, tracker, runtime)
+
+        def execute_final_tracked(
+            task: SearchRunTask,
+            run_root: Path,
+            tracker: RunTracker,
+            runtime: _RuntimeCandidate,
+        ) -> CompletedStageRun:
+            frozen = winners[task.candidate.method_id]
+            trained = _train_task(full_cache, weights, runtime, task, tracker)
             decision = select_waterbirds_checkpoint(
                 trained.selector_records(selector), selector
             )
+            tracker.record_selection(_waterbirds_selection_values(decision))
             frozen_checkpoint = freeze_waterbirds_final_checkpoint(decision, frozen)
             selected = trained.store.load(frozen_checkpoint.checkpoint.checkpoint_id)
             checkpoint_root = run_root / "selected-checkpoint"
@@ -337,6 +363,13 @@ def run_waterbirds_production_search(
                     ),
                     artifacts=artifacts,
                 )
+                tracker.record_selection(
+                    final_values(
+                        selector,
+                        waterbirds_metric_values(result.reported_test_metric),
+                        diagnostic=True,
+                    )
+                )
             else:
                 handle = full_cache.issue_final_handle(
                     run_id=trained.run_id,
@@ -374,6 +407,9 @@ def run_waterbirds_production_search(
                         checkpoint_manifest.canonical_digest()
                     ),
                     artifacts=artifacts,
+                )
+                tracker.record_selection(
+                    final_values(selector, waterbirds_metric_values(final_metric))
                 )
             persist_canonical_artifact(run_root / "final-result.json", result)
             completed = WaterbirdsCompletedStageRun(
@@ -413,6 +449,7 @@ def run_waterbirds_production_search(
                     paired_worst_group_summary=summary.paired_worst_group_summary,
                 ),
             )
+        _mirror_waterbirds_summary(plan, summary)
 
     hooks = ProductionLifecycleHooks(
         coerce_runs=coerce_runs,
@@ -575,6 +612,7 @@ def _train_task(
     weights: WaterbirdsAdjustedWeightSpec,
     runtime: _RuntimeCandidate,
     task: SearchRunTask,
+    tracker: RunTracker | None = None,
 ) -> TrainedWaterbirdsRun:
     run_id = f"run:{task.task_id}"
     diagnostic_hook: DiagnosticEpochHook | None = None
@@ -612,6 +650,7 @@ def _train_task(
         seed=task.seed,
         method=_waterbirds_method(cache, runtime, task),
         diagnostic_hook=diagnostic_hook,
+        tracker=tracker,
     )
 
 
@@ -848,6 +887,79 @@ def _summary(
         methods=tuple(methods),
         paired_worst_group_by_seed=paired,
         paired_worst_group_summary=paired_summary,
+    )
+
+
+def _waterbirds_selection_values(
+    decision: WaterbirdsCheckpointSelection,
+) -> dict[str, TrackingValue]:
+    return selection_values(
+        decision.selector,
+        epoch=decision.checkpoint.epoch,
+        checkpoint_id=decision.checkpoint.checkpoint_id,
+        metrics={
+            "worst_group_accuracy": float(decision.worst_group_accuracy),
+            "adjusted_average_accuracy": float(decision.adjusted_average_accuracy),
+        },
+    )
+
+
+def _mirror_waterbirds_summary(
+    plan: SearchPlan, summary: WaterbirdsProductionSummary
+) -> None:
+    """Mirror the canonical ten-seed summary; the oracle track is labeled as such."""
+
+    rows: list[list[TrackingValue]] = []
+    for item in summary.methods:
+        for metric in (
+            item.worst_group_summary,
+            item.adjusted_average_summary,
+            item.raw_average_summary,
+        ):
+            rows.append(
+                [
+                    item.method_id,
+                    item.selector,
+                    item.selected_candidate_id,
+                    metric.metric_name,
+                    metric.seed_count,
+                    float(metric.mean),
+                    float(metric.sample_standard_deviation),
+                    float(metric.ci95_lower),
+                    float(metric.ci95_upper),
+                ]
+            )
+    paired = summary.paired_worst_group_summary
+    if paired is not None:
+        rows.append(
+            [
+                "grit_minus_erm",
+                summary.selector,
+                None,
+                paired.metric_name,
+                paired.seed_count,
+                float(paired.mean),
+                float(paired.sample_standard_deviation),
+                float(paired.ci95_lower),
+                float(paired.ci95_upper),
+            ]
+        )
+    log_summary_table(
+        plan,
+        track="test_oracle" if summary.test_oracle else "ordinary",
+        table_name="waterbirds_final_summary",
+        columns=(
+            "method",
+            "selector",
+            "candidate_id",
+            "metric",
+            "seed_count",
+            "mean",
+            "sd",
+            "ci95_lower",
+            "ci95_upper",
+        ),
+        rows=rows,
     )
 
 

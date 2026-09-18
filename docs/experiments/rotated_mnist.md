@@ -141,6 +141,10 @@ and paired GRIT-minus-ERM differences because both methods share final seeds.
   per final run.
 - Every reported run records its seed, resolved config, commit identity, and dataset,
   feature-cache, and pair-bank hashes.
+- An optional tracking mirror may transmit only measurements a run already computed: the
+  per-epoch training objective and validation accuracies. It is configured by environment
+  variables only, never by an experiment config, and its failure cannot change or
+  complete a result. The canonical local records remain the only reportable evidence.
 
 The inherited RotatedMNIST code and DomainBed are implementation references rather than
 protocol authority. In particular, DomainBed's construction assigns each source to one
